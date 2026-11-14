@@ -1,19 +1,16 @@
 package lila.round
 
-import actorApi.{ GetSocketStatus, SocketStatus }
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import chess.ByColor
+import com.softwaremill.macwire.*
+import org.apache.pekko.actor.*
 import play.api.Configuration
-import scala.concurrent.duration._
 
-import lila.common.config._
-import lila.common.{ Bus, Uptime }
-import lila.game.{ Game, GameRepo, Pov }
-import lila.hub.actorApi.round.{ Abort, Resign }
-import lila.hub.actorApi.simul.GetHostIds
-import lila.hub.actors
-import lila.user.User
+import lila.common.autoconfig.{ *, given }
+import lila.common.{ Bus, HTTPRequest, Uptime }
+import lila.core.config.*
+import lila.core.round.{ CurrentlyPlaying, RoundBus }
+import lila.game.GameRepo
+import lila.round.RoundGame.*
 
 @Module
 private class RoundConfig(
@@ -27,161 +24,186 @@ final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
     gameRepo: GameRepo,
-    idGenerator: lila.game.IdGenerator,
     userRepo: lila.user.UserRepo,
-    timeline: actors.Timeline,
-    bookmark: actors.Bookmark,
-    tournamentApi: actors.TournamentApi,
+    userApi: lila.user.UserApi,
+    lightUser: lila.user.LightUserApi,
     chatApi: lila.chat.ChatApi,
-    fishnetPlayer: lila.fishnet.FishnetPlayer,
+    chatJson: lila.chat.ChatJsonView,
     crosstableApi: lila.game.CrosstableApi,
     playban: lila.playban.PlaybanApi,
     userJsonView: lila.user.JsonView,
     gameJsonView: lila.game.JsonView,
     rankingApi: lila.user.RankingApi,
-    notifyApi: lila.notify.NotifyApi,
+    notifyApi: lila.core.notify.NotifyApi,
     uciMemo: lila.game.UciMemo,
     rematches: lila.game.Rematches,
     divider: lila.game.Divider,
     prefApi: lila.pref.PrefApi,
-    historyApi: lila.history.HistoryApi,
-    evalCache: lila.evalCache.EvalCacheApi,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    isBotSync: lila.common.LightUser.IsBotSync,
-    lightUserSync: lila.common.LightUser.GetterSync,
-    ircApi: lila.irc.IrcApi,
-    ratingFactors: () => lila.rating.RatingFactors,
-    shutdown: akka.actor.CoordinatedShutdown
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    scheduler: akka.actor.Scheduler
-) {
+    socketKit: lila.core.socket.ParallelSocketKit,
+    userLagPut: lila.core.socket.userLag.Put,
+    bookmarkExists: lila.core.misc.BookmarkExists,
+    securityApi: lila.core.security.SecurityApi,
+    simulApiCircularDep: => lila.core.simul.SimulApi,
+    tourApiCircularDep: => lila.core.tournament.TournamentApi,
+    userNoteApi: lila.core.user.NoteApi,
+    settingStore: lila.memo.SettingStore.Builder,
+    shutdown: org.apache.pekko.actor.CoordinatedShutdown
+)(using system: ActorSystem, scheduler: Scheduler)(using
+    Executor,
+    org.apache.pekko.stream.Materializer,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit,
+    lila.game.IdGenerator
+):
 
-  implicit private val animationLoader = durationLoader(AnimationDuration.apply)
-  private val config                   = appConfig.get[RoundConfig]("round")(AutoConfig.loader)
+  private val (botSync, async) = (lightUser.isBotSync, lightUser.async)
 
-  private val defaultGoneWeight                      = fuccess(1f)
-  private def goneWeight(userId: User.ID): Fu[Float] = playban.getRageSit(userId).dmap(_.goneWeight)
-  private val goneWeightsFor = (game: Game) =>
-    if (!game.playable || !game.hasClock || game.hasAi || !Uptime.startedSinceMinutes(1))
-      fuccess(1f -> 1f)
+  private val config = appConfig.get[RoundConfig]("round")(using AutoConfig.loader)
+
+  private val defaultGoneWeight = fuccess(1f)
+  private val goneWeightsFor: Game => Fu[ByColor[Float]] = (game: Game) =>
+    if !game.playable || !game.hasClock || game.hasAi || !Uptime.startedSinceMinutes(1) then
+      fuccess(ByColor.fill(1f))
     else
-      game.whitePlayer.userId.fold(defaultGoneWeight)(goneWeight) zip
-        game.blackPlayer.userId.fold(defaultGoneWeight)(goneWeight)
+      def of(color: Color): Fu[Float] =
+        def rageSitGoneWeight(sit: lila.core.playban.RageSit): Float =
+          import scala.math.{ log10, sqrt }
+          import lila.playban.RageSit.extensions.*
+          if !sit.isBad then 1f
+          else (1 - 0.7 * sqrt(log10(-(sit.counterView) - 3))).toFloat.max(0.1f)
+        game
+          .player(color)
+          .userId
+          .fold(defaultGoneWeight)(uid => playban.rageSitOf(uid).dmap(rageSitGoneWeight))
+      ByColor(of)
 
-  private val isSimulHost = new IsSimulHost(userId =>
-    Bus.ask[Set[User.ID]]("simulGetHosts")(GetHostIds).dmap(_ contains userId)
-  )
+  private val scheduleExpiration = ScheduleExpiration: game =>
+    game.timeBeforeExpiration.foreach: centis =>
+      scheduler.scheduleOnce((centis.millis + 1000).millis):
+        roundApi.tell(game.id, lila.core.round.NoStart)
 
-  private val scheduleExpiration = new ScheduleExpiration(game => {
-    game.timeBeforeExpiration foreach { centis =>
-      scheduler.scheduleOnce((centis.millis + 1000).millis) {
-        tellRound(game.id, actorApi.round.NoStart)
-      }
-    }
-  })
+  private val simulApi = lila.core.data.CircularDep(() => simulApiCircularDep)
+  private val tourApi = lila.core.data.CircularDep(() => tourApiCircularDep)
 
-  private lazy val proxyDependencies =
-    new GameProxy.Dependencies(gameRepo, scheduler)
-  private lazy val roundDependencies = wire[RoundDuct.Dependencies]
+  private lazy val proxyDependencies = wire[GameProxy.Dependencies]
+  private lazy val roundDependencies = wire[RoundAsyncActor.Dependencies]
 
   lazy val roundSocket: RoundSocket = wire[RoundSocket]
 
-  private def resignAllGamesOf(userId: User.ID) =
-    gameRepo allPlaying userId foreach {
-      _ foreach { pov => tellRound(pov.gameId, Resign(pov.playerId)) }
-    }
+  Bus.sub[lila.core.game.GameStart]: game =>
+    onStart.exec(game.id)
 
-  Bus.subscribeFuns(
-    "accountClose" -> { case lila.hub.actorApi.security.CloseAccount(userId) =>
-      resignAllGamesOf(userId)
-    },
-    "gameStartId" -> { case Game.Id(gameId) =>
-      onStart(gameId)
-    },
-    "selfReport" -> { case RoundSocket.Protocol.In.SelfReport(fullId, ip, userId, name) =>
-      selfReport(userId, ip, fullId, name).unit
-    },
-    "adjustCheater" -> { case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
-      resignAllGamesOf(userId)
-    }
-  )
+  Bus.sub[RoundSocket.Protocol.In.SelfReport]: r =>
+    selfReport(r.userId, r.ip, r.fullId, r.name)
 
-  lazy val tellRound: TellRound = new TellRound((gameId: Game.ID, msg: Any) =>
-    roundSocket.rounds.tell(gameId, msg)
-  )
+  Bus.sub[lila.core.mod.MarkCheater]:
+    case lila.core.mod.MarkCheater(userId, true) =>
+      roundApi.resignAllGamesOf(userId)
 
-  lazy val onStart: OnStart = new OnStart((gameId: Game.ID) =>
-    proxyRepo game gameId foreach {
-      _ foreach { game =>
-        Bus.publish(lila.game.actorApi.StartGame(game), "startGame")
-        game.userIds foreach { userId =>
-          Bus.publish(lila.game.actorApi.StartGame(game), s"userStartGame:$userId")
-        }
-      }
-    }
-  )
+  lazy val onStart = lila.core.game.OnStart: gameId =>
+    proxyRepo
+      .game(gameId)
+      .flatMap:
+        case None => fufail(s"Could not find game $gameId on start")
+        case Some(game) =>
+          for users <- game.players.map(_.userId).traverse(_.so(lightUser.async))
+          yield
+            val sg = lila.core.game.StartGame(game, users)
+            Bus.pub(sg)
+            game.userIds.foreach: userId =>
+              Bus.publishDyn(sg, s"userStartGame:$userId")
+            if game.playableByAi then Bus.pub(lila.core.fishnet.FishnetMoveRequest(game))
 
   lazy val proxyRepo: GameProxyRepo = wire[GameProxyRepo]
+
+  def lastPlayed(userId: UserId): Fu[Option[Pov]] =
+    gameRepo.lastPlayed(userId).flatMap(_.traverse(proxyRepo.upgradeIfPresent))
+
+  private lazy val correspondenceEmail = wire[CorrespondenceEmail]
+
+  scheduler.scheduleAtFixedRate(10.minute, 10.minute): () =>
+    correspondenceEmail.tick()
 
   lazy val selfReport = wire[SelfReport]
 
   lazy val recentTvGames = wire[RecentTvGames]
 
-  private lazy val botFarming = wire[BotFarming]
+  private lazy val farmBoostDetection = wire[FarmBoostDetection]
 
-  lazy val perfsUpdater: PerfsUpdater = wire[PerfsUpdater]
+  private lazy val perfsUpdater: PerfsUpdater = wire[PerfsUpdater]
 
-  lazy val forecastApi: ForecastApi = new ForecastApi(
-    coll = db(config.forecastColl),
-    tellRound = tellRound
-  )
+  lazy val forecastApi: ForecastApi = ForecastApi(coll = db(config.forecastColl), roundApi = roundApi)
 
-  private lazy val notifier = new RoundNotifier(
-    timeline = timeline,
-    isUserPresent = isUserPresent,
-    notifyApi = notifyApi
-  )
+  private lazy val notifier = RoundNotifier(isUserPresent, notifyApi)
 
   private lazy val finisher = wire[Finisher]
 
   private lazy val rematcher: Rematcher = wire[Rematcher]
 
-  lazy val isOfferingRematch = new IsOfferingRematch(rematcher.isOffering)
+  lazy val isOfferingRematch = lila.core.round.IsOfferingRematch(rematcher.isOffering)
 
-  private lazy val player: Player = wire[Player]
+  private lazy val player: MovePlayer = wire[MovePlayer]
 
   private lazy val drawer = wire[Drawer]
 
   lazy val messenger = wire[Messenger]
 
-  lazy val getSocketStatus = (game: Game) => roundSocket.rounds.ask[SocketStatus](game.id)(GetSocketStatus)
+  val getSocketStatus: Game => Future[SocketStatus] = (game: Game) =>
+    roundSocket.rounds.ask[SocketStatus](game.id)(GetSocketStatus.apply)
 
-  private def isUserPresent(game: Game, userId: lila.user.User.ID): Fu[Boolean] =
-    roundSocket.rounds.askIfPresentOrZero[Boolean](game.id)(RoundDuct.HasUserId(userId, _))
+  private def isUserPresent(game: Game, userId: UserId): Fu[Boolean] =
+    roundSocket.rounds.askIfPresentOrZero[Boolean](game.id)(RoundAsyncActor.HasUserId(userId, _))
 
   lazy val jsonView = wire[JsonView]
 
-  lazy val noteApi = new NoteApi(db(config.noteColl))
+  lazy val noteApi = NoteApi(db(config.noteColl))
 
-  MoveLatMonitor.start(scheduler)
-
-  system.actorOf(Props(wire[Titivate]), name = "titivate")
-
-  new CorresAlarm(db(config.alarmColl), isUserPresent, proxyRepo.game)
+  lazy val mobile = wire[RoundMobile]
 
   private lazy val takebacker = wire[Takebacker]
 
-  private lazy val moretimer = wire[Moretimer]
+  lazy val moretimer = wire[Moretimer]
 
-  val playing = wire[PlayingUsers]
-
-  val tvBroadcast = system.actorOf(Props(wire[TvBroadcast]))
+  lazy val playing = wire[PlayingUsers]
+  export playing.currentlyPlaying
 
   val apiMoveStream = wire[ApiMoveStream]
 
+  wire[RoundCourtesy]
+
+  // core APIs
+  @annotation.nowarn
+  val gameProxy: lila.core.game.GameProxy = new:
+    export proxyRepo.{ game, pov, gameIfPresent, updateIfPresent, flushIfPresent, upgradeIfPresent }
+  val roundJson: lila.core.round.RoundJson = new:
+    export mobile.offline as mobileOffline
+
+  val roundApi: lila.core.round.RoundApi = new:
+    export roundSocket.rounds.{ tell, ask }
+    export roundSocket.getGames
+    def resignAllGamesOf(userId: UserId) =
+      gameRepo
+        .allPlaying(userId)
+        .map:
+          _.foreach(pov => roundApi.tell(pov.gameId, RoundBus.Resign(pov.playerId)))
+
+  val onTvGame: lila.game.core.OnTvGame = recentTvGames.put
+
+  MoveLatMonitor.start(scheduler)
+
+  CorresAlarm(db(config.alarmColl), isUserPresent, proxyRepo.game, lightUser)
+
+  system.actorOf(Props(wire[Titivate]), name = "titivate")
+
   def resign(pov: Pov): Unit =
-    if (pov.game.abortable) tellRound(pov.gameId, Abort(pov.playerId))
-    else if (pov.game.resignable) tellRound(pov.gameId, Resign(pov.playerId))
-}
+    if pov.game.abortableByUser then roundApi.tell(pov.gameId, RoundBus.Abort(pov.playerId))
+    else if pov.game.resignable then roundApi.tell(pov.gameId, RoundBus.Resign(pov.playerId))
+
+  import play.api.mvc.Call
+  def pathRedirect(path: String)(using Req): Fu[Option[Call | Pov]] =
+    GameAnyId(path).fullId
+      .so(proxyRepo.pov)
+      .map2: p =>
+        if HTTPRequest.isLichobile then p else routes.Round.player(p.fullId)
+      .orElse:
+        GameId.from(path).so(proxyRepo.game).map2(g => routes.Round.watcher(g.id, Color.white))

@@ -1,35 +1,34 @@
 package lila.pool
 
-import scala.concurrent.duration._
+import play.api.i18n.Lang
 
+import lila.core.i18n.Translator
+import lila.core.pool.PoolConfigId
 import lila.rating.PerfType
 
 case class PoolConfig(
     clock: chess.Clock.Config,
     wave: PoolConfig.Wave
-) {
+):
+  val perfKey = PerfKey(chess.Speed(clock).key.value) | PerfKey.classical
+  val id = PoolConfig.clockToId(clock)
 
-  val perfType = PerfType(chess.Speed(clock).key) | PerfType.Classical
+object PoolConfig:
 
-  val id = PoolConfig clockToId clock
-}
-
-object PoolConfig {
-
-  case class Id(value: String)     extends AnyVal
-  case class NbPlayers(value: Int) extends AnyVal
+  opaque type NbPlayers = Int
+  object NbPlayers extends OpaqueInt[NbPlayers]
 
   case class Wave(every: FiniteDuration, players: NbPlayers)
 
-  def clockToId(clock: chess.Clock.Config) = Id(clock.show)
+  def clockToId(clock: chess.Clock.Config) = PoolConfigId(clock.show)
 
-  import play.api.libs.json._
-  implicit val poolConfigJsonWriter = OWrites[PoolConfig] { p =>
+  import play.api.libs.json.*
+  import lila.common.Json.given
+  private given Lang = lila.core.i18n.defaultLang
+  given (using Translator): OWrites[PoolConfig] = OWrites: p =>
     Json.obj(
-      "id"   -> p.id.value,
-      "lim"  -> p.clock.limitInMinutes,
-      "inc"  -> p.clock.incrementSeconds,
-      "perf" -> p.perfType.trans(lila.i18n.defaultLang)
+      "id" -> p.id,
+      "lim" -> p.clock.limitInMinutes,
+      "inc" -> p.clock.incrementSeconds,
+      "perf" -> PerfType(p.perfKey).trans
     )
-  }
-}

@@ -1,58 +1,51 @@
 package lila.timeline
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
 
 @Module
 private class TimelineConfig(
     @ConfigName("collection.entry") val entryColl: CollName,
     @ConfigName("collection.unsub") val unsubColl: CollName,
-    @ConfigName("user.display_max") val userDisplayMax: Max,
-    @ConfigName("user.actor.name") val userActorName: String
+    @ConfigName("user.display_max") val userDisplayMax: Max
 )
 
 @Module
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    userRepo: lila.user.UserRepo,
-    relationApi: lila.relation.RelationApi,
-    cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    userApi: lila.core.user.UserApi,
+    relationApi: lila.core.relation.RelationApi,
+    teamApi: lila.core.team.TeamApi
+)(using Executor):
 
-  private val config = appConfig.get[TimelineConfig]("timeline")(AutoConfig.loader)
+  private val config = appConfig.get[TimelineConfig]("timeline")(using AutoConfig.loader)
 
-  lazy val entryApi = new EntryApi(
-    coll = db(config.entryColl),
-    cacheApi = cacheApi,
-    userMax = config.userDisplayMax
-  )
+  lazy val entryApi = EntryApi(db(config.entryColl), config.userDisplayMax)
 
-  lazy val unsubApi = new UnsubApi(db(config.unsubColl))
+  lazy val unsubApi = UnsubApi(db(config.unsubColl))
 
-  def isUnsub(channel: String)(userId: String): Fu[Boolean] =
-    unsubApi.get(channel, userId)
+  def isUnsub(channel: String)(using me: Me): Fu[Boolean] =
+    unsubApi.get(channel, me)
 
-  def status(channel: String)(userId: String): Fu[Option[Boolean]] =
-    unsubApi.get(channel, userId) flatMap {
-      case true => fuccess(Some(true)) // unsubed
-      case false =>
-        entryApi.channelUserIdRecentExists(channel, userId) map {
-          case true  => Some(false) // subed
-          case false => None        // not applicable
-        }
-    }
+  def status(channel: String)(using me: Me): Fu[Option[Boolean]] =
+    unsubApi
+      .get(channel, me)
+      .flatMap:
+        if _ then fuccess(Some(true)) // unsubbed
+        else
+          entryApi
+            .channelUserIdRecentExists(channel, me)
+            .dmap:
+              if _ then Some(false) // subbed
+              else None // not applicable
 
-  system.actorOf(Props(wire[Push]), name = config.userActorName)
+  private val api = wire[TimelineApi]
 
-  lila.common.Bus.subscribeFun("shadowban") { case lila.hub.actorApi.mod.Shadowban(userId, true) =>
-    entryApi.removeRecentFollowsBy(userId).unit
-  }
-}
+  lila.common.Bus.sub[lila.core.mod.Shadowban]:
+    case lila.core.mod.Shadowban(userId, true) => entryApi.removeRecentFollowsBy(userId)
+
+  lila.common.Bus.sub[lila.core.timeline.Propagate](api.propagate(_))

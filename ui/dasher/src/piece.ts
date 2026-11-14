@@ -1,98 +1,106 @@
-import { h, VNode } from 'snabbdom';
+import { h, type VNode } from 'snabbdom';
 
-import * as xhr from 'common/xhr';
-import { Redraw, Open, bind, header } from './util';
+import { type Toggle, toggle } from 'lib';
+import { bind } from 'lib/view';
+import { text as xhrText, form as xhrForm } from 'lib/xhr';
 
-type Piece = string;
+import type { DasherCtrl } from '@/ctrl';
 
-interface PieceDimData {
-  current: Piece;
-  list: Piece[];
-}
+import { type Dimension, PaneCtrl } from './interfaces';
+import { header, elementScrollBarWidthSlowGuess, moreButton } from './util';
 
-export interface PieceData {
-  d2: PieceDimData;
-  d3: PieceDimData;
-}
+export class PieceCtrl extends PaneCtrl {
+  featured: Record<Dimension, string[]> = { d2: [], d3: [] };
+  more: Toggle;
 
-export interface PieceCtrl {
-  dimension: () => keyof PieceData;
-  data: () => PieceDimData;
-  trans: Trans;
-  set(t: Piece): void;
-  open: Open;
-}
-
-export function ctrl(
-  data: PieceData,
-  trans: Trans,
-  dimension: () => keyof PieceData,
-  redraw: Redraw,
-  open: Open
-): PieceCtrl {
-  function dimensionData() {
-    return data[dimension()];
+  constructor(root: DasherCtrl) {
+    super(root);
+    this.more = toggle(false, root.redraw);
+    for (const dim of ['d2', 'd3'] as Dimension[]) {
+      this.featured[dim] = this.root.data.piece[dim].list.filter(t => t.featured).map(t => t.name);
+    }
   }
 
-  return {
-    dimension,
-    trans,
-    data: dimensionData,
-    set(t: Piece) {
-      const d = dimensionData();
-      d.current = t;
-      applyPiece(t, d.list, dimension() === 'd3');
-      xhr
-        .text('/pref/pieceSet' + (dimension() === 'd3' ? '3d' : ''), {
-          body: xhr.form({ set: t }),
-          method: 'post',
-        })
-        .catch(() => lichess.announce({ msg: 'Failed to save piece set  preference' }));
-      redraw();
-    },
-    open,
+  get pieceList(): string[] {
+    const all = this.dimData.list.map(t => t.name);
+    const visible = this.featured[this.dimension].slice();
+    if (!visible.includes(this.dimData.current)) visible.push(this.dimData.current);
+    return this.more() ? all : visible;
+  }
+
+  render(): VNode {
+    const maxHeight = window.innerHeight - 150; // safari vh brokenness
+    const pieceSize = (222 - elementScrollBarWidthSlowGuess()) / (this.more() ? 4 : 3);
+    const pieceImage = (t: string) =>
+      this.is3d
+        ? `images/staunton/piece/${t}/White-Knight${t === 'Staunton' ? '-Preview' : ''}.webp`
+        : site.manifest.hashed[`piece/${t}/wN.webp`]
+          ? `piece/${t}/wN.webp`
+          : `piece/${t}/wN.svg`;
+
+    return h('div.sub.piece.' + this.dimension, [
+      header(i18n.site.pieceSet, () => this.close()),
+      h(
+        'div.list',
+        { attrs: { style: `max-height:${maxHeight}px;` } },
+        this.pieceList.map((t: string) =>
+          h(
+            'button.no-square',
+            {
+              key: t,
+              attrs: { title: t, type: 'button', style: `width: ${pieceSize}px; height: ${pieceSize}px` },
+              hook: bind('click', () => this.set(t)),
+              class: { active: this.dimData.current === t },
+            },
+            [h('piece', { attrs: { style: `background-image:url(${site.asset.url(pieceImage(t))})` } })],
+          ),
+        ),
+      ),
+      moreButton(this.more),
+    ]);
+  }
+
+  apply = (t: string = this.dimData.current): void => {
+    this.dimData.current = t;
+    document.body.dataset[this.is3d ? 'pieceSet3d' : 'pieceSet'] = t;
+    if (!this.is3d) {
+      pieceVarRules(t);
+    }
+  };
+
+  private get dimData() {
+    return this.root.data.piece[this.dimension];
+  }
+
+  private readonly set = (t: string) => {
+    this.apply(t);
+    const field = `pieceSet${this.is3d ? '3d' : ''}`;
+    xhrText(`/pref/${field}`, { body: xhrForm({ [field]: t }), method: 'post' }).catch(() =>
+      site.announce({ msg: 'Failed to save piece set  preference' }),
+    );
+    this.redraw();
   };
 }
 
-export function view(ctrl: PieceCtrl): VNode {
-  const d = ctrl.data();
+const pieceVars = [
+  ['---white-pawn', 'wP'],
+  ['---black-pawn', 'bP'],
+  ['---white-knight', 'wN'],
+  ['---black-knight', 'bN'],
+  ['---white-bishop', 'wB'],
+  ['---black-bishop', 'bB'],
+  ['---white-rook', 'wR'],
+  ['---black-rook', 'bR'],
+  ['---white-queen', 'wQ'],
+  ['---black-queen', 'bQ'],
+  ['---white-king', 'wK'],
+  ['---black-king', 'bK'],
+];
 
-  return h('div.sub.piece.' + ctrl.dimension(), [
-    header(ctrl.trans.noarg('pieceSet'), () => ctrl.open('links')),
-    h('div.list', d.list.map(pieceView(d.current, ctrl.set, ctrl.dimension() == 'd3'))),
-  ]);
-}
-
-function pieceImage(t: Piece, is3d: boolean) {
-  if (is3d) {
-    const preview = t == 'Staunton' ? '-Preview' : '';
-    return `images/staunton/piece/${t}/White-Knight${preview}.png`;
-  }
-  return `piece/${t}/wN.svg`;
-}
-
-function pieceView(current: Piece, set: (t: Piece) => void, is3d: boolean) {
-  return (t: Piece) =>
-    h(
-      'a.no-square',
-      {
-        attrs: { title: t },
-        hook: bind('click', () => set(t)),
-        class: { active: current === t },
-      },
-      [
-        h('piece', {
-          attrs: { style: `background-image:url(${lichess.assetUrl(pieceImage(t, is3d))})` },
-        }),
-      ]
-    );
-}
-
-function applyPiece(t: Piece, list: Piece[], is3d: boolean) {
-  if (is3d) {
-    $('body').removeClass(list.join(' ')).addClass(t);
-  } else {
-    const sprite = document.getElementById('piece-sprite') as HTMLLinkElement;
-    sprite.href = sprite.href.replace(/\w+\.css/, t + '.css');
+function pieceVarRules(theme: string) {
+  const ext = site.manifest.hashed[`piece/${theme}/wP.webp`] ? 'webp' : 'svg';
+  for (const [varName, fileName] of pieceVars) {
+    const url = site.asset.url(`piece/${theme}/${fileName}.${ext}`, { pathOnly: true });
+    document.body.style.setProperty(varName, `url(${url})`);
   }
 }

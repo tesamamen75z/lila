@@ -19,17 +19,17 @@
 
   &::before,
   &::after {
-    content: '';
+    content: $licon-Swords;
     font-size: 2rem;
     position: absolute;
     top: 30px;
   }
 
   &::before {
-    left: 30px;
+    @include inline-start(30px);
   }
 
   &::after {
-    right: 30px;
+    @include inline-end(30px);
   }
 }

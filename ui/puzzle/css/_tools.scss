@@ -13,10 +13,11 @@
 }
 
 .puzzle__moves {
+  @include prevent-select;
+
   flex: 2 1 auto;
   overflow: auto;
-  border: $border;
-  border-width: 1px 0;
+  border-bottom: $border;
   position: relative;
 
   /* required by line::before */
@@ -30,10 +31,6 @@
   }
 
   move {
-    glyph {
-      vertical-align: middle;
-    }
-
     &.fail glyph {
       color: $c-bad;
     }
@@ -44,7 +41,11 @@
     }
 
     &:hover glyph {
-      color: #fff;
+      color: $c-font-dim;
+    }
+
+    &.active glyph {
+      color: white;
     }
   }
 }
@@ -54,13 +55,13 @@
 
   flex: 1 0 9rem;
 
-  @include breakpoint($mq-col2) {
-    @include breakpoint($mq-tall) {
+  @include mq-at-least-col2 {
+    @media (min-height: at-least($tall)) {
       flex: 1 0 17rem;
     }
   }
 
-  background: $c-bg-high;
+  background: $c-bg-zebra;
   justify-content: center;
 
   &:not(.after) {
@@ -75,7 +76,7 @@
   .no-square {
     flex: 0 0 64px;
     height: 64px;
-    margin-right: 10px;
+    margin-inline-end: 10px;
   }
 
   .is3d & div.no-square {
@@ -133,12 +134,26 @@
 .puzzle__controls {
   @extend %flex-center;
 
+  position: relative;
   height: $col3-uniboard-controls;
-  margin-top: #{-$block-gap};
+  margin: calc(0px - #{$puzzle-block-gap}) 0;
 
-  // height: calc(#{$puzzle-history-height} + #{$block-gap});
+  @include mq-is-col1 {
+    height: $col1-uniboard-controls;
+  }
+
   .jumps {
+    position: relative;
     flex: 1 1 auto;
+  }
+
+  .board-menu {
+    @include mq-at-least-col2 {
+      @include box-radius-top;
+
+      bottom: $col3-uniboard-controls;
+      border-bottom: 2px solid $c-secondary;
+    }
   }
 
   .fbt {

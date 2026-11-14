@@ -1,20 +1,13 @@
-import { VNode } from 'snabbdom';
-
-export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
-
-export type Score = number | [number] | [number, number];
+import type { LiconValue } from 'lib/licon';
 
 export interface StandingPlayer extends SimplePlayer {
   id: string;
-  withdraw: boolean;
+  withdraw?: boolean;
   score: number;
-  fire: boolean;
   rank: number;
   sheet: {
     fire: boolean;
-    total: number;
-    scores: Score[];
+    scores: string; // in reverse chronological order
   };
   nb: Nb;
   team?: string;
@@ -30,13 +23,12 @@ export interface TournamentOpts {
   element: HTMLElement;
   socketSend: SocketSend;
   data: TournamentData;
-  i18n: I18nDict;
-  trans: Trans;
   classes: string | null;
   $side: Cash;
   $faq: Cash;
   userId?: string;
   chat?: any;
+  showRatings: boolean;
 }
 
 export interface TournamentData {
@@ -53,9 +45,8 @@ export interface TournamentData {
   };
   me?: {
     rank: number;
-    username: string;
-    gameId: string;
-    withdraw: boolean;
+    gameId?: string;
+    withdraw?: boolean;
     pauseDelay?: number;
   };
   playerInfo?: PlayerInfo;
@@ -65,10 +56,12 @@ export interface TournamentData {
     accepted: boolean;
     list: { condition: string; verdict: string }[];
   };
+  botsAllowed?: boolean;
   secondsToStart?: number;
   nbPlayers: number;
   podium?: PodiumPlayer[];
   berserkable: boolean;
+  noStreak?: boolean;
   isStarted: boolean;
   isFinished: boolean;
   isRecentlyFinished: boolean;
@@ -77,7 +70,7 @@ export interface TournamentData {
   defender?: string;
   spotlight?: {
     iconImg: string;
-    iconFont: string;
+    iconFont: LiconValue;
   };
   schedule?: {
     freq: 'shield' | 'marathon';
@@ -101,32 +94,26 @@ export interface TournamentData {
   };
   duels: Duel[];
   duelTeams?: DuelTeams;
+  myUsername?: string;
+  reloadDelay?: number;
+  reloadEndpoint: string;
 }
 
 export interface FeaturedGame {
   id: string;
-  fen: Fen;
+  fen: FEN;
   orientation: Color;
   lastMove: string;
   white: FeaturedPlayer;
   black: FeaturedPlayer;
-  c?: {
-    white: number;
-    black: number;
-  };
-  clock?: {
-    // temporary BC, remove me
-    white: number;
-    black: number;
-  };
+  c?: ByColor<number>;
   winner?: Color;
 }
 
-export interface SimplePlayer {
-  name: string;
+export interface SimplePlayer extends LightUserNoId {
   rating: number;
-  title?: string;
   provisional?: boolean;
+  realName?: string;
 }
 
 interface FeaturedPlayer extends SimplePlayer {
@@ -134,10 +121,12 @@ interface FeaturedPlayer extends SimplePlayer {
   berserk?: boolean;
 }
 
+type TeamName = string;
+type TeamFlair = string;
+export type LightTeam = [TeamName, TeamFlair?];
+
 export interface TeamBattle {
-  teams: {
-    [id: string]: string;
-  };
+  teams: Record<string, LightTeam>;
   joinWith: string[];
   hasMoreThanTenTeams?: boolean;
 }
@@ -158,18 +147,15 @@ export interface TeamPlayer {
 
 export type Page = StandingPlayer[];
 
-export interface Pages {
-  [n: number]: Page;
-}
+export type Pages = Record<number, Page>;
 
 export interface Player extends SimplePlayer {
   id: string;
   rank: number;
   score: number;
-  fire: boolean;
   nb: Nb;
   performance?: number;
-  withdraw: boolean;
+  withdraw?: boolean;
   team?: string;
 }
 
@@ -180,11 +166,12 @@ export interface Pairing {
     rating: number;
     name: string;
     title?: string;
+    berserk?: boolean;
   };
-  win: boolean;
+  win: boolean | null;
   status: number;
-  score: number;
   berserk: boolean;
+  score: number;
 }
 
 export interface PlayerInfo {
@@ -199,6 +186,7 @@ export interface TeamInfo {
   perf: number;
   score: number;
   topPlayers: TeamPlayer[];
+  joined?: boolean;
 }
 
 export interface TeamPlayer {
@@ -221,14 +209,12 @@ export interface DuelPlayer {
   t?: string; // title
 }
 
-export interface DuelTeams {
-  [userId: string]: string;
-}
+export type DuelTeams = Record<string, string>;
 
-export interface PodiumPlayer {
-  name: string;
+export interface PodiumPlayer extends LightUser {
   performance?: number;
   nb: Nb;
+  realName?: string;
 }
 
 export interface Nb {
@@ -237,12 +223,36 @@ export interface Nb {
   berserk: number;
 }
 
-export interface Pagination {
-  currentPage: number;
-  maxPerPage: number;
-  from: number;
-  to: number;
-  currentPageResults: Page;
-  nbResults: number;
-  nbPages: number;
+export interface Tournament {
+  id: string;
+  fullName: string;
+  bounds: {
+    start: Date;
+    end: Date;
+  };
+  schedule: {
+    freq: string;
+    speed: string;
+  };
+  perf: {
+    key: Exclude<Perf, 'fromPosition'>;
+    position: number;
+    name: string;
+  };
+  hasMaxRating: boolean;
+  variant: Variant;
+  startsAt: number;
+  finishesAt: number;
+  status: number;
+  position: number;
+  rated: boolean;
+  minutes: number;
+  createdBy: string;
+  clock: Clock;
+  nbPlayers: number;
+}
+
+export interface Clock {
+  limit: number;
+  increment: number;
 }

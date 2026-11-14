@@ -1,52 +1,61 @@
 package lila.coach
 
-import org.joda.time.{ DateTime, Days }
+import chess.IntRating
+import reactivemongo.api.bson.Macros.Annotations.Key
+import scalalib.model.LangTag
+
+import lila.core.id.ImageId
+import lila.core.perf.UserWithPerfs
+import lila.rating.UserPerfsExt.bestStandardRating
 
 case class Coach(
-    _id: Coach.Id, // user ID
+    @Key("_id") id: Coach.Id, // user ID
     listed: Coach.Listed,
     available: Coach.Available,
     profile: CoachProfile,
-    picturePath: Option[Coach.PicturePath],
+    picture: Option[ImageId],
     nbReviews: Int,
     user: Coach.User,
-    languages: List[String],
-    createdAt: DateTime,
-    updatedAt: DateTime
-) {
+    languages: List[LangTag],
+    createdAt: Instant,
+    updatedAt: Instant
+):
+  def hasPicture = picture.isDefined
 
-  def id = _id
+  def daysOld = daysBetween(createdAt, nowInstant)
 
-  def is(user: lila.user.User) = id.value == user.id
+  def withUser(user: UserWithPerfs) = Coach.WithUser(this, user)
 
-  def hasPicture = picturePath.isDefined
+object Coach:
 
-  def daysOld = Days.daysBetween(createdAt, DateTime.now).getDays
-}
+  opaque type Id = String
+  object Id extends lila.core.userId.OpaqueUserId[Id]
 
-object Coach {
+  given UserIdOf[Coach] = _.id.userId
 
-  def make(user: lila.user.User) =
+  val imageDimensions = lila.memo.Dimensions.square(350)
+
+  def make(user: UserWithPerfs) =
     Coach(
-      _id = Id(user.id),
+      id = user.id.into(Id),
       listed = Listed(false),
       available = Available(true),
       profile = CoachProfile(),
-      picturePath = None,
+      picture = None,
       nbReviews = 0,
       user = User(user.perfs.bestStandardRating, user.seenAt | user.createdAt),
       languages = user.lang.toList,
-      createdAt = DateTime.now,
-      updatedAt = DateTime.now
+      createdAt = nowInstant,
+      updatedAt = nowInstant
     )
 
-  case class WithUser(coach: Coach, user: lila.user.User) {
-    def isListed = coach.listed.value && user.enabled && user.marks.clean
-  }
+  case class WithUser(coach: Coach, user: UserWithPerfs):
+    def isListed = coach.listed.yes && user.enabled.yes && user.marks.clean
 
-  case class Id(value: String)          extends AnyVal with StringValue
-  case class Listed(value: Boolean)     extends AnyVal
-  case class Available(value: Boolean)  extends AnyVal
-  case class PicturePath(value: String) extends AnyVal with StringValue
-  case class User(rating: Int, seenAt: DateTime)
-}
+  opaque type Listed = Boolean
+  object Listed extends YesNo[Listed]
+
+  opaque type Available = Boolean
+  object Available extends YesNo[Available]
+
+  case class User(rating: IntRating, seenAt: Instant)

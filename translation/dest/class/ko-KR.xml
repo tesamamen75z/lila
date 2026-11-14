@@ -12,13 +12,13 @@
   <string name="teachersX">교사: %s</string>
   <string name="newClass">새 클래스</string>
   <string name="closeClass">클래스 닫기</string>
-  <string name="closedByX">%s에 의해 닫힘</string>
+  <string name="removedByX">%s에 의해 제거됨</string>
   <string name="reopen">다시 열기</string>
   <string name="removeStudent">학생 삭제</string>
   <string name="removedStudents">삭제됨</string>
   <string name="inviteTheStudentBack">학생을 다시 초대</string>
   <string name="sendAMessage">모든 학생에게 메시지 보내기</string>
-  <string name="aLinkToTheClassWillBeAdded">수업 링크는 메시지 끝에 자동으로 추가되므로 직접 포함 할 필요가 없습니다.</string>
+  <string name="aLinkToTheClassWillBeAdded">수업 링크는 메시지 끝에 자동으로 추가되므로 직접 포함할 필요가 없습니다.</string>
   <string name="className">클래스 이름</string>
   <string name="classDescription">수업 설명</string>
   <string name="visibleByBothStudentsAndTeachers">수업의 교사와 학생 모두에게 표시됩니다</string>
@@ -34,7 +34,7 @@
   <string name="addStudent">학생 추가</string>
   <string name="lichessProfileXCreatedForY">%2$s를 위해 생성된 Lichess 프로필 %1$s</string>
   <string name="studentCredentials">학생:  %1$s
-유저이름: %2$s
+사용자 명: %2$s
 비밀번호: %3$s</string>
   <string name="inviteALichessAccount">Lichess 계정을 초대</string>
   <string name="inviteDesc1">학생이 이미 Lichess 계정이 있는 경우 수업에 초대 할 수 있습니다.</string>
@@ -46,8 +46,9 @@
   <string name="createDesc2">이메일 주소가 필요하지 않습니다. 생성된 비밀번호를 학생에게 보내면 로그인할 수 있습니다.</string>
   <string name="createDesc3">중요: 학생은 다중 계정을 가질 수 없습니다.</string>
   <string name="createDesc4">이미 계정이 있다면 초대 양식을 사용해주세요.</string>
+  <string name="createStudentWarning">계정 생성은 실제 학생을 위해서만 해야 합니다. 다중 계정 운용을 위해 사용할 경우 차단될 수 있습니다.</string>
   <string name="lichessUsername">Lichess 유저이름</string>
-  <string name="generateANewUsername">새 유저이름 생성</string>
+  <string name="generateANewUsername">새 사용자명 만들기</string>
   <string name="welcomeToClass">%s, 수업에 오신 것을 환영합니다.
 수업에 참여할 수 있는 링크입니다.</string>
   <string name="invitationToClass">클래스 \"%s\"에 학생으로 초대받았습니다.</string>
@@ -55,7 +56,8 @@
   <plurals name="nbPendingInvitations">
     <item quantity="other">%s개의 대기중인 초대</item>
   </plurals>
-  <string name="noPendingInvitations">대기 중인 초대 없음</string>
+  <string name="pending">보류 중</string>
+  <string name="declined">거절됨</string>
   <string name="onlyVisibleToTeachers">클래스 선생님에게만 보입니다</string>
   <string name="lastActiveDate">활성화</string>
   <string name="managed">관리</string>
@@ -86,7 +88,9 @@
   <string name="variantXOverLastY">최근 %2$s 동안 %1$s 기록</string>
   <string name="winrate">승률</string>
   <string name="na">해당없음</string>
-  <string name="news">클래스 뉴스</string>
+  <string name="overview">개요</string>
+  <string name="news">소식</string>
+  <string name="classNews">학급 소식</string>
   <string name="editNews">뉴스 편집</string>
   <string name="notifyAllStudents">모든 학생에게 알림</string>
   <string name="nothingHere">비어있음</string>
@@ -94,4 +98,28 @@
   <string name="newsEdit2">상단에 최근 뉴스를 추가하세요. 이전 뉴스를 삭제하지 마세요.</string>
   <string name="newsEdit3">각 뉴스를 ---로 구분하세요.
 가로선으로 보이게 됩니다.</string>
+  <string name="invite">초대하기</string>
+  <string name="youHaveBeenInvitedByX">%s가 당신을 초대했습니다.</string>
+  <string name="youAcceptedThisInvitation">초대를 수락했습니다.</string>
+  <string name="youDeclinedThisInvitation">초대를 거절했습니다.</string>
+  <string name="orSeparator" comment="Used as separator between invite sections. Shown as large '~ or ~'.">또는</string>
+  <string name="createMultipleAccounts">여러 Lichess 계정을 한번에 만들기</string>
+  <string name="multipleAccsFormDescription" comment="%s is a link and will be replaced with the translation of useThisForm. Make sure both strings fit together.">%s 를 통해 학생 이름 목록으로부터 중복 Lichess 계정을 만들 수 있습니다.</string>
+  <string name="useThisForm" comment="Link text in multipleAccsFromDescription">이 양식을 작성해주세요.</string>
+  <string name="maxStudentsNote" comment="%1$s will be replaced with a large number (currently 100).\n%2$s is a link and will be replaced with the translation of createMoreClasses. Make sure both strings fit together.">수업은 최대 %1$s 명의 학생을 받을 수 있습니다. 더 많은 학생을 받으려면, %2$s.</string>
+  <string name="createMoreClasses" comment="Link text in maxStudentsNote">수업을 더 만들기</string>
+  <string name="studentsRealNamesOnePerLine">학생의 실명, 한 줄에 하나씩</string>
+  <string name="xisNowAStudentOfTheClass">%s은(는) 이제 반의 학생입니다</string>
+  <string name="anInvitationHasBeenSentToX">%s에게 초대장을 전송하였습니다</string>
+  <string name="xAlreadyHasAPendingInvitation">%s은(는) 이미 초대되었습니다</string>
+  <string name="xIsAKidAccountWarning">%1$s는 어린이 계정이므로 메시지를 받을 수 없습니다. 초대 링크를 수동으로 보내야 합니다: %2$s.</string>
+  <string name="moveToClass">%s로 움직여</string>
+  <string name="moveToAnotherClass">다른 반으로 이동</string>
+  <string name="allowMessagingBetweenStudents">학생들끼리 메세지를 주고받는 것을 허용하기</string>
+  <string name="allowMessagingBetweenStudentsDesc">이는 귀하가 학생을 위해 생성한 계정에만 적용됩니다.</string>
+  <string name="quickLoginCode">빠른 로그인 코드</string>
+  <string name="quickLoginCodes">빠른 로그인 코드</string>
+  <string name="quickLoginCodesDesc1" comment="String is a URL">%s에서 이 코드를 사용하여 Lichess에 학생들을 로그인시키세요.</string>
+  <string name="quickLoginCodesDesc2">코드가 만료되어도, 학생들은 수동으로 로그아웃하기 전까지 로그인되어 있습니다.</string>
+  <string name="expirationInMomentFromNow" comment="String is the translation of, for example, 'in 2 hours'">만료: %s</string>
 </resources>

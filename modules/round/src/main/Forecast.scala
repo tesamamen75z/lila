@@ -1,66 +1,60 @@
 package lila.round
 
-import org.joda.time.DateTime
-import play.api.libs.json._
+import chess.format.pgn.SanStr
+import chess.format.{ Fen, Uci }
+import chess.{ MoveOrDrop, Ply }
+import play.api.libs.json.*
 
-import chess.format.Uci
-import chess.Move
-import lila.common.Json.jodaWrites
-import lila.game.Game
+import lila.common.Json.given
 
-case class Forecast(
-    _id: String, // player full id
-    steps: Forecast.Steps,
-    date: DateTime
-) {
+case class Forecast(_id: GameFullId, steps: Forecast.Steps, date: Instant):
 
-  def apply(g: Game, lastMove: Move): Option[(Forecast, Uci.Move)] =
-    nextMove(g, lastMove) map { move =>
+  def apply(g: Game, lastMove: MoveOrDrop): Option[(Forecast, Uci)] =
+    nextMove(g, lastMove).map { move =>
       copy(
         steps = steps.collect {
-          case fst :: snd :: rest
-              if rest.nonEmpty && g.turns == fst.ply && fst.is(lastMove) && snd.is(move) =>
+          case fst :: snd :: rest if rest.nonEmpty && g.ply == fst.ply && fst.is(lastMove) && snd.is(move) =>
             rest
         },
-        date = DateTime.now
+        date = nowInstant
       ) -> move
     }
 
   // accept up to 30 lines of 30 moves each
-  def truncate = copy(steps = steps.take(30).map(_ take 30))
+  def truncate = copy(steps = steps.take(30).map(_.take(30)))
 
-  private def nextMove(g: Game, last: Move) =
-    steps.foldLeft(none[Uci.Move]) {
-      case (None, fst :: snd :: _) if g.turns == fst.ply && fst.is(last) => snd.uciMove
-      case (move, _)                                                     => move
-    }
-}
+  private def nextMove(g: Game, last: MoveOrDrop) =
+    steps.collectFirstSome:
+      case fst :: snd :: _ if g.ply == fst.ply && fst.is(last) => snd.uciMove
+      case _ => none
 
-object Forecast {
+object Forecast:
 
   type Steps = List[List[Step]]
 
   def maxPlies(steps: Steps): Int = steps.foldLeft(0)(_ max _.size)
 
+  def isValid(js: JsValue): Boolean =
+    js.asOpt[JsArray]
+      .forall: lines =>
+        lines.value.sizeIs <= 30 && lines.value.forall:
+          _.asOpt[JsArray].forall(_.value.sizeIs <= 30)
+
   case class Step(
-      ply: Int,
+      ply: Ply,
       uci: String,
-      san: String,
-      fen: String,
+      san: SanStr,
+      fen: Fen.Full,
       check: Option[Boolean]
-  ) {
+  ):
 
-    def is(move: Move)     = move.toUci.uci == uci
-    def is(move: Uci.Move) = move.uci == uci
+    def is(move: MoveOrDrop) = move.toUci.uci == uci
+    def is(move: Uci) = move.uci == uci
 
-    def uciMove = Uci.Move(uci)
-  }
+    def uciMove = Uci(uci)
 
-  implicit val forecastStepJsonFormat = Json.format[Step]
+  given Format[Step] = Json.format
+  given Writes[Forecast] = Json.writes
 
-  implicit val forecastJsonWriter = Json.writes[Forecast]
-
-  case object OutOfSync extends lila.base.LilaException {
+  case object OutOfSync extends lila.core.lilaism.LilaException:
     val message = "Forecast out of sync"
-  }
-}

@@ -1,133 +1,159 @@
 package lila.app
 package mashup
 
-import lila.api.Context
+import play.api.libs.json.*
+
+import lila.common.HTTPRequest
+import lila.core.game.Game
+import lila.core.perf.UserWithPerfs
 import lila.event.Event
-import lila.forum.MiniForumPost
-import lila.game.{ Game, Pov }
+import lila.mon.extensions.*
 import lila.playban.TempBan
+import lila.round.RoundGame.isMyTurnOrJustMoved
+import lila.round.UrgentGames
 import lila.simul.{ Simul, SimulIsFeaturable }
 import lila.streamer.LiveStreams
+import lila.swiss.Swiss
 import lila.timeline.Entry
-import lila.tournament.{ Tournament, Winner }
-import lila.tv.Tv
-import lila.user.LightUserApi
-import lila.user.User
-import play.api.libs.json._
+import lila.tournament.Tournament
+import lila.ublog.UblogPost
+import lila.user.{ LightUserApi, Me, User }
 
 final class Preload(
-    tv: Tv,
+    tv: lila.tv.Tv,
     gameRepo: lila.game.GameRepo,
-    userCached: lila.user.Cached,
-    tourWinners: lila.tournament.WinnersApi,
+    perfsRepo: lila.user.UserPerfsRepo,
     timelineApi: lila.timeline.EntryApi,
-    liveStreamApi: lila.streamer.LiveStreamApi,
+    liveStreamApi: lila.streamer.LiveApi,
     dailyPuzzle: lila.puzzle.DailyPuzzle.Try,
     lobbyApi: lila.api.LobbyApi,
-    lobbySocket: lila.lobby.LobbySocket,
     playbanApi: lila.playban.PlaybanApi,
     lightUserApi: LightUserApi,
     roundProxy: lila.round.GameProxyRepo,
     simulIsFeaturable: SimulIsFeaturable,
-    lastPostCache: lila.blog.LastPostCache
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    getLastUpdates: lila.feed.Feed.GetLastUpdates,
+    ublogApi: lila.ublog.UblogApi,
+    unreadCount: lila.msg.MsgUnreadCount,
+    relayHome: lila.relay.RelayHomeApi,
+    notifyApi: lila.notify.NotifyApi,
+    clasApi: lila.clas.ClasApi
+)(using Executor):
 
-  import Preload._
+  import Preload.*
 
   def apply(
-      posts: Fu[List[MiniForumPost]],
       tours: Fu[List[Tournament]],
+      swiss: Option[Swiss],
       events: Fu[List[Event]],
       simuls: Fu[List[Simul]],
       streamerSpots: Int
-  )(implicit ctx: Context): Fu[Homepage] =
-    lobbyApi(ctx).mon(_.lobby segment "lobbyApi") zip
-      posts.mon(_.lobby segment "posts") zip
-      tours.mon(_.lobby segment "tours") zip
-      events.mon(_.lobby segment "events") zip
-      simuls.mon(_.lobby segment "simuls") zip
-      tv.getBestGame.mon(_.lobby segment "tvBestGame") zip
-      (ctx.userId ?? timelineApi.userEntries).mon(_.lobby segment "timeline") zip
-      userCached.topWeek.mon(_.lobby segment "userTopWeek") zip
-      tourWinners.all.dmap(_.top).mon(_.lobby segment "tourWinners") zip
-      (ctx.noBot ?? dailyPuzzle()).mon(_.lobby segment "puzzle") zip
-      (ctx.noKid ?? liveStreamApi.all
-        .dmap(_.homepage(streamerSpots, ctx.req, ctx.me.flatMap(_.lang)) withTitles lightUserApi)
-        .mon(_.lobby segment "streams")) zip
-      (ctx.userId ?? playbanApi.currentBan).mon(_.lobby segment "playban") zip
-      (ctx.blind ?? ctx.me ?? roundProxy.urgentGames) flatMap {
-        // format: off
-        case (((((((((((((data, povs), posts), tours), events), simuls), feat), entries), lead), tWinners), puzzle), streams), playban), blindGames) =>
-        // format: on
-        (ctx.me ?? currentGameMyTurn(povs, lightUserApi.sync))
-          .mon(_.lobby segment "currentGame") zip
-          lightUserApi
-            .preloadMany {
-              tWinners.map(_.userId) ::: posts.flatMap(_.userId) ::: entries.flatMap(_.userIds).toList
-            }
-            .mon(_.lobby segment "lightUsers") map { case (currentGame, _) =>
-            Homepage(
-              data,
-              entries,
-              posts,
-              tours,
-              events,
-              simuls,
-              feat,
-              lead,
-              tWinners,
-              puzzle,
-              streams.excludeUsers(events.flatMap(_.hostedBy)),
-              lastPostCache.apply,
-              playban,
-              currentGame,
-              simulIsFeaturable,
-              blindGames,
-              lobbySocket.counters
-            )
-          }
-      }
+  )(using ctx: Context): Fu[Homepage] = for
+    nbNotifications <- ctx.me.so(notifyApi.unreadCount(_))
+    withPerfs <- ctx.user.traverse(perfsRepo.withPerfs)
+    given Option[UserWithPerfs] = withPerfs
+    (
+      lobby,
+      tours,
+      events,
+      simuls,
+      feat,
+      entries,
+      puzzle,
+      streams,
+      playban,
+      blindGames,
+      ublogPosts,
+      lichessMsg
+    ) <- (
+      lobbyApi.get.mon(lila.mon.lobby.segment("lobbyApi")),
+      tours.mon(lila.mon.lobby.segment("tours")),
+      events.mon(lila.mon.lobby.segment("events")),
+      simuls.mon(lila.mon.lobby.segment("simuls")),
+      tv.getBestGame.mon(lila.mon.lobby.segment("tvBestGame")),
+      ctx.userId.so(timelineApi.userEntries).mon(lila.mon.lobby.segment("timeline")),
+      ctx.noBot.so(dailyPuzzle()).mon(lila.mon.lobby.segment("puzzle")),
+      ctx.kid.no.so:
+        liveStreamApi.all
+          .map(_.homepage(streamerSpots, ctx.acceptLanguages).withTitles(lightUserApi))
+          .mon(lila.mon.lobby.segment("streams"))
+      ,
+      ctx.userId.so(playbanApi.currentBan).mon(lila.mon.lobby.segment("playban")),
+      ctx.blind.so(ctx.me).so(roundProxy.urgentGames),
+      ublogApi.myCarousel,
+      ctx.userId
+        .ifTrue(nbNotifications > 0)
+        .filterNot(liveStreamApi.isStreaming)
+        .so(unreadCount.hasMustReadLichessMsg)
+    ).tupled
+    (data, povs) = lobby
+    (currentGame, _) <- ctx.me
+      .soUse(currentGameMyTurnOrJustMoved(povs))
+      .mon(lila.mon.lobby.segment("currentGame"))
+      .zip:
+        lightUserApi
+          .preloadMany(entries.flatMap(_.userIds).toList)
+          .mon(lila.mon.lobby.segment("lightUsers"))
+    classes <- ctx.myId.so(me => clasApi.isStudent(me).so(clasApi.clas.ofStudent(me, 4)))
+    relaySpotlights = relayHome.spotlight.getForContinent(HTTPRequest.continent(ctx.req))
+  yield Homepage(
+    data,
+    entries,
+    tours,
+    swiss,
+    events,
+    relaySpotlights,
+    simuls,
+    feat,
+    puzzle,
+    streams.excludeUsers(events.flatMap(_.hostedBy)),
+    playban,
+    currentGame,
+    simulIsFeaturable,
+    blindGames,
+    getLastUpdates(),
+    ublogPosts,
+    classes,
+    withPerfs,
+    hasUnreadLichessMessage = lichessMsg
+  )
 
-  def currentGameMyTurn(user: User): Fu[Option[CurrentGame]] =
-    gameRepo.playingRealtimeNoAi(user).flatMap {
-      _.map { roundProxy.pov(_, user) }.sequenceFu.dmap(_.flatten)
-    } flatMap {
-      currentGameMyTurn(_, lightUserApi.sync)(user)
-    }
+  def currentGameMyTurnOrJustMoved(using me: Me): Fu[Option[CurrentGame]] =
+    gameRepo
+      .playingRealtimeNoAi(me)
+      .flatMap:
+        _.map(roundProxy.pov(_, me)).parallel.dmap(_.flatten)
+      .flatMap(currentGameMyTurnOrJustMoved)
 
-  private def currentGameMyTurn(povs: List[Pov], lightUser: lila.common.LightUser.GetterSync)(
-      user: User
-  ): Fu[Option[CurrentGame]] =
-    ~povs.collectFirst {
-      case p1 if p1.game.nonAi && p1.game.hasClock && p1.isMyTurn =>
-        roundProxy.pov(p1.gameId, user) dmap (_ | p1) map { pov =>
-          val opponent = lila.game.Namer.playerTextBlocking(pov.opponent)(lightUser)
+  private def currentGameMyTurnOrJustMoved(povs: List[Pov])(using me: Me): Fu[Option[CurrentGame]] =
+    ~povs.collectFirst:
+      case p1 if p1.game.nonAi && p1.game.hasClock && p1.isMyTurnOrJustMoved =>
+        roundProxy.pov(p1.gameId, me).dmap(_ | p1).map { pov =>
+          val opponent = lila.game.Namer.playerTextBlocking(pov.opponent)(using lightUserApi.sync)
           CurrentGame(pov = pov, opponent = opponent).some
         }
-    }
-}
 
-object Preload {
+object Preload:
 
   case class Homepage(
       data: JsObject,
       userTimeline: Vector[Entry],
-      forumRecent: List[MiniForumPost],
       tours: List[Tournament],
+      swiss: Option[Swiss],
       events: List[Event],
+      relays: List[lila.relay.RelayCard],
       simuls: List[Simul],
       featured: Option[Game],
-      leaderboard: List[User.LightPerf],
-      tournamentWinners: List[Winner],
       puzzle: Option[lila.puzzle.DailyPuzzle.WithHtml],
       streams: LiveStreams.WithTitles,
-      lastPost: List[lila.blog.MiniPost],
       playban: Option[TempBan],
       currentGame: Option[Preload.CurrentGame],
       isFeaturable: Simul => Boolean,
-      blindGames: List[Pov],
-      counters: lila.lobby.LobbyCounters
+      blindGames: UrgentGames,
+      lastUpdates: List[lila.feed.Feed.Update],
+      ublogPosts: List[UblogPost.PreviewPost],
+      classes: List[lila.clas.Clas],
+      me: Option[UserWithPerfs],
+      hasUnreadLichessMessage: Boolean
   )
 
   case class CurrentGame(pov: Pov, opponent: String)
-}

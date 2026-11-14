@@ -1,6 +1,5 @@
-package lila
+package lila.teamSearch
 
-package object teamSearch extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
 
-  private[teamSearch] val logger = lila.log("teamSearch")
-}
+val index = lila.search.Index.Team

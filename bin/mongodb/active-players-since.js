@@ -1,4 +1,4 @@
-var result = db.game5.aggregate(
+const result = db.game5.aggregate(
   {
     $match: {
       ca: {
@@ -37,7 +37,7 @@ var result = db.game5.aggregate(
   },
   {
     $limit: 10,
-  }
+  },
 );
 
 printjson(result);

@@ -1,43 +1,31 @@
 package lila.msg
 
-import org.joda.time.DateTime
-
-import lila.user.User
-
-case class Msg(
-    text: String,
-    user: User.ID,
-    date: DateTime
-) {
+case class Msg(text: String, user: UserId, date: Instant):
 
   def asLast =
     Msg.Last(
-      text = text take 60,
+      text = text.take(60),
       user = user,
       date = date,
       read = false
     )
-}
 
-object Msg {
-
-  case class Id(value: String) extends AnyVal
+object Msg:
 
   case class Last(
       text: String,
-      user: User.ID,
-      date: DateTime,
+      user: UserId,
+      date: Instant,
       read: Boolean
-  ) {
-    def unreadBy(userId: User.ID) = !read && user != userId
-  }
+  ):
+    def unreadBy(userId: UserId) = !read && user != userId
 
-  def make(text: String, user: User.ID): Option[Msg] = {
-    val cleanText = text.trim
-    cleanText.nonEmpty option Msg(
-      text = cleanText take 10_000,
-      user = user,
-      date = DateTime.now
+  def make(text: String, user: UserId, date: Instant): Option[Msg] =
+    val cleanText = lila.common.String.softCleanUp(text.take(8_000))
+    cleanText.nonEmpty.option(
+      Msg(
+        text = cleanText,
+        user = user,
+        date = date
+      )
     )
-  }
-}

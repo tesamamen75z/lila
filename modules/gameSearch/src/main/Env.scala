@@ -1,45 +1,33 @@
 package lila.gameSearch
 
-import akka.actor.ActorSystem
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
 
-import lila.game.actorApi.{ FinishGame, InsertGame }
-import lila.search._
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.search.*
+import lila.search.client.SearchClient
+import lila.search.spec.Query
 
 @Module
 private class GameSearchConfig(
     @ConfigName("index") val indexName: String,
-    @ConfigName("paginator.max_per_page") val paginatorMaxPerPage: MaxPerPage,
-    @ConfigName("actor.name") val actorName: String
+    @ConfigName("paginator.max_per_page") val paginatorMaxPerPage: MaxPerPage
 )
 
 @Module
 final class Env(
     appConfig: Configuration,
-    gameRepo: lila.game.GameRepo,
-    makeClient: Index => ESClient
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
+    client: SearchClient
+)(using Executor, lila.core.i18n.Translator):
 
-  private val config = appConfig.get[GameSearchConfig]("gameSearch")(AutoConfig.loader)
-
-  private lazy val client = makeClient(Index(config.indexName))
+  private val config = appConfig.get[GameSearchConfig]("gameSearch")(using AutoConfig.loader)
 
   lazy val api = wire[GameSearchApi]
 
-  lazy val paginator = wire[PaginatorBuilder[lila.game.Game, Query]]
+  lazy val paginator = PaginatorBuilder[Game, Query.Game](api, config.paginatorMaxPerPage)
 
   lazy val forms = wire[GameSearchForm]
 
   lazy val userGameSearch = wire[UserGameSearch]
-
-  lila.common.Bus.subscribeFun("finishGame", "gameSearchInsert") {
-    case FinishGame(game, _, _) if !game.aborted => api.store(game).unit
-    case InsertGame(game)                        => api.store(game).unit
-  }
-}

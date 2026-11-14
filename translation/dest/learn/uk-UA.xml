@@ -13,13 +13,13 @@
   <string name="rookIntro">Тура — це важка фігура. Чи готові ви керувати нею?</string>
   <string name="rookGoal">Натисніть на туру й доведіть її до зірки!</string>
   <string name="grabAllTheStars">Зберіть всі зірки!</string>
-  <string name="theFewerMoves">Чим менше ходів Ви зробите, тим більше очок ви отримаєте!</string>
+  <string name="theFewerMoves">Чим менше ходів ви зробите, тим більше очок ви отримаєте!</string>
   <string name="useTwoRooks">Використовуйте дві тури, аби прискорити процес!</string>
   <string name="rookComplete">Вітаємо! Ви навчилися ходити турою.</string>
   <string name="theBishop">Слон</string>
   <string name="itMovesDiagonally">Переміщається діагоналями</string>
   <string name="bishopIntro">Далі ми навчимося ходити слоном!</string>
-  <string name="youNeedBothBishops">Поля білого кольору контролює один слон, поля чорного кольору — інший. Вам потрібні обидва слона!</string>
+  <string name="youNeedBothBishops">Поля білого кольору контролює один слон, поля чорного кольору — інший. Вам потрібні обидва слони!</string>
   <string name="bishopComplete">Вітаємо! Ви навчилися ходити слоном.</string>
   <string name="theQueen">Ферзь</string>
   <string name="queenCombinesRookAndBishop">Ферзь = тура + слон</string>
@@ -41,7 +41,7 @@
   <string name="thePawn">Пішак</string>
   <string name="itMovesForwardOnly">Ходить лише вперед</string>
   <string name="pawnIntro">Пішаки слабкі, але мають великий потенціал.</string>
-  <string name="pawnsMoveOneSquareOnly">Пішаки ходять тільки на одну клітинку вперед. Але досягнувши іншого кінця дошки, вони перетворюються на сильну фігуру!</string>
+  <string name="pawnsMoveOneSquareOnly">Пішаки ходять лише на одне поле вперед. Але досягнувши іншого кінця дошки, вони перетворюються на сильну фігуру!</string>
   <string name="mostOfTheTimePromotingToAQueenIsBest">У більшості випадку пішака краще перетворити на ферзя. Але іноді перетворення в коня може бути вигідніше!</string>
   <string name="pawnsMoveForward">Пішаки рухаються вперед, але б\'ють по діагоналях!</string>
   <string name="captureThenPromote">Побийте, потім перетворіться!</string>
@@ -53,18 +53,18 @@
   <string name="pawnComplete">Вітаємо! У пішаків немає секретів для вас.</string>
   <string name="pawnPromotion">Перетворення пішака</string>
   <string name="yourPawnReachedTheEndOfTheBoard">Ваш пішак досяг краю дошки!</string>
-  <string name="itNowPromotesToAStrongerPiece">Зараз вона перетворюється на фігуру сильніше.</string>
+  <string name="itNowPromotesToAStrongerPiece">Зараз він перетвориться на фігуру сильніше.</string>
   <string name="selectThePieceYouWant">Оберіть фігуру, яку захочете!</string>
   <string name="fundamentals">Основи</string>
   <string name="capture">Взяття</string>
   <string name="takeTheEnemyPieces">З\'їжте фігури противника</string>
-  <string name="captureIntro">Визначте незахищені фігури противника й з\'їжте їх!</string>
+  <string name="captureIntro">Визначте незахищені фігури суперника та з\'їжте їх!</string>
   <string name="takeTheBlackPieces">З\'їжте чорні фігури!</string>
   <string name="takeTheBlackPiecesAndDontLoseYours">З\'їжте всі чорні фігури! І не втратьте свої.</string>
   <string name="captureComplete">Вітаємо! Тепер ви знаєте, як боротися з шаховими фігурами!</string>
   <string name="protection">Захист</string>
   <string name="keepYourPiecesSafe">Захищайте ваші фігури</string>
-  <string name="protectionIntro">Визначте, які ваші фігури атакує противник, і захистіть їх!</string>
+  <string name="protectionIntro">Визначте, які ваші фігури атакує суперник, і захистіть їх!</string>
   <string name="protectionComplete">Вітаємо! Фігура, яку ви не втратили, це виграна фігура!</string>
   <string name="escape">Вас атакують! Усуньте загрозу!</string>
   <string name="noEscape">Це не вихід,
@@ -89,14 +89,14 @@
   <string name="youCanGetOutOfCheckByTaking">Ви можете піти від шаха,
 з\'ївши атакуючу фігуру.</string>
   <string name="thisKnightIsCheckingThroughYourDefenses">Цей кінь ставить шах,
-минаючи твій захист!</string>
+минаючи Ваш захист!</string>
   <string name="escapeOrBlock">Виведіть короля
 або закрийтеся!</string>
-  <string name="outOfCheckComplete">Вітаємо! Ваш король не зможе бути взято, переконайтеся, що ви можете захистити його від шаха!</string>
+  <string name="outOfCheckComplete">Вітаємо! Ваш король не може бути взятим, переконайтеся, що ви можете захистити його від шаха!</string>
   <string name="mateInOne">Мат в один хід</string>
-  <string name="defeatTheOpponentsKing">Поразка короля противника</string>
+  <string name="defeatTheOpponentsKing">Поразка короля суперника</string>
   <string name="mateInOneIntro">Ви виграєте, якщо Ваш суперник не може захиститися від шаха.</string>
-  <string name="attackYourOpponentsKing">Атакуйте короля вашого противника таким чином, аби його не можна було захистити!</string>
+  <string name="attackYourOpponentsKing">Атакуйте короля вашого суперника таким чином, щоб його не можна було захистити!</string>
   <string name="mateInOneComplete">Вітаємо! Таким чином, ви виграєте в шахи!</string>
   <string name="intermediate">Проміжний етап</string>
   <string name="boardSetup">Позиція на дошці</string>
@@ -117,6 +117,7 @@
 Зробіть будь-який хід, щоб продовжити.</string>
   <string name="boardSetupComplete">Вітаємо! Тепер ви знаєте, як ставити фігури на шахівниці.</string>
   <string name="castling">Рокіровка</string>
+  <string name="enPassant">Взяття на проході</string>
   <string name="theSpecialKingMove">Особливий хід короля</string>
   <string name="castlingIntro">Захистіть свого короля й виведіть у бій туру!</string>
   <string name="castleKingSide">Пересуньте свого короля на дві клітини до тури королівського флангу!</string>
@@ -131,11 +132,10 @@
   <string name="findAWayToCastleKingSide">Знайдіть спосіб зробити коротку рокіровку!</string>
   <string name="findAWayToCastleQueenSide">Знайдіть спосіб зробити довгу рокіровку!</string>
   <string name="castlingComplete">Вітаємо! Ви маєте майже завжди рокіруватися в партіях.</string>
-  <string name="enPassant">Взяття на проході</string>
   <string name="theSpecialPawnMove">Особливий хід пішаком</string>
   <string name="enPassantIntro">Коли пішак суперника зробив хід на два поля, Ви можете взяти його, ніби він зробив хід лише на одне.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Чорні щойно сходили пішаком на два поля! Візьміть його на проході.</string>
-  <string name="enPassantOnlyWorksImmediately">Взяття на проході можливо тільки безпосередньо після того, як суперник зробив хід пішаком.</string>
+  <string name="enPassantOnlyWorksImmediately">Взяття на проході можливо лише безпосередньо після того, як суперник зробив хід пішаком.</string>
   <string name="enPassantOnlyWorksOnFifthRank">Взяття на проході можна зробити, якщо ваш пішак на п\'ятому рядку.</string>
   <string name="takeAllThePawnsEnPassant">Візьміть всі пішаки на проході!</string>
   <string name="enPassantComplete">Вітаємо! Тепер ви можете робити взяття на проході.</string>
@@ -154,7 +154,7 @@
 Тура = 5 пішаків
 Слон = 3 пішаки
 Кінь = 3 пішаки
-Пішка = 1 пішак
+Пішак = 1 пішак
 Король безцінний! Його втрата означає, що гру програно.</string>
   <string name="queenOverBishop">Атакуйте фігури з найбільшою цінністю!
 Ферзь &gt; Слон</string>
@@ -171,9 +171,9 @@
 Пішак = 1 пішак</string>
   <string name="checkInTwo">Шах в 2 ходи</string>
   <string name="twoMovesToGiveCheck">Два ходи на те, щоб зробити шах</string>
-  <string name="checkInTwoIntro">Знайдіть комбінацію в два ходи, щоб поставити шах королю супротивника!</string>
-  <string name="checkInTwoGoal">Створіть загрозу королю противника в два ходи!</string>
-  <string name="checkInTwoComplete">Вітаємо! Ви поставили шах вашому противникові, змусивши його захищати свого короля!</string>
+  <string name="checkInTwoIntro">Знайдіть комбінацію в два ходи, щоб поставити шах королю суперника!</string>
+  <string name="checkInTwoGoal">Створіть загрозу королю суперника в два ходи!</string>
+  <string name="checkInTwoComplete">Вітаємо! Ви поставили шах вашому супернику, змусивши його захищати свого короля!</string>
   <string name="whatNext">Що далі?</string>
   <string name="youKnowHowToPlayChess">Ви вмієте грати в шахи, вітаємо! Ви хочете стати сильнішим гравцем?</string>
   <string name="register">Реєстрація</string>
@@ -201,8 +201,8 @@
   <string name="nailedIt">Успіх.</string>
   <string name="rightOn">Правильно!</string>
   <string name="stageXComplete">Етап %s завершено</string>
-  <string name="yourScore">Ваш результат</string>
   <string name="next">Далі</string>
+  <string name="nextX">Далі %s</string>
   <string name="backToMenu">Повернутися до меню</string>
   <string name="puzzleFailed">Задачу не вирішено!</string>
   <string name="retry">Ще раз</string>

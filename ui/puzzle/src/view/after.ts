@@ -1,91 +1,65 @@
-import { bind, dataIcon } from '../util';
-import { Controller, MaybeVNodes } from '../interfaces';
-import { h, VNode } from 'snabbdom';
+import { licon } from 'lib/licon';
+import { type VNode, bind, icon, div, button, span, strong, a, type MaybeVNode } from 'lib/view';
 
-const renderVote = (ctrl: Controller): VNode =>
-  h(
-    'div.puzzle__vote',
-    ctrl.autoNexting()
-      ? []
-      : [
-          ctrl.session.isNew() && ctrl.getData().user?.provisional
-            ? h('div.puzzle__vote__help', [
-                h('p', ctrl.trans.noarg('didYouLikeThisPuzzle')),
-                h('p', ctrl.trans.noarg('voteToLoadNextOne')),
-              ])
-            : null,
-          h(
-            'div.puzzle__vote__buttons',
-            {
-              class: {
-                enabled: !ctrl.vm.voteDisabled,
-              },
-            },
-            [
-              h('div.vote.vote-up', {
-                hook: bind('click', () => ctrl.vote(true)),
-              }),
-              h('div.vote.vote-down', {
-                hook: bind('click', () => ctrl.vote(false)),
-              }),
-            ]
-          ),
-        ]
-  );
+import type PuzzleCtrl from '../ctrl';
 
-const renderContinue = (ctrl: Controller) =>
-  h(
-    'a.continue',
-    {
-      hook: bind('click', ctrl.nextPuzzle),
-    },
-    [h('i', { attrs: dataIcon('') }), ctrl.trans.noarg('continueTraining')]
-  );
+const renderVote = (ctrl: PuzzleCtrl): MaybeVNode => {
+  if (!ctrl.data.user) return null;
+  if (ctrl.autoNexting()) return div('.puzzle__vote');
 
-const renderStreak = (ctrl: Controller): MaybeVNodes => [
-  h('div.complete', [
-    h('span.game-over', 'GAME OVER'),
-    h('span', ctrl.trans.vdom('yourStreakX', h('strong', ctrl.streak?.data.index))),
+  return div('.puzzle__vote', [
+    ctrl.session.isNew() && ctrl.data.user?.provisional
+      ? div('.puzzle__vote__help', i18n.puzzle.didYouLikeThisPuzzle)
+      : null,
+    div('.puzzle__vote__buttons', [
+      button('.button.button-empty.vote-up', {
+        class: { active: ctrl.voted === true },
+        title: i18n.puzzle.upVote,
+        hook: bind('click', () => ctrl.vote(true)),
+      }),
+      button('.button.button-empty.vote-down', {
+        class: { active: ctrl.voted === false },
+        title: i18n.puzzle.downVote,
+        hook: bind('click', () => ctrl.vote(false)),
+      }),
+    ]),
+  ]);
+};
+
+const renderStreak = (ctrl: PuzzleCtrl): VNode[] => [
+  div('.complete', [
+    span('.game-over', i18n.site.gameOver),
+    span(i18n.puzzle.yourStreakX.asArray(strong(ctrl.streak?.data.index ?? 0))),
   ]),
-  h(
-    'a.continue',
-    {
-      attrs: { href: '/streak' },
-    },
-    [h('i', { attrs: dataIcon('') }), ctrl.trans('newStreak')]
-  ),
+  a(ctrl.routerWithLang('/streak'))('.continue', [icon(licon.PlayTriangle)(), i18n.puzzle.newStreak]),
 ];
 
-export default function (ctrl: Controller): VNode {
-  const data = ctrl.getData();
-  const win = ctrl.vm.lastFeedback == 'win';
-  return h(
-    'div.puzzle__feedback.after',
+export default function (ctrl: PuzzleCtrl): VNode {
+  const win = ctrl.lastFeedback === 'win';
+  const canPlayComputer = !ctrl.node.san?.includes('#');
+  return div(
+    '.puzzle__feedback.after',
     ctrl.streak && !win
       ? renderStreak(ctrl)
       : [
-          h('div.complete', ctrl.trans.noarg(win ? 'puzzleSuccess' : 'puzzleComplete')),
-          data.user ? renderVote(ctrl) : renderContinue(ctrl),
-          h('div.puzzle__more', [
-            h('a', {
-              attrs: {
-                'data-icon': '',
-                href: `/analysis/${ctrl.vm.node.fen.replace(/ /g, '_')}?color=${ctrl.vm.pov}#practice`,
-                title: ctrl.trans.noarg('playWithTheMachine'),
-                target: '_blank',
-                rel: 'noopener',
-              },
-            }),
-            data.user
-              ? h(
-                  'a',
-                  {
-                    hook: bind('click', ctrl.nextPuzzle),
-                  },
-                  ctrl.trans.noarg(ctrl.streak ? 'continueTheStreak' : 'continueTraining')
-                )
-              : undefined,
+          div('.complete', i18n.puzzle[win ? 'puzzleSuccess' : 'puzzleComplete']),
+          button('.continue', { hook: bind('click', ctrl.nextPuzzle) }, [
+            icon(licon.PlayTriangle)(),
+            i18n.puzzle[ctrl.streak ? 'continueTheStreak' : 'continueTraining'],
           ]),
-        ]
+          div('.puzzle__more', [
+            canPlayComputer
+              ? a(`/analysis/${ctrl.node.fen.replace(/ /g, '_')}?color=${ctrl.pov}#practice`)(
+                  '.practice.button.button-empty',
+                  {
+                    'data-icon': licon.Bullseye,
+                    title: i18n.site.playAgainstComputer,
+                    target: '_blank',
+                  },
+                )
+              : null,
+            renderVote(ctrl),
+          ]),
+        ],
   );
 }

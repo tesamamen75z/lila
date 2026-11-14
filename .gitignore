@@ -1,45 +1,54 @@
-.sbtopts
-.bsp
-.bloop/
-.metals/
-project/.bloop/
-conf/application.conf
-conf/version.conf
-
-logs
-project/metals.sbt
-project/project
-project/target
-public/compiled
-public/vendor/highcharts-4.2.5
-public/vendor/hopscotch
-public/vendor/tagify
-public/vendor/stockfish.wasm
-public/vendor/stockfish-nnue.wasm
-public/vendor/stockfish-mv.wasm
-public/vendor/stockfish.js
-public/css/
-target
-data/
+/.sbtopts
+/.jvmopts
+/.bsp/
+/.bloop/
+/.metals/
+/.pnpm-store/
+/.devenv/
+/bin/flair/download-flair.sh
+/bin/flair/emoji.txt
+/bin/flair/emojipedia.html
+/bin/git-hooks/post-*
+/bin/git-hooks/pre-push
+/bin/ublog-automod
+/project/.bloop/
+/conf/application.conf
+/conf/secrets.conf
+/conf/version.conf
+/translation/js
+logs/
+/project/metals.sbt
+/project/project/
+/project/target/
+/public/compiled/
+/public/data/*
+!/public/data/README.md
+/public/hashed/
+/public/lifat/nnue/*.tmp
+/public/lifat/nnue/*.gz
+/public/lifat/nnue/*.br
+/public/lifat/maia/*.tmp
+/public/lifat/maia/*.gz
+/public/lifat/maia/*.br
+/public/npm/
+/public/css/
+/public/json/
+target/
+/data/
 dist/
 node_modules/
-local/
-ui/common/**/*.js
-ui/common/**/*.d.ts
-ui/chess/**/*.js
-ui/chess/**/*.d.ts
-ui/game/**/*.js
-ui/game/**/*.d.ts
-ui/nvui/**/*.js
-ui/nvui/**/*.d.ts
-ui/puz/**/*.js
-ui/puz/**/*.d.ts
-ui/*/npm-debug.log
-ui/*/tsconfig.tsbuildinfo
+ui/lib/css/theme/gen/*.scss
+ui/.build/build
+ui/voice/crowdv
+ui/**/tsconfig.tsbuildinfo
 hs_*.log
-yarn-error.log
+dependency-graph.png
+dump.rdb
+.venv
 
 RUNNING_PID
+instance.lock
+.DS_Store
 
 # Eclipse auto-generated files
 /modules/*/.classpath
@@ -48,3 +57,23 @@ RUNNING_PID
 
 # VSCode auto-generated files
 .vscode/
+
+# VSCode workspaces
+*.code-workspace
+
+# IntelliJ auto-generated files
+.idea
+
+# Docker-compose / docker sbt
+/docker-compose.yml
+/?
+
+# deploy bearer
+.lila-cli
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

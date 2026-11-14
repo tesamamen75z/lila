@@ -1,15 +1,14 @@
 package lila.activity
 
-import activities._
-import org.joda.time.Interval
+import lila.common.LichessDay
 
-import lila.common.Day
-import lila.user.User
+import activities.*
 
 case class Activity(
     id: Activity.Id,
     games: Option[Games] = None,
-    posts: Option[Posts] = None,
+    forumPosts: Option[ForumPosts] = None,
+    ublogPosts: Option[UblogPosts] = None,
     puzzles: Option[Puzzles] = None,
     storm: Option[Storm] = None,
     racer: Option[Racer] = None,
@@ -23,17 +22,19 @@ case class Activity(
     studies: Option[Studies] = None,
     teams: Option[Teams] = None,
     swisses: Option[Swisses] = None,
+    tours: Option[Tours] = None,
     stream: Boolean = false
-) {
+):
 
-  def date = id.day.toDate
+  def date = id.day.toInstant
 
-  def interval = new Interval(date, date plusDays 1)
+  def interval = TimeInterval(date, date.plusDays(1))
 
   def isEmpty =
     !stream && List(
       games,
-      posts,
+      forumPosts,
+      ublogPosts,
       puzzles,
       storm,
       racer,
@@ -49,16 +50,14 @@ case class Activity(
       swisses
     )
       .forall(_.isEmpty)
-}
 
-object Activity {
+object Activity:
 
-  case class Id(userId: User.ID, day: Day)
-  object Id {
-    def today(userId: User.ID) = Id(userId, Day.today)
-  }
+  val recentNb = 7
 
-  case class WithUserId(activity: Activity, userId: User.ID)
+  case class Id(userId: UserId, day: LichessDay)
+  def today(userId: UserId) = Id(userId, LichessDay.today)
 
-  def make(userId: User.ID) = Activity(Id today userId)
-}
+  case class WithUserId(activity: Activity, userId: UserId)
+
+  def make(userId: UserId) = Activity(today(userId))

@@ -1,34 +1,51 @@
 package lila.bot
 
-import scala.concurrent.duration._
-
 import lila.common.Bus
-import lila.hub.actorApi.socket.ApiUserIsOnline
+import lila.core.perf.UserWithPerfs
+import lila.core.socket.{ ApiUserIsOnline, IsOnline }
+import lila.memo.CacheApi.buildAsyncTimeout
 import lila.memo.ExpireCallbackMemo
-import lila.socket.IsOnline
 
 final class OnlineApiUsers(
     isOnline: IsOnline,
-    scheduler: akka.actor.Scheduler
-)(implicit ec: scala.concurrent.ExecutionContext, mode: play.api.Mode) {
+    cacheApi: lila.memo.CacheApi,
+    userApi: lila.core.user.UserApi,
+    jsonView: lila.core.user.JsonView,
+    scheduler: Scheduler
+)(using Executor, Scheduler):
 
-  private val cache = new ExpireCallbackMemo(
-    10.seconds,
+  val cacheTtl = 10.seconds
+
+  private val cache = ExpireCallbackMemo[UserId](
+    scheduler,
+    cacheTtl,
     userId => publish(userId, isOnline = false)
   )
 
-  def setOnline(userId: lila.user.User.ID): Unit = {
-    // We must delay the event publication, because caffeine
-    // delays the removal listener, therefore when a bot reconnects,
-    // the offline event is sent after the online event.
-    if (!isOnline(userId) || !cache.get(userId)) scheduler.scheduleOnce(1 second) {
-      publish(userId, isOnline = true)
-    }
+  def setOnline(userId: UserId): Unit =
+    val wasOffline = !isOnline.exec(userId) && !cache.get(userId)
     cache.put(userId)
-  }
+    if wasOffline then publish(userId, isOnline = true)
 
-  def get: Set[lila.user.User.ID] = cache.keySet
+  private def publish(userId: UserId, isOnline: Boolean) =
+    Bus.pub(ApiUserIsOnline(userId, isOnline))
 
-  private def publish(userId: lila.user.User.ID, isOnline: Boolean) =
-    Bus.publish(ApiUserIsOnline(userId, isOnline), "onlineApiUsers")
-}
+  private val usersCache = cacheApi.unit[List[UserWithPerfs]]("onlineApiUsers.list"):
+    _.expireAfterWrite(cacheTtl).buildAsyncTimeout(): _ =>
+      userApi.visibleBotsByIds(cache.keySet)
+
+  def getUsers = usersCache.get {}
+
+  private val jsonCache = cacheApi.unit[String]("onlineApiUsers.json"):
+    _.expireAfterWrite(cacheTtl).buildAsyncFuture: _ =>
+      for
+        users <- getUsers
+        jsons = users.map(u => jsonView.full(u.user, u.perfs.some, withProfile = true)(using none))
+      yield jsons.map(play.api.libs.json.Json.stringify).mkString("\n")
+
+  def getNdJson(nb: Int): Fu[String] =
+    for all <- jsonCache.get {} yield all.linesIterator.take(nb).mkString("\n")
+
+object OnlineApiUsers:
+  case object SetOnline
+  case object CheckOnline

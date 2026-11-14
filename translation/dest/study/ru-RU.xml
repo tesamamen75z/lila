@@ -16,6 +16,7 @@
   <string name="recentlyUpdated">Недавно обновлённые</string>
   <string name="mostPopular">Самые популярные</string>
   <string name="alphabetical">По алфавиту</string>
+  <string name="relevant">Соответствующий</string>
   <string name="addNewChapter">Добавить новую главу</string>
   <plurals name="nbChapters">
     <item quantity="one">%s глава</item>
@@ -42,6 +43,7 @@
   <string name="spectator">Зритель</string>
   <string name="contributor">Редактор</string>
   <string name="kick">Выгнать</string>
+  <string name="remove">Удалить</string>
   <string name="leaveTheStudy">Покинуть студию</string>
   <string name="youAreNowAContributor">Теперь вы редактор</string>
   <string name="youAreNowASpectator">Теперь вы зритель</string>
@@ -53,27 +55,26 @@
   <string name="annotateWithGlyphs">Добавить символьную аннотацию</string>
   <string name="theChapterIsTooShortToBeAnalysed">Глава слишком короткая для анализа.</string>
   <string name="onlyContributorsCanRequestAnalysis">Только редакторы студии могут запросить компьютерный анализ.</string>
-  <string name="getAFullComputerAnalysis">Получить с сервера полный компьютерный анализ главной линии.</string>
   <string name="makeSureTheChapterIsComplete">Убедитесь, что глава завершена. Вы можете запросить анализ только один раз.</string>
   <string name="allSyncMembersRemainOnTheSamePosition">Все синхронизированные участники остаются на той же позиции</string>
   <string name="shareChanges">Поделиться изменениями со зрителями и сохранить их на сервере</string>
   <string name="playing">Активные</string>
-  <string name="first">Первая</string>
-  <string name="previous">Предыдущая</string>
-  <string name="next">Следующая</string>
-  <string name="last">Последняя</string>
+  <string name="showResults">Результаты</string>
+  <string name="showEvalBar">Шкалы оценки</string>
+  <string name="next">Дальше</string>
   <string name="shareAndExport">Поделиться и экспортировать</string>
   <string name="cloneStudy">Клонировать</string>
   <string name="studyPgn">PGN студии</string>
-  <string name="downloadAllGames">Скачать все партии</string>
   <string name="chapterPgn">PGN главы</string>
+  <string name="copyChapterPgn">Копировать PGN</string>
+  <string name="copyRawChapterPgn">Копировать исходный PGN</string>
   <string name="downloadGame">Скачать партию</string>
   <string name="studyUrl">Ссылка на студию</string>
   <string name="currentChapterUrl">Ссылка на эту главу</string>
-  <string name="youCanPasteThisInTheForumToEmbed">Вставьте этот код на форум для вставки</string>
+  <string name="pasteToEmbedChapterInForumOrBlog" comment="youCanPasteThisInTheForumToEmbed&#10;&#10;The thing you are pasting is a link to a study. This will make it appear in the correct section as well.&#10;&#10;Please note this used to say &quot;in the forum to embed&quot;. It was then changed to include &quot;or a Lichess Blog&quot;. A further update was made to say &quot;or your Lichess blog&quot;, since you can only create blog posts as an individual.">Вы можете вставить это на форум или в свой блог на Lichess, чтобы встроить главу.</string>
   <string name="startAtInitialPosition">Открыть в начальной позиции</string>
   <string name="startAtX">Начать с %s</string>
-  <string name="embedInYourWebsite">Вставить на свой сайт или в блог</string>
+  <string name="embedInYourWebsite">Вставить в свой сайт или блог</string>
   <string name="readMoreAboutEmbedding">Подробнее о вставке на сайт</string>
   <string name="onlyPublicStudiesCanBeEmbedded">Вставлять на сайт можно только публичные студии!</string>
   <string name="open">Открыть</string>
@@ -81,11 +82,13 @@
   <string name="studyNotFound">Студия не найдена</string>
   <string name="editChapter">Редактировать главу</string>
   <string name="newChapter">Новая глава</string>
+  <string name="importFromChapterX">Импорт из %s</string>
   <string name="orientation">Ориентация</string>
   <string name="analysisMode">Режим анализа</string>
   <string name="pinnedChapterComment">Закреплённый комментарий главы</string>
   <string name="saveChapter">Сохранить главу</string>
   <string name="clearAnnotations">Очистить аннотацию</string>
+  <string name="clearVariations">Очистить варианты</string>
   <string name="deleteChapter">Удалить главу</string>
   <string name="deleteThisChapter">Удалить эту главу? Её нельзя будет вернуть!</string>
   <string name="clearAllCommentsInThisChapter">Очистить все комментарии и обозначения этой главы?</string>
@@ -103,20 +106,12 @@
   <string name="loadAPositionFromFen">Загрузить позицию из FEN</string>
   <string name="loadAGameFromPgn">Загрузить игру из PGN</string>
   <string name="automatic">Автоматически</string>
-  <plurals name="pasteYourPgnTextHereUpToNbGames">
-    <item quantity="one">Вставьте текст в формате PGN, не больше %s игры</item>
-    <item quantity="few">Вставьте текст в формате PGN, не больше %s игр</item>
-    <item quantity="many">Вставьте текст в формате PGN, не больше %s игр</item>
-    <item quantity="other">Вставьте текст в формате PGN, не больше %s игр</item>
-  </plurals>
   <string name="urlOfTheGame">URL игры</string>
-  <string name="loadAGameFromXOrY">Загрузить игру из %1$s или %2$s</string>
   <string name="createChapter">Создать главу</string>
-  <string name="configureLiveBroadcast">Настроить живую трансляцию</string>
   <string name="createStudy">Создать студию</string>
   <string name="editStudy">Изменить студию</string>
   <string name="visibility">Доступно к просмотру</string>
-  <string name="public">Публичный</string>
+  <string name="public">Публичная</string>
   <string name="unlisted">Доступ по ссылке</string>
   <string name="inviteOnly">Только по приглашению</string>
   <string name="allowCloning">Разрешить копирование</string>
@@ -130,16 +125,13 @@
   <string name="noLetPeopleBrowseFreely">Нет: позволить участникам свободно изучать все позиции</string>
   <string name="pinnedStudyComment">Закреплённый комментарий студии</string>
   <string name="start">Начать</string>
-  <string name="save">Сохранить</string>
   <string name="clearChat">Очистить чат</string>
   <string name="deleteTheStudyChatHistory">Удалить чат студии? Восстановить будет невозможно!</string>
   <string name="deleteStudy">Удалить студию</string>
-  <string name="deleteTheEntireStudy">Удалить студию целиком? Восстановить будет невозможно!</string>
+  <string name="confirmDeleteStudy" comment="%s is replaced with the name of the study">Удалить всю студию? Удаление необратимо! Введите название студии для подтверждения: %s</string>
   <string name="whereDoYouWantToStudyThat">Где вы хотите создать студию?</string>
   <string name="goodMove">Хороший ход</string>
-  <string name="mistake">Ошибка</string>
   <string name="brilliantMove">Отличный ход</string>
-  <string name="blunder">Зевок</string>
   <string name="interestingMove">Интересный ход</string>
   <string name="dubiousMove" comment="dubiousMove&#10;A questionable move.">Сомнительный ход</string>
   <string name="onlyMove" comment="onlyMove&#10;The only possible move. This is a label that can be placed in a study of a past game. It may not technically be the only move, but the only feasible one.">Единственный ход</string>
@@ -162,4 +154,55 @@
   <string name="withTheIdea" comment="withTheIdea&#10;A label that can be applied to a position in a Lichess study. Noun.&#10;&#10;Shows that the player was following the theory around an opening, even after the initial opening moves.">С идеей</string>
   <string name="nextChapter">Следующая глава</string>
   <string name="prevChapter">Предыдущая глава</string>
+  <string name="studyActions">Действия в студии</string>
+  <string name="topics">Темы</string>
+  <string name="myTopics">Мои темы</string>
+  <string name="popularTopics">Популярные темы</string>
+  <string name="manageTopics">Управление темами</string>
+  <string name="back">Назад</string>
+  <string name="playAgain">Сыграть снова</string>
+  <string name="whatWouldYouPlay">Как бы вы сыграли в этой позиции?</string>
+  <string name="youCompletedThisLesson">Поздравляем! Вы прошли этот урок.</string>
+  <string name="perPage">%s на страницу</string>
+  <string name="getTheTour">Нужна помощь? Пройдите обучение!</string>
+  <string name="welcomeToLichessStudyTitle">Добро пожаловать в Студии Lichess!</string>
+  <string name="welcomeToLichessStudyText">Это общая аналитическая доска.&lt;br&gt;&lt;br&gt; Используйте её для анализа и аннотирования партий,&lt;br&gt;обсуждения позиций с друзьями,&lt;br&gt; и, конечно же, для уроков шахмат!&lt;br&gt;&lt;br&gt; Это мощный инструмент, давайте уделим немного времени, чтобы посмотреть, как он работает.</string>
+  <string name="sharedAndSaveTitle" comment="As in: shared with other members and saved to database">Общие и сохранённые</string>
+  <string name="sharedAndSavedText">Другие пользователи могут смотреть за вашими ходами в режиме реального времени!&lt;br&gt;Кроме того, всё сохраняется навсегда.</string>
+  <string name="studyMembersTitle">Участники студии</string>
+  <string name="studyMembersText" comment="%1$s and %2$s are icons that will added at runtime">%1$s Участники могут видеть студию и общаться в чате.&lt;br&gt;&lt;br&gt;%2$s Соавторы могут делать ходы и вносить изменения.</string>
+  <string name="addMembersText" comment="%s is an icon that will added at runtime">Нажмите на кнопку %s.&lt;br&gt;Затем решите, кто может редактировать студию, а кто нет.</string>
+  <string name="studyChaptersTitle">Главы студии</string>
+  <string name="studyChaptersText">В студии может быть несколько глав.&lt;br&gt;В каждой главе есть своя начальная позиция и дерево ходов.</string>
+  <string name="commentPositionTitle">Комментарий к позиции</string>
+  <string name="commentPositionText" comment="%s is an icon that will added at runtime">Нажмите на кнопку %s, или нажмите правой кнопкой мыши на списке ходов справа.&lt;br&gt;Комментарии открыты для участников и сохранены.</string>
+  <string name="annotatePositionTitle">Добавьте метки к позиции</string>
+  <string name="annotatePositionText">Нажмите на кнопку !?, или нажмите правой кнопкой мыши в списке ходов справа.&lt;br&gt;Значки аннотации открыты для участников и сохранены.</string>
+  <string name="conclusionTitle">Благодарим за уделённое время</string>
+  <string name="conclusionText">Вы можете найти ваши&lt;a href=\'/study/mine/hot\'&gt; предыдущие студии&lt;/a&gt; на странице вашего профиля.&lt;br&gt;Есть также&lt;a href=\'//lichess.org/blog/V0KrLSkAAMo3hsi4/study-chess-the-lichess-way\'&gt; блог про студии&lt;/a&gt;&lt;br&gt;Опытные пользователи могут попробовать нажать «?» чтобы увидеть горячие клавиши.&lt;br&gt;Наслаждайтесь!</string>
+  <string name="createChapterTitle">Давайте создадим главу студии</string>
+  <string name="createChapterText">В студии может быть несколько глав.&lt;br&gt;В каждой главе есть своё дерево ходов,&lt;br&gt;и она может быть создана разными способами.</string>
+  <string name="fromInitialPositionTitle">Из начальной позиции</string>
+  <string name="fromInitialPositionText">Расстановка для новой партии.&lt;br&gt;Подходит для исследования дебютов.</string>
+  <string name="customPositionTitle">Пользовательская расстановка</string>
+  <string name="customPositionText">Расставьте фигуры по своему усмотрению. &lt;br&gt;Подходит для исследования эндшпилей.</string>
+  <string name="loadGameFromTheWebTitle">Загрузить партию из интернета</string>
+  <string name="loadGameFromTheWebText" comment="The special text tags must be retained in exact order, for example &amp;lt;br&amp;gt; must stay exactly as-is. You do not need to add spaces or new lines before or after them.&#10;&#10;Note that &quot;br&quot; in particular means &quot;line break&quot;. In other words, it will start a new line in the final text.">Вставьте URL-адрес партии&lt;br&gt;(например, lichess.org/game/7fHIU0XI),&lt;br&gt;чтобы загрузить ходы в главу.</string>
+  <string name="fromFenStringTitle">Из нотации FEN</string>
+  <string name="fromFenStringText">Вставьте позицию в формате FEN&lt;br&gt;&lt;i&gt;4k3/4rb2/8/7p/8/5Q2/1PP5/1K6 w&lt;/i&gt;&lt;br&gt;для старта главы с этой позиции.</string>
+  <string name="fromPgnGameTitle">Из нотации PGN</string>
+  <string name="fromPgnGameText">Вставьте партию в нотации PGN.&lt;br&gt;чтобы загрузить ходы, комментарии и варианты в главу.</string>
+  <string name="variantsAreSupportedTitle">Студии поддерживают варианты шахмат</string>
+  <string name="variantsAreSupportedText">Да, вы можете исследовать Безумные шахматы&lt;br&gt;и другие варианты шахмат Lichess!</string>
+  <string name="chapterConclusionText">Главы сохраняются навсегда.&lt;br&gt;Получайте удовольствие от разбора вашей шахматной истории!</string>
+  <string name="doubleDefeat">Обоюдное поражение</string>
+  <string name="blackDefeatWhiteCanNotWin">Чёрные сдались, но белые не могут выиграть</string>
+  <string name="whiteDefeatBlackCanNotWin">Белые сдались, но чёрные не могут выиграть</string>
+  <string name="analysisEditor">Редактор анализа</string>
+  <string name="clearLocal">Очистить локальный анализ?</string>
+  <string name="clearPublished">Очистить опубликованный анализ?</string>
+  <string name="requestAServerAnalysis">Запросить анализ на сервере</string>
+  <string name="analyzeOnYourDevice">Анализировать на Вашем устройстве</string>
+  <string name="searchChapters">Поиск глав</string>
+  <string name="searchGames">Поиск игр</string>
 </resources>

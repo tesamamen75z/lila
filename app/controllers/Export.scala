@@ -1,81 +1,93 @@
 package controllers
 
-import akka.stream.scaladsl._
-import akka.util.ByteString
-import chess.Color
+import chess.format.{ Fen, Uci }
+import chess.variant.Variant
+import org.apache.pekko.stream.scaladsl.*
+import org.apache.pekko.util.ByteString
 import play.api.mvc.Result
-import scala.concurrent.duration._
 
-import lila.app._
-import lila.common.HTTPRequest
-import lila.game.Pov
-import lila.puzzle.Puzzle.Id
+import lila.app.{ *, given }
+import lila.core.id.PuzzleId
+import lila.pref.{ PieceSet, Theme }
 
-final class Export(env: Env) extends LilaController(env) {
+final class Export(env: Env) extends LilaController(env):
 
-  private val ExportImageRateLimitGlobal = new lila.memo.RateLimit[String](
-    credits = 600,
-    duration = 1.minute,
-    key = "export.image.global"
-  )
-  private val ExportGifRateLimitGlobal = new lila.memo.RateLimit[String](
-    credits = 240,
-    duration = 1.minute,
-    key = "export.gif.global"
-  )
+  private def exportImageOf[A](fetch: Fu[Option[A]])(convert: A => Fu[Result])(using Context) =
+    Found(fetch): res =>
+      limit.exportImage(((), req.ipAddress), rateLimited)(convert(res))
 
-  def gif(id: String, color: String) =
-    Open { implicit ctx =>
-      OnlyHumansAndFacebookOrTwitter {
-        ExportGifRateLimitGlobal("-", msg = HTTPRequest.ipAddress(ctx.req).value) {
-          OptionFuResult(env.game.gameRepo gameWithInitialFen id) { case (game, initialFen) =>
-            val pov = Pov(game, Color.fromName(color) | Color.white)
-            env.game.gifExport.fromPov(pov, initialFen) map
-              stream("image/gif") map
-              gameImageCacheSeconds(game)
-          }
-        }(rateLimitedFu)
-      }
+  def gif(
+      id: GameId,
+      color: Color,
+      theme: Option[String],
+      piece: Option[String]
+  ) = Anon:
+    exportImageOf(env.game.gameRepo.gameWithInitialFen(id)): g =>
+      val options = lila.game.GifExport.Options.fromReq
+      val filename = s"lichess-game-${g.game.id}-${color.name}.gif"
+      stream(filename, cache = if g.game.finishedOrAborted then 10.days else 10.seconds):
+        for
+          analysis <- options.glyphs.so(env.analyse.repo.byGame(g.game))
+          source <- env.game.gifExport.fromPov(
+            Pov(g.game, color),
+            g.fen,
+            Theme(theme).name,
+            PieceSet.get(piece).name,
+            analysis,
+            options
+          )
+        yield source
+
+  def legacyGameThumbnail(id: GameId, theme: Option[String], piece: Option[String]) = Anon:
+    MovedPermanently(routes.Export.gameThumbnail(id, theme, piece).url).publicCache(1.day)
+
+  def gameThumbnail(id: GameId, theme: Option[String], piece: Option[String]) = Anon:
+    exportImageOf(env.game.gameRepo.game(id)) { game =>
+      val filename = s"lichess-game-${game.id}-thumbnail.gif"
+      env.game.gifExport
+        .gameThumbnail(game, Theme(theme).name, PieceSet.get(piece).name)
+        .pipe(stream(filename, cache = if game.finishedOrAborted then 10.days else 10.seconds))
     }
 
-  def legacyGameThumbnail(id: String) =
-    Action {
-      MovedPermanently(routes.Export.gameThumbnail(id).url)
-    }
+  def puzzleThumbnail(id: PuzzleId) = Anon: ctx ?=>
+    exportImageOf(env.puzzle.api.puzzle.find(id)): puzzle =>
+      env.game.gifExport
+        .thumbnail(
+          position = puzzle.boardAfterInitialMove.err(s"invalid puzzle ${puzzle.id}"),
+          lastMove = puzzle.line.head.some,
+          orientation = puzzle.color,
+          theme = ctx.pref.theme,
+          piece = ctx.pref.pieceSet,
+          description = s"puzzleThumbnail ${puzzle.id}"
+        )
+        .pipe(stream(s"lichess-puzzle-${puzzle.id}.gif"))
 
-  def gameThumbnail(id: String) =
-    Open { implicit ctx =>
-      ExportImageRateLimitGlobal("-", msg = HTTPRequest.ipAddress(ctx.req).value) {
-        OptionFuResult(env.game.gameRepo game id) { game =>
-          env.game.gifExport.gameThumbnail(game) map
-            stream("image/gif") map
-            gameImageCacheSeconds(game)
-        }
-      }(rateLimitedFu)
-    }
+  def fenThumbnail(
+      fen: String,
+      color: Option[Color],
+      lastMove: Option[Uci],
+      variant: Option[Variant.LilaKey],
+      theme: Option[String],
+      piece: Option[String]
+  ) = Anon:
+    exportImageOf(fuccess(Fen.read(Variant.orDefault(variant), Fen.Full.clean(fen)))): position =>
+      env.game.gifExport
+        .thumbnail(
+          position = position,
+          lastMove = lastMove,
+          orientation = color | Color.white,
+          theme = Theme(theme).name,
+          piece = PieceSet.get(piece).name,
+          description = s"fenThumbnail $fen"
+        )
+        .pipe(stream("lichess-fen.gif"))
 
-  def puzzleThumbnail(id: String) =
-    Open { implicit ctx =>
-      ExportImageRateLimitGlobal("-", msg = HTTPRequest.ipAddress(ctx.req).value) {
-        OptionFuResult(env.puzzle.api.puzzle find Id(id)) { puzzle =>
-          env.game.gifExport.thumbnail(
-            fen = puzzle.fenAfterInitialMove,
-            lastMove = puzzle.line.head.uci.some,
-            orientation = puzzle.color
-          ) map stream("image/gif") map { res =>
-            res.withHeaders(CACHE_CONTROL -> "max-age=1209600")
-          }
-        }
-      }(rateLimitedFu)
-    }
-
-  private def gameImageCacheSeconds(game: lila.game.Game)(res: Result): Result = {
-    val cacheSeconds =
-      if (game.finishedOrAborted) 3600 * 24
-      else 10
-    res.withHeaders(CACHE_CONTROL -> s"max-age=$cacheSeconds")
-  }
-
-  private def stream(contentType: String)(stream: Source[ByteString, _]) =
-    Ok.chunked(stream).withHeaders(noProxyBufferHeader) as contentType
-}
+  private def stream(filename: String, cache: FiniteDuration = 10.days)(
+      upstream: Fu[Source[ByteString, ?]]
+  ): Fu[Result] = upstream
+    .map: stream =>
+      Ok.chunked(stream)
+        .publicCache(cache)
+        .as("image/gif")
+        .asAttachmentStream(filename)
+    .recover { case lila.game.GifExport.UpstreamStatus(code) => Status(code) }

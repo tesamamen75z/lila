@@ -1,74 +1,95 @@
 package lila.msg
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 
 import lila.common.Bus
-import lila.common.config._
-import lila.user.User
-import lila.hub.actorApi.socket.remote.TellUserIn
+import lila.common.Json.given
+import lila.common.autoconfig.given
+import lila.core.config.*
+import lila.core.socket.remote.TellUserIn
 
 @Module
 final class Env(
+    appConfig: play.api.Configuration,
+    baseUrl: BaseUrl,
     db: lila.db.Db,
-    lightUserApi: lila.user.LightUserApi,
-    isOnline: lila.socket.IsOnline,
-    userRepo: lila.user.UserRepo,
-    userCache: lila.user.Cached,
-    relationApi: lila.relation.RelationApi,
-    prefApi: lila.pref.PrefApi,
-    notifyApi: lila.notify.NotifyApi,
+    lightUserApi: lila.core.user.LightUserApi,
+    isOnline: lila.core.socket.IsOnline,
+    userApi: lila.core.user.UserApi,
+    userRepo: lila.core.user.UserRepo,
+    userCache: lila.core.user.CachedApi,
+    relationApi: lila.core.relation.RelationApi,
+    prefApi: lila.core.pref.PrefApi,
+    notifyApi: lila.core.notify.NotifyApi,
+    ircApi: lila.core.irc.IrcApi,
     cacheApi: lila.memo.CacheApi,
-    spam: lila.security.Spam,
-    chatPanic: lila.chat.ChatPanic,
-    shutup: lila.hub.actors.Shutup,
+    reportApi: lila.core.report.ReportApi,
+    shutupApi: lila.core.shutup.ShutupApi,
+    spam: lila.core.security.SpamApi,
+    textAnalyser: lila.core.shutup.TextAnalyser,
     mongoCache: lila.memo.MongoCache.Api
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    scheduler: akka.actor.Scheduler
-) {
+)(using
+    Executor,
+    Scheduler,
+    org.apache.pekko.stream.Materializer,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+):
 
   private val colls = wire[MsgColls]
 
-  lazy val json = wire[MsgJson]
+  private val contactApi = ContactApi(userRepo.coll)
 
-  private lazy val notifier = wire[MsgNotify]
+  val json = wire[MsgJson]
 
-  private lazy val security = wire[MsgSecurity]
+  private val notifier = wire[MsgNotify]
 
-  lazy val api: MsgApi = wire[MsgApi]
+  private val security = wire[MsgSecurity]
 
-  lazy val search = wire[MsgSearch]
+  val api: MsgApi = wire[MsgApi]
 
-  lazy val compat = wire[MsgCompat]
+  val search = wire[MsgSearch]
 
-  lazy val twoFactorReminder = wire[TwoFactorReminder]
+  val unreadCount = wire[MsgUnreadCount]
 
-  def cli =
-    new lila.common.Cli {
-      def process = { case "msg" :: "multi" :: orig :: dests :: words =>
-        api.cliMultiPost(orig, dests.map(_.toLower).split(',').toIndexedSeq, words mkString " ")
-      }
-    }
+  val compat = wire[MsgCompat]
 
-  Bus.subscribeFuns(
-    "msgSystemSend" -> { case lila.hub.actorApi.msg.SystemMsg(userId, text) =>
-      api.systemPost(userId, text).unit
-    },
-    "remoteSocketIn:msgRead" -> { case TellUserIn(userId, msg) =>
-      msg str "d" map User.normalize foreach { api.setRead(userId, _) }
-    },
-    "remoteSocketIn:msgSend" -> { case TellUserIn(userId, msg) =>
-      for {
-        obj  <- msg obj "d"
-        dest <- obj str "dest" map User.normalize
-        text <- obj str "text"
-      } api.post(userId, dest, text)
-    }
-  )
-}
+  val systemMsg = wire[MsgByLichess]
 
-private class MsgColls(db: lila.db.Db) {
+  lila.common.Cli.handle(_.NotifyMany):
+    case "msg" :: "multi" :: orig :: dests :: words =>
+      api.cliMultiPost(
+        UserStr(orig),
+        UserId.from(dests.map(_.toLower).split(',').toIndexedSeq),
+        words.mkString(" ")
+      )
+
+  Bus.sub[lila.core.msg.SystemMsg](api.systemPost(_))
+
+  private val payoutsUrl = appConfig.get[Url]("payouts.portal")
+
+  Bus.sub[lila.core.msg.PayoutMessages]: p =>
+    payoutsUrl.value.nonEmpty.so:
+      p.userIds.foreach: userId =>
+        api.postPreset(userId, MsgPreset.payoutEligible(payoutsUrl, p))
+
+  Bus.sub[TellUserIn]:
+    case TellUserIn.Read(userId, msg) =>
+      given MyId = userId.into(MyId)
+      msg.get[UserId]("d").foreach(api.setRead)
+    case TellUserIn.Send(userId, msg) =>
+      for
+        obj <- msg.obj("d")
+        dest <- obj.get[UserId]("dest")
+        text <- obj.str("text")
+      yield api.post(userId, dest, text)
+
+  Bus.sub[lila.core.mod.ChatTimeout]: to =>
+    systemMsg.chatTimeout(to.user)
+
+  import play.api.data.Forms.*
+  val textForm = play.api.data.Form(single("text" -> nonEmptyText))
+
+private class MsgColls(db: lila.db.Db):
   val thread = db(CollName("msg_thread"))
-  val msg    = db(CollName("msg_msg"))
-}
+  val msg = db(CollName("msg_msg"))

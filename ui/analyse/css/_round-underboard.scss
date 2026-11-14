@@ -1,8 +1,14 @@
+@import 'chart-loader';
+
 $col1-panel-height: 30vh;
 $col2-panel-height: 240px;
 
-.comp-off .computer-analysis {
-  display: none !important;
+.comp-off .analyse__underboard__menu .computer-analysis {
+  opacity: 0.5;
+
+  &:hover {
+    opacity: 0.75;
+  }
 }
 
 .analyse__underboard {
@@ -11,10 +17,9 @@ $col2-panel-height: 240px;
 
     justify-content: center;
     align-items: flex-start;
-    border-top: 2px solid $c-border;
 
-    > span {
-      @extend %roboto, %box-radius-bottom;
+    > button {
+      @extend %roboto, %box-radius-top, %page-text, %nowrap-ellipsis;
 
       flex: 1 1 0;
       text-align: center;
@@ -22,30 +27,14 @@ $col2-panel-height: 240px;
       padding: 0.4em 0.1em;
       cursor: pointer;
       position: relative;
+      border-bottom: $border;
 
-      @include transition(color, 0.25s);
-
-      &::after {
-        content: '';
-        background: fade-out($c-accent, 0.4);
-        height: 2px;
-        position: absolute;
-        width: 96%;
-        left: 2%;
-        top: -2px;
-
-        @include transition(all, 0.25s);
-
-        transform: scale(0);
-      }
-
-      &.active,
-      &:hover::after {
-        transform: scale(1);
+      &:hover {
+        background: $c-body-gradient;
       }
 
       &.active {
-        color: $c-accent;
+        border-color: $c-accent;
       }
     }
 
@@ -55,14 +44,18 @@ $col2-panel-height: 240px;
   }
 
   &__panels {
-    --panel-height: #{$col1-panel-height};
+    ---panel-height: #{$col1-panel-height};
 
-    @include breakpoint($mq-col2) {
-      --panel-height: #{$col2-panel-height};
+    @include mq-at-least-col2 {
+      ---panel-height: #{$col2-panel-height};
     }
 
+    @extend %box-neat;
+
+    background: $c-bg-box;
+
     > div {
-      height: var(--panel-height);
+      max-height: var(---panel-height);
       display: none;
       text-align: left;
 
@@ -78,113 +71,120 @@ $col2-panel-height: 240px;
     .analyse-hunter & > div {
       display: block;
     }
+
+    .analyse:not(.analyse-hunter) & {
+      border-top-left-radius: 0;
+      border-top-right-radius: 0;
+    }
   }
 
-  .computer-analysis,
   .ctable {
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    position: relative;
+    margin: 0 1em;
+    padding: 1em 0;
 
     &.active {
       display: flex;
     }
   }
 
-  .future-game-analysis {
-    text-align: center;
+  .computer-analysis.active,
+  .analyse-hunter & .computer-analysis {
+    display: flex;
+    place-content: start center;
+    align-items: start;
+    position: relative;
+    gap: 2em;
+
+    button {
+      margin: 2em 0;
+    }
   }
 
   .fen-pgn {
     overflow-x: visible;
     overflow-y: auto;
     font-size: 0.9em;
+    padding: 1em 1em 0;
 
     > div {
       @extend %flex-center-nowrap;
 
+      gap: 1em;
       margin-bottom: 1em;
+    }
+
+    .copy-me {
+      flex: 1 1 auto;
     }
 
     .pgn {
       white-space: pre-wrap;
       font-family: monospace;
-    }
-
-    strong {
-      display: inline-block;
-      margin-right: 1em;
-    }
-
-    .pgn-options {
-      div {
-        @extend %flex-wrap;
-      }
-
-      a {
-        flex: 0 0 50%;
-        line-height: 1.6em;
-      }
+      direction: ltr;
     }
   }
 
   &__fen {
     width: 100%;
-    border: 0;
-    background: none;
-    padding: 0.3em;
-    margin-right: 0.5em;
   }
 }
 
-#acpl-chart,
-#movetimes-chart {
+#acpl-chart-container,
+#movetimes-chart-container {
   width: 100%;
-  height: var(--panel-height);
+  height: var(---panel-height);
   background: linear-gradient(
     to bottom,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0) 20%,
-    rgba(128, 128, 128, 0.2) 50%,
-    rgba(255, 255, 255, 0) 80%,
-    rgba(255, 255, 255, 0) 100%
+    rgb(255 255 255 / 0) 0%,
+    rgb(255 255 255 / 0) 20%,
+    rgb(128 128 128 / 0.2) 50%,
+    rgb(255 255 255 / 0) 80%,
+    rgb(255 255 255 / 0) 100%
   );
   overflow: hidden;
+  position: relative;
+  cursor: pointer;
 }
 
-#acpl-chart-loader {
-  font-size: 0.9em;
+.game-duration {
+  @extend %box-neat;
+
   position: absolute;
-  top: 91px;
-  left: -1px;
+  bottom: 1ch;
+  right: 1ch;
+  padding: 0.1em 0.6em;
   background: $c-bg-box;
-  padding: 7px 10px 7px 0;
-  line-height: 20px;
-  box-shadow: 2px 3px 5px rgba(0, 0, 0, 0.3);
-  display: flex;
-  border: $border;
-  border-radius: 0 99px 99px 0;
+  pointer-events: none;
+  font-size: 0.9em;
+}
 
-  span {
-    @extend %nowrap-hidden;
+.gif-export-dialog {
+  @extend %flex-column;
 
-    margin-left: 7px;
-    opacity: 1;
-    transition: 0.5s;
-    width: 100px;
-    display: block;
+  gap: 1.5em;
 
-    .analyse__underboard:hover & {
-      margin-left: 0;
-      width: 0;
-      opacity: 0;
+  .gif-options {
+    @extend %flex-column;
+
+    gap: 0.8em;
+  }
+
+  .setting {
+    @extend %flex-center-nowrap;
+
+    gap: 1em;
+
+    label {
+      cursor: pointer;
+      user-select: none;
     }
   }
 
-  .spinner {
-    width: 32px;
-    height: 32px;
-    display: inline-block;
-    margin-left: 10px;
+  .gif-actions {
+    @extend %flex-center-nowrap;
+
+    gap: 1em;
   }
 }

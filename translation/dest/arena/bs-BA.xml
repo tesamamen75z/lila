@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="arena">Arena</string>
   <string name="arenaTournaments">Turniri u Areni</string>
   <string name="isItRated">Igra li se za rejting bodove?</string>
   <string name="willBeNotified">Bit ćete obaviješteni kada turnir počne, tako da slobodno možete igrati u drugom prozoru dok čekate.</string>
@@ -24,7 +25,7 @@ Berserk osigurava dodatni bod samo ako je odigrano barem 7 poteza u partiji.</st
   <string name="howIsTheWinnerDecidedAnswer">Igrač(i) s najviše bodova nakon isteka zadanog turnirskog vremenskog ograničenja će biti proglašen(i) pobjednikom/pobjednicima.
 
 Ako dva igrača imaju isti broj bodova, performans na turniru je odlučujući faktor.</string>
-  <string name="howDoesPairingWork">Kako funkcionira uparivanje?</string>
+  <string name="howArePlayersPaired">Kako se igrači uparuju?</string>
   <string name="howDoesPairingWorkAnswer">Na početku turnira, igrači su upareni na osnovu njihovog rejtinga.
 Čim završite partiju, vratite se u turnirski lobi: tada će te biti upareni sa igračem koji ima približan turnirski rezultat kao i Vi. Na ovaj način se osigurava minimalno čekanje, međutim moguće je da nećete igrati sa svim igračima u turniru.
 Igrajte brzo i vratite se u lobi da igrate više partija i da osvojite što više bodova.</string>
@@ -39,11 +40,52 @@ Igrajte brzo i vratite se u lobi da igrate više partija i da osvojite što viš
   </plurals>
   <string name="thisIsPrivate">Ovo je privatni turnir</string>
   <string name="shareUrl">Podijelite ovaj link da se ljudi mogu pridružiti: %s</string>
-  <string name="drawStreak">Nizovi remija: Kad igrač ima uzastopne remije u nekoj areni, bodove će dobiti samo za prvi remi ili za remi-partije duže od %s poteza. Niz može biti prekinut samo pobjedom.</string>
+  <string name="drawStreakStandard">Niz remija: Kad igrač ima uzastopne remije u areni, samo prvi remi rezultira bodom ili remiji koji traju više od %s poteza. Niz remija može biti prekinut samo pobjedom, a ne porazom ili remijem.</string>
+  <string name="drawStreakVariants">Minimalni broj poteza u neriješenim partijama koje donose bodove razlikuje se u zavisnosti od varijante. U tabeli ispod navedeni su pragovi za svaku varijantu.</string>
+  <string name="variant">Varijanta</string>
+  <string name="minimumGameLength">Minimalni broj poteza</string>
   <string name="history">Historija Arene</string>
   <plurals name="viewAllXTeams" comment="viewAllXTeams [one] [other]&#10;&#10;%s is the number of teams that can be viewed">
     <item quantity="one">Pogledajte tim</item>
     <item quantity="few">Pogledajte sve timove %s</item>
     <item quantity="other">Pogledajte sve timove %s</item>
   </plurals>
+  <string name="newTeamBattle">Nova Timska Borba</string>
+  <string name="customStartDate">Prilagođeni početni datum</string>
+  <string name="customStartDateHelp">U vlastitoj lokalnoj vremenskoj zoni. Ovo nadjačava postavku \"Vrijeme prije početka turnira\"</string>
+  <string name="allowBerserk">Dopustite Berzerk</string>
+  <string name="allowBerserkHelp">Dopustite igračima da prepolove svoje vrijeme da bi dobili dodatni poen</string>
+  <string name="allowChatHelp">Igrači mogu diskutovati u chat room-u</string>
+  <string name="arenaStreaks">Nizovi u Areni</string>
+  <string name="arenaStreaksHelp">Nakon dvije uzastopne pobjede, dalje uzastopne pobjede donose 4 poena umjesto 2.</string>
+  <string name="noBerserkAllowed">Nije dopuštena taktika Berserk</string>
+  <string name="noArenaStreaks">Nije dopušteno ostvarivanje niza pobjeda u areni</string>
+  <string name="averagePerformance">Prosječna izvedba</string>
+  <string name="averageScore">Prosječan rezultat</string>
+  <string name="myTournaments">Moji turniri</string>
+  <string name="editTournament">Uredi turnir</string>
+  <string name="editTeamBattle">Uredi timsku bitku</string>
+  <string name="defenderLabel" comment="In this context, this is the current holder of a shield trophy, who is defending their trophy in the next shield tournament of that variant. https://lichess.org/tournament/shields">Branilac:</string>
+  <string name="pickYourTeam">Izaberite svoj tim</string>
+  <string name="whichTeamWillYouRepresentInThisBattle">Koji tim ćeš predstavljati u ovoj bici?</string>
+  <string name="youMustJoinOneOfTheseTeamsToParticipate">Morate se pridružiti jednom od ovih timova da biste učestvovali!</string>
+  <string name="created">Kreirano</string>
+  <string name="recentlyPlayed">Nedavno igrano</string>
+  <string name="bestResults">Najbolji rezultati</string>
+  <string name="tournamentStats">Statistike turnira</string>
+  <string name="rankAverageHelp">Vaš prosjek rejtinga predstavlja vašu uobičajenu poziciju u odnosu na ukupan broj igrača u svakom turniru. To je mjera vašeg plasmana na tuniru, a ne vašeg općeg rejtinga.
+
+Na primjer, prosjek ranga od 3% znači da obično završavate među najboljih 3% (kao što je 30. mjesto od 1.000 igrača).</string>
+  <string name="medians">medijane</string>
+  <string name="allAveragesAreX">Svi prosjeci na ovoj stranici su %s.</string>
+  <string name="total">Ukupno</string>
+  <string name="pointsAvg">Prosječan broj bodova</string>
+  <string name="pointsSum">Suma bodova</string>
+  <string name="rankAvg">Prosječni rang</string>
+  <string name="tournamentWinners">Pobjednici turnira</string>
+  <string name="tournamentShields">Turnirski štitovi</string>
+  <string name="onlyTitled">Samo igrači sa titulama</string>
+  <string name="onlyTitledHelp">Za pridruživanje turniru potrebna je službena titula</string>
+  <string name="tournamentPairingsAreNowClosed">Parovi za turnir su sada zatvoreni.</string>
+  <string name="berserkRate">Berserkova stopa</string>
 </resources>

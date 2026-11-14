@@ -1,67 +1,48 @@
-import { h, VNode } from 'snabbdom';
-import SwissCtrl from '../ctrl';
-import { dataIcon } from './util';
+import { h, type Hooks, type VNode } from 'snabbdom';
 
-function startClock(time: number) {
-  return {
-    insert: (vnode: VNode) => $(vnode.elm as HTMLElement).clock({ time }),
-  };
-}
+import { setClockWidget } from 'lib/game/clock/clockWidget';
+import { licon } from 'lib/licon';
+import { icon, onInsert } from 'lib/view';
+
+import type SwissCtrl from '../ctrl';
+
+const startClock = (time: number): Hooks => ({
+  insert: (vnode: VNode) => setClockWidget(vnode.elm as HTMLElement, { time }),
+});
 
 const oneDayInSeconds = 60 * 60 * 24;
 
 function clock(ctrl: SwissCtrl): VNode | undefined {
   const next = ctrl.data.nextRound;
-  if (!next) return;
+  if (!next) return undefined;
   if (next.in > oneDayInSeconds)
     return h('div.clock', [
       h('time.timeago.shy', {
-        attrs: {
-          datetime: Date.now() + next.in * 1000,
-        },
-        hook: {
-          insert(vnode) {
-            (vnode.elm as HTMLElement).setAttribute('datetime', '' + (Date.now() + next.in * 1000));
-          },
-        },
+        attrs: { datetime: Date.now() + next.in * 1000 },
+        hook: onInsert(el => el.setAttribute('datetime', String(Date.now() + next.in * 1000))),
       }),
     ]);
   return h(`div.clock.clock-created.time-cache-${next.at}`, [
-    h('span.shy', ctrl.data.status == 'created' ? ctrl.trans.noarg('startingIn') : ctrl.trans.noarg('nextRound')),
-    h('span.time.text', {
-      hook: startClock(next.in + 1),
-    }),
+    h('span.shy', ctrl.data.status === 'created' ? i18n.site.startingIn : i18n.swiss.nextRound),
+    h('span.time.text', { hook: startClock(next.in + 1) }),
   ]);
 }
 
 function ongoing(ctrl: SwissCtrl): VNode | undefined {
   const nb = ctrl.data.nbOngoing;
-  return nb ? h('div.ongoing', [h('span.nb', [nb]), h('span.shy', ctrl.trans.plural('ongoingGames', nb))]) : undefined;
+  return nb ? h('div.ongoing', [h('span.nb', [nb]), h('span.shy', i18n.swiss.ongoingGames(nb))]) : undefined;
 }
 
 export default function (ctrl: SwissCtrl): VNode {
   const greatPlayer = ctrl.data.greatPlayer;
   return h('div.swiss__main__header', [
-    h('i.img', dataIcon('')),
+    icon(licon.Trophy)('.img'),
     h(
       'h1',
       greatPlayer
-        ? [
-            h(
-              'a',
-              {
-                attrs: {
-                  href: greatPlayer.url,
-                  target: '_blank',
-                  rel: 'noopener',
-                },
-              },
-              greatPlayer.name
-            ),
-            ' Tournament',
-          ]
-        : [ctrl.data.name]
+        ? [h('a', { attrs: { href: greatPlayer.url, target: '_blank' } }, greatPlayer.name), ' Tournament']
+        : [ctrl.data.name],
     ),
-    ctrl.data.status == 'finished' ? undefined : clock(ctrl) || ongoing(ctrl),
+    ctrl.data.status === 'finished' ? undefined : clock(ctrl) || ongoing(ctrl),
   ]);
 }

@@ -1,173 +1,275 @@
-import { h, VNode } from 'snabbdom';
-import { prop, Prop } from 'common';
-import { bind, dataIcon, iconTag, scrollTo } from '../util';
-import { ctrl as chapterNewForm, StudyChapterNewFormCtrl } from './chapterNewForm';
-import { ctrl as chapterEditForm, StudyChapterEditFormCtrl } from './chapterEditForm';
-import AnalyseCtrl from '../ctrl';
-import { StudyCtrl, StudyChapterMeta, LocalPaths, StudyChapter, TagArray, StudyChapterConfig } from './interfaces';
-import { StudySocketSend } from '../socket';
+import { INITIAL_FEN } from 'chessops/fen';
+import { opposite } from 'chessops/util';
+import type Sortable from 'sortablejs';
 
-export interface StudyChaptersCtrl {
-  newForm: StudyChapterNewFormCtrl;
-  editForm: StudyChapterEditFormCtrl;
-  list: Prop<StudyChapterMeta[]>;
-  get(id: string): StudyChapterMeta | undefined;
-  size(): number;
-  sort(ids: string[]): void;
-  firstChapterId(): string;
-  toggleNewForm(): void;
-  localPaths: LocalPaths;
-}
+import { blurIfPrimaryClick, defined, prop, type Prop, scrollToInnerSelector } from 'lib';
+import { fenColor } from 'lib/game/chess';
+import { licon } from 'lib/licon';
+import { type VNode, bind, hl, alert, icon, button } from 'lib/view';
 
-export function ctrl(
-  initChapters: StudyChapterMeta[],
-  send: StudySocketSend,
-  setTab: () => void,
-  chapterConfig: (id: string) => Promise<StudyChapterConfig>,
-  root: AnalyseCtrl
-): StudyChaptersCtrl {
-  const list: Prop<StudyChapterMeta[]> = prop(initChapters);
+import type AnalyseCtrl from '../ctrl';
+import type { StudySocketSend } from '../socket';
+import { StudyChapterEditForm } from './chapterEditForm';
+import { StudyChapterNewForm } from './chapterNewForm';
+import { federations, localizedName } from './fideFeds';
+import type {
+  LocalPaths,
+  StudyChapter,
+  StudyChapterConfig,
+  ChapterPreview,
+  TagArray,
+  ServerNodeMsg,
+  ChapterPreviewFromServer,
+  ChapterId,
+  StudyPlayerFromServer,
+  StudyPlayer,
+  ChapterSelect,
+  StatusStr,
+} from './interfaces';
+import type StudyCtrl from './studyCtrl';
 
-  const newForm = chapterNewForm(send, list, setTab, root);
-  const editForm = chapterEditForm(send, chapterConfig, root.trans, root.redraw);
-
-  const localPaths: LocalPaths = {};
-
-  return {
-    newForm,
-    editForm,
-    list,
-    get: (id: string) => list().find(c => c.id === id),
-    size: () => list().length,
-    sort(ids) {
-      send('sortChapters', ids);
-    },
-    firstChapterId: () => list()[0].id,
-    toggleNewForm() {
-      if (newForm.vm.open || list().length < 64) newForm.toggle();
-      else alert('You have reached the limit of 64 chapters per study. Please create a new study.');
-    },
-    localPaths,
+/* read-only interface for external use */
+export class StudyChapters {
+  constructor(private readonly list: Prop<ChapterPreview[]>) {}
+  all = () => this.list();
+  get = (id: ChapterId | number) => {
+    const str = id.toString();
+    const number = str.length < 4 && parseInt(str);
+    return number ? this.list()[number - 1] : this.list().find(c => c.id === id);
+  };
+  size = () => this.list().length;
+  first = () => this.list()[0];
+  looksNew = () => {
+    const cs = this.all();
+    return cs.length === 1 && cs[0].name === 'Chapter 1';
   };
 }
 
+export default class StudyChaptersCtrl {
+  store: Prop<ChapterPreview[]> = prop([]);
+  list: StudyChapters;
+  newForm: StudyChapterNewForm;
+  editForm: StudyChapterEditForm;
+  localPaths: LocalPaths = {};
+  scroller = new StudyChapterScroller();
+
+  constructor(
+    initChapters: ChapterPreviewFromServer[],
+    readonly send: StudySocketSend,
+    readonly isBroadcast: boolean,
+    setTab: () => void,
+    chapterConfig: (id: string) => Promise<StudyChapterConfig>,
+    root: AnalyseCtrl,
+    currentChapter: () => StudyChapter,
+  ) {
+    this.list = new StudyChapters(this.store);
+    this.loadFromServer(initChapters);
+    this.newForm = new StudyChapterNewForm(send, this.list, isBroadcast, setTab, root, currentChapter);
+    this.editForm = new StudyChapterEditForm(send, chapterConfig, isBroadcast, root.redraw);
+  }
+
+  sort = (ids: string[]) => this.send('sortChapters', ids);
+  toggleNewForm = () => {
+    if (this.newForm.isOpen()) this.newForm.close();
+    else if (this.list.size() < 64) this.newForm.open();
+    else alert('You have reached the limit of 64 chapters per study. Please create a new study.');
+  };
+  loadFromServer = (chapters: ChapterPreviewFromServer[]) =>
+    this.store(
+      chapters.map(c => ({
+        ...c,
+        fen: c.fen || INITIAL_FEN,
+        players: c.players ? this.convertPlayersFromServer(c.players) : undefined,
+        orientation: c.orientation || 'white',
+        playing: defined(c.lastMove) && c.status === '*',
+        lastMoveAt: defined(c.thinkTime) ? Date.now() - 1000 * c.thinkTime : undefined,
+      })),
+    );
+  private readonly convertPlayersFromServer = (players: PairOf<StudyPlayerFromServer>) => {
+    const conv: StudyPlayer[] = players.map(convertPlayerFromServer);
+    return { white: conv[0], black: conv[1] };
+  };
+
+  addNode = (d: ServerNodeMsg) => {
+    const pos = d.p;
+    const node = d.n;
+    const cp = this.list.get(pos.chapterId);
+    if (cp) {
+      const onRelayPath = d.relayPath === d.p.path + d.n.id;
+      if (onRelayPath || !d.relayPath) {
+        cp.fen = node.fen;
+        cp.lastMove = node.uci;
+        cp.check = node.san?.includes('#') ? '#' : node.san?.includes('+') ? '+' : undefined;
+      }
+      if (onRelayPath) {
+        cp.lastMoveAt = Date.now();
+        const playerWhoMoved = cp.players?.[opposite(fenColor(cp.fen))];
+        if (playerWhoMoved) playerWhoMoved.clock = node.clock;
+      }
+    }
+  };
+
+  setTags = (id: ChapterId, tags: TagArray[]) => {
+    const chap = this.list.get(id);
+    const result = findTag(tags, 'result');
+    if (chap && result) chap.status = result.replace(/1\/2/g, '½') as StatusStr;
+  };
+
+  hasPlayingChapter = () => this.list.all().some(c => c.playing);
+}
+
+export const convertPlayerFromServer = <A extends StudyPlayerFromServer>(player: A) => {
+  const i18nName = player.fed && localizedName(player.fed);
+  const fedName = player.fed && federations?.[player.fed]?.[0];
+  return {
+    ...player,
+    fed: player.fed && fedName ? { id: player.fed, name: fedName, i18nName } : undefined,
+  };
+};
+
 export function isFinished(c: StudyChapter) {
   const result = findTag(c.tags, 'result');
-  return result && result !== '*';
+  return !!result && result !== '*';
 }
 
-export function findTag(tags: TagArray[], name: string): string | undefined {
-  const t = tags.find(t => t[0].toLowerCase() === name);
-  return t && t[1];
-}
+export const findTag = (tags: TagArray[], name: string) => tags.find(t => t[0].toLowerCase() === name)?.[1];
 
-export function resultOf(tags: TagArray[], isWhite: boolean): string | undefined {
-  switch (findTag(tags, 'result')) {
-    case '1-0':
-      return isWhite ? '1' : '0';
-    case '0-1':
-      return isWhite ? '0' : '1';
-    case '1/2-1/2':
-      return '1/2';
-    default:
-      return;
+export const looksLikeLichessGame = (tags: TagArray[]) =>
+  !!findTag(tags, 'site')?.match(new RegExp(location.hostname + '/\\w{8}$'));
+
+export const gameLinkAttrs = (roundPath: string, game: { id: ChapterId }) => ({
+  href: `${roundPath}/${game.id}`,
+});
+export const gameLinksListener = (select: ChapterSelect) => (elm: HTMLElement) =>
+  elm.addEventListener(
+    'click',
+    async e => {
+      let target = e.target as HTMLLinkElement;
+      while (target && target.tagName !== 'A') target = target.parentNode as HTMLLinkElement;
+      const href = target?.href;
+      const id = target?.dataset['board'] || href?.match(/^[^?#]*/)?.[0].slice(-8);
+      if (id && select.is(id)) {
+        if (!href?.match(/[?&]embed=/)) e.preventDefault();
+        await select.set(id);
+      }
+    },
+    { passive: false },
+  );
+
+function onListUpdate({ chapters, members }: StudyCtrl, vnode: VNode) {
+  const vData = vnode.data!.li!;
+  const el = vnode.elm as HTMLElement;
+
+  chapters.scroller.scrollIfNeeded(el);
+
+  if (members.canContribute() && chapters.list.size() > 1 && !vData.sortable) {
+    site.asset.loadEsm<typeof Sortable>('sortable.esm', { npm: true }).then(s => {
+      vData.sortable = s.create(el, {
+        draggable: '.draggable',
+        handle: 'ontouchstart' in window ? 'span' : undefined,
+        onSort: () => chapters.sort(vData.sortable.toArray()),
+      });
+    });
   }
 }
 
 export function view(ctrl: StudyCtrl): VNode {
-  const canContribute = ctrl.members.canContribute(),
-    current = ctrl.currentChapter();
+  const canContribute = ctrl.members.canContribute();
+  const current = ctrl.currentChapter();
 
-  function update(vnode: VNode) {
-    const newCount = ctrl.chapters.list().length,
-      vData = vnode.data!.li!,
-      el = vnode.elm as HTMLElement;
-    if (vData.count !== newCount) {
-      if (current.id !== ctrl.chapters.firstChapterId()) {
-        scrollTo(el, el.querySelector('.active'));
-      }
-    } else if (ctrl.vm.loading && vData.loadingId !== ctrl.vm.nextChapterId) {
-      vData.loadingId = ctrl.vm.nextChapterId;
-      scrollTo(el, el.querySelector('.loading'));
-    }
-    vData.count = newCount;
-    if (canContribute && newCount > 1 && !vData.sortable) {
-      const makeSortable = function () {
-        vData.sortable = window['Sortable'].create(el, {
-          draggable: '.draggable',
-          handle: 'ontouchstart' in window ? 'span' : undefined,
-          onSort() {
-            ctrl.chapters.sort(vData.sortable.toArray());
+  return hl('div.study__chapters', [
+    hl(
+      'div.study-list',
+      {
+        hook: {
+          insert(vnode) {
+            vnode.data!.li = {};
+            ctrl.chapters.scroller.request('instant');
+            onListUpdate(ctrl, vnode);
           },
-        });
-      };
-      if (window['Sortable']) makeSortable();
-      else lichess.loadScript('javascripts/vendor/Sortable.min.js').then(makeSortable);
-    }
-  }
-
-  return h(
-    'div.study__chapters',
-    {
-      hook: {
-        insert(vnode) {
-          (vnode.elm as HTMLElement).addEventListener('click', e => {
-            const target = e.target as HTMLElement;
-            const id = (target.parentNode as HTMLElement).getAttribute('data-id') || target.getAttribute('data-id');
-            if (!id) return;
-            if (target.className === 'act') {
-              const chapter = ctrl.chapters.get(id);
-              if (chapter) ctrl.chapters.editForm.toggle(chapter);
-            } else ctrl.setChapter(id);
-          });
-          vnode.data!.li = {};
-          update(vnode);
-          lichess.pubsub.emit('chat.resize');
-        },
-        postpatch(old, vnode) {
-          vnode.data!.li = old.data!.li;
-          update(vnode);
-        },
-        destroy: vnode => {
-          const sortable = vnode.data!.li!.sortable;
-          if (sortable) sortable.destroy();
+          postpatch(old, vnode) {
+            vnode.data!.li = old.data!.li;
+            onListUpdate(ctrl, vnode);
+          },
+          destroy: vnode => {
+            const sortable: Sortable = vnode.data!.li!.sortable;
+            if (sortable) sortable.destroy();
+          },
         },
       },
-    },
-    ctrl.chapters
-      .list()
-      .map((chapter, i) => {
-        const editing = ctrl.chapters.editForm.isEditing(chapter.id),
-          loading = ctrl.vm.loading && chapter.id === ctrl.vm.nextChapterId,
-          active = !ctrl.vm.loading && current && !ctrl.relay?.tourShow.active && current.id === chapter.id;
-        return h(
-          'div',
+      ctrl.chapters.list.all().map((chapter, i) => {
+        const editing = ctrl.chapters.editForm.isEditing(chapter.id);
+        const active = !ctrl.vm.loading && current?.id === chapter.id;
+        return hl(
+          'button',
           {
             key: chapter.id,
             attrs: { 'data-id': chapter.id },
-            class: { active, editing, loading, draggable: canContribute },
+            class: { active, editing, draggable: canContribute },
+            on: {
+              click: e => {
+                ctrl.setChapter(chapter.id);
+                blurIfPrimaryClick(e);
+              },
+            },
           },
           [
-            h('span', loading ? h('span.ddloader') : ['' + (i + 1)]),
-            h('h3', chapter.name),
-            chapter.ongoing ? h('ongoing', { attrs: { ...dataIcon(''), title: 'Ongoing' } }) : null,
-            !chapter.ongoing && chapter.res ? h('res', chapter.res) : null,
-            canContribute ? h('i.act', { attrs: dataIcon('') }) : null,
-          ]
-        );
-      })
-      .concat(
-        ctrl.members.canContribute()
-          ? [
-              h(
-                'div.add',
+            hl('span', i + 1),
+            hl('h3', chapter.name),
+            chapter.status && hl('res', chapter.status),
+            canContribute &&
+              button(
+                '.act',
                 {
-                  hook: bind('click', ctrl.chapters.toggleNewForm, ctrl.redraw),
+                  on: {
+                    click: e => {
+                      ctrl.chapters.editForm.toggle(chapter);
+                      e.stopPropagation();
+                      blurIfPrimaryClick(e);
+                    },
+                  },
                 },
-                [h('span', iconTag('')), h('h3', ctrl.trans.noarg('addNewChapter'))]
+                icon(licon.Gear)({ title: i18n.study.editChapter }),
               ),
-            ]
-          : []
-      )
-  );
+          ],
+        );
+      }),
+    ),
+    ctrl.members.canContribute() &&
+      hl(
+        'button.add',
+        {
+          hook: bind(
+            'click',
+            e => {
+              blurIfPrimaryClick(e);
+              ctrl.chapters.toggleNewForm();
+            },
+            ctrl.redraw,
+          ),
+        },
+        [icon(licon.PlusButton)(), hl('h3', i18n.study.addNewChapter)],
+      ),
+  ]);
+}
+
+export class StudyChapterScroller {
+  request: Prop<ScrollBehavior | null> = prop('instant');
+  private rafId?: number;
+
+  scrollIfNeeded(list: HTMLElement) {
+    const request = this.request();
+    if (!request) return;
+    const active = list.querySelector('.active');
+    if (!active) return;
+    this.request(null);
+    const [c, l] = [list.getBoundingClientRect(), active.getBoundingClientRect()];
+    if (c.top < l.top || c.bottom > l.bottom) {
+      cancelAnimationFrame(this.rafId ?? 0);
+      this.rafId = requestAnimationFrame(() => {
+        scrollToInnerSelector(list, '.active', false, request);
+        this.rafId = undefined;
+      });
+    }
+  }
 }

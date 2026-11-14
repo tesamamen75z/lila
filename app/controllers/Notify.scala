@@ -1,15 +1,15 @@
 package controllers
 
-import lila.app._
-import lila.notify.Notification.Notifies
+import lila.app.*
 
-final class Notify(env: Env) extends LilaController(env) {
+final class Notify(env: Env) extends LilaController(env):
 
-  def recent(page: Int) =
-    Auth { implicit ctx => me =>
-      XhrOrRedirectHome {
-        env.notifyM.api
-          .getNotificationsAndCount(Notifies(me.id), page) map env.notifyM.jsonHandlers.apply map JsonOk
-      }
-    }
-}
+  def recent(page: Int) = Auth { _ ?=> me ?=>
+    XhrOrRedirectHome:
+      for notifs <- env.notifyM.api.getNotificationsAndCount(me, page)
+      yield Ok(env.notifyM.jsonHandlers(notifs))
+  }
+
+  def clear = Auth { _ ?=> me ?=>
+    env.notifyM.api.remove(me).inject(NoContent)
+  }

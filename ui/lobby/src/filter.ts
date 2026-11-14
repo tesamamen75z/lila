@@ -1,6 +1,15 @@
-import { Hook } from './interfaces';
-import { FormLines, FormObject, FormStore, toFormLines, toFormObject, makeStore } from './form';
-import LobbyController from './ctrl';
+import type { LichessStorage } from 'lib/storage';
+
+import type LobbyController from './ctrl';
+import {
+  type FormLines,
+  type FormObject,
+  type FormStore,
+  toFormLines,
+  toFormObject,
+  makeStore,
+} from './form';
+import type { Hook } from './interfaces';
 
 interface FilterData {
   form: FormLines;
@@ -16,8 +25,12 @@ export default class Filter {
   store: FormStore;
   data: FilterData | null;
   open = false;
+  uiCacheBuster = 1; // used to force re-init of filter UI
 
-  constructor(storage: LichessStorage, readonly root: LobbyController) {
+  constructor(
+    storage: LichessStorage,
+    readonly root: LobbyController,
+  ) {
     this.store = makeStore(storage);
     this.set(this.store.get());
   }
@@ -43,12 +56,12 @@ export default class Filter {
 
   filter = (hooks: Hook[]): Filtered => {
     if (!this.data) return { visible: hooks, hidden: 0 };
-    const f = this.data.filter,
-      ratingRange = f.ratingRange && f.ratingRange.split('-').map((r: string) => parseInt(r, 10)),
-      seen: string[] = [],
-      visible: Hook[] = [];
-    let variant: string,
-      hidden = 0;
+    const f = this.data.filter;
+    const ratingRange = f.ratingRange?.split('-').map((r: string) => parseInt(r, 10));
+    const seen: string[] = [];
+    const visible: Hook[] = [];
+    let variant: string;
+    let hidden = 0;
     hooks.forEach(hook => {
       variant = hook.variant;
       if (hook.action === 'cancel') visible.push(hook);
@@ -56,8 +69,8 @@ export default class Filter {
         if (
           !f.variant?.includes(variant) ||
           !f.speed?.includes((hook.s || 1).toString() /* ultrabullet = bullet */) ||
-          (f.mode?.length == 1 && f.mode[0] != (hook.ra || 0).toString()) ||
-          (f.increment?.length == 1 && f.increment[0] != hook.i.toString()) ||
+          (f.mode?.length === 1 && f.mode[0] !== (hook.ra || 0).toString()) ||
+          (f.increment?.length === 1 && f.increment[0] !== hook.i.toString()) ||
           (ratingRange && (!hook.rating || hook.rating < ratingRange[0] || hook.rating > ratingRange[1]))
         ) {
           hidden++;

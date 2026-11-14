@@ -1,87 +1,81 @@
 package lila.tournament
 
-import java.util.concurrent.ConcurrentHashMap
+import chess.IntRating
+
 import scala.collection.immutable.TreeSet
 
-import lila.game.Game
-import lila.user.User
+import lila.core.chess.Rank
 
 case class Duel(
-    gameId: Game.ID,
+    gameId: GameId,
     p1: Duel.DuelPlayer,
     p2: Duel.DuelPlayer,
-    averageRating: Duel.Rating
-) {
+    averageRating: IntRating
+):
 
-  def has(u: User) = p1.name.id == u.id || p2.name.id == u.id
+  def has(u: UserId) = u.is(p1) || u.is(p2)
 
-  def userIds = List(p1.name.id, p2.name.id)
-}
+  def userIds = List[UserId](p1.name.id, p2.name.id)
 
-object Duel {
+object Duel:
 
-  type UsernameRating = (String, Int)
+  type UsernameRating = (user: UserName, rating: IntRating)
 
-  case class DuelPlayer(name: Name, rating: Rating, rank: Rank)
-  case class Name(value: String) extends AnyVal with StringValue {
-    def id = User normalize value
-  }
-  case class Rating(value: Int) extends AnyVal with IntValue
-  case class Rank(value: Int)   extends AnyVal with IntValue
+  case class DuelPlayer(name: UserName, rating: IntRating, rank: Rank)
+  object DuelPlayer:
+    given UserIdOf[DuelPlayer] = _.name.id
 
   def tbUser(p: UsernameRating, ranking: Ranking) =
-    ranking get User.normalize(p._1) map { rank =>
-      DuelPlayer(Name(p._1), Rating(p._2), Rank(rank + 1))
+    ranking.get(p.user.id).map { rank =>
+      DuelPlayer(p.user, p.rating, rank + 1)
     }
 
-  private[tournament] val ratingOrdering               = Ordering.by[Duel, Int](_.averageRating.value)
-  private[tournament] val gameIdOrdering               = Ordering.by[Duel, Game.ID](_.gameId)
-  private[tournament] def emptyGameId(gameId: Game.ID) = Duel(gameId, null, null, Rating(0))
-}
+  private[tournament] val ratingOrdering = Ordering.by[Duel, Int](_.averageRating.value)
+  private[tournament] val gameIdOrdering = Ordering.by[Duel, GameId](_.gameId)(using stringOrdering)
 
-final private class DuelStore {
+final private class DuelStore:
 
-  import Duel._
+  import Duel.*
 
-  private val byTourId = new ConcurrentHashMap[Tournament.ID, TreeSet[Duel]](256)
+  private val byTourId = scalalib.ConcurrentMap[TourId, TreeSet[Duel]](256)
 
-  def get(tourId: Tournament.ID): Option[TreeSet[Duel]] = Option(byTourId get tourId)
+  export byTourId.get
 
-  def bestRated(tourId: Tournament.ID, nb: Int): List[Duel] =
-    get(tourId) ?? {
-      lila.common.Heapsort.topNToList(_, nb, ratingOrdering)
-    }
+  def bestRated(tourId: TourId, nb: Int): List[Duel] =
+    get(tourId).so:
+      scalalib.HeapSort.topNToList(_, nb)(using ratingOrdering)
 
-  def find(tour: Tournament, user: User): Option[Game.ID] =
-    get(tour.id) flatMap { _.find(_ has user).map(_.gameId) }
+  def find(tour: Tournament, user: UserId): Option[GameId] =
+    get(tour.id).flatMap(_.find(_.has(user)).map(_.gameId))
 
-  def add(tour: Tournament, game: Game, p1: UsernameRating, p2: UsernameRating, ranking: Ranking): Unit =
-    for {
-      p1 <- tbUser(p1, ranking)
-      p2 <- tbUser(p2, ranking)
-      tb = Duel(
-        gameId = game.id,
-        p1 = p1,
-        p2 = p2,
-        averageRating = Rating((p1.rating.value + p2.rating.value) / 2)
-      )
-    } byTourId.compute(
-      tour.id,
-      (_: Tournament.ID, v: TreeSet[Duel]) => {
-        if (v == null) TreeSet(tb)(gameIdOrdering)
-        else v + tb
-      }
-    )
+  def add(tour: TourId, game: GameId, p1: UsernameRating, p2: UsernameRating, ranking: Ranking): Unit =
+    makeDuel(game, p1, p2, ranking).foreach(add(tour, _))
+
+  def add(tour: TourId, duel: Duel): Unit =
+    byTourId.compute(tour):
+      _.fold(TreeSet(duel)(using gameIdOrdering))(_ + duel).some
+
+  def makeDuel(game: GameId, p1: UsernameRating, p2: UsernameRating, ranking: Ranking): Option[Duel] = for
+    p1 <- tbUser(p1, ranking)
+    p2 <- tbUser(p2, ranking)
+  yield Duel(
+    gameId = game,
+    p1 = p1,
+    p2 = p2,
+    averageRating = (p1.rating + p2.rating).map(_ / 2)
+  )
 
   def remove(game: Game): Unit =
-    game.tournamentId foreach { tourId =>
-      byTourId.computeIfPresent(
-        tourId,
-        (_: Tournament.ID, tb: TreeSet[Duel]) => {
-          val w = tb - emptyGameId(game.id)
-          if (w.isEmpty) null else w
-        }
-      )
-    }
-  def remove(tour: Tournament): Unit = byTourId.remove(tour.id).unit
-}
+    game.tournamentId.foreach(remove(game.id, _))
+
+  def remove(game: GameId, tour: TourId): Unit =
+    byTourId.computeIfPresent(tour): tb =>
+      // only Duel.gameId is used for set equality
+      // so we use a volatile duel with null players :-/
+      val w = tb - Duel(game, null, null, IntRating(0))
+      Option.when(w.nonEmpty)(w)
+
+  def remove(tour: Tournament): Unit = byTourId.remove(tour.id)
+
+  def kick(tour: Tournament, user: UserId): Unit =
+    find(tour, user).foreach(remove(_, tour.id))

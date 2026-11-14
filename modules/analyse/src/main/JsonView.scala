@@ -1,30 +1,34 @@
 package lila.analyse
 
-import play.api.libs.json._
+import chess.{ ByColor, Division, Ply }
+import play.api.libs.json.*
 
-import lila.game.Game
-import lila.tree.Eval.JsonHandlers._
+import lila.common.Json.given
+import lila.core.game.SideAndStart
+import lila.tree.Analysis
+import lila.tree.Analysis.given
 
-object JsonView {
+object JsonView extends lila.tree.AnalysisJson:
 
   def moves(analysis: Analysis, withGlyph: Boolean = true) =
-    JsArray(analysis.infoAdvices map { case (info, adviceOption) =>
+    JsArray(analysis.infoAdvices.map { (info, adviceOption) =>
       Json
         .obj()
         .add("eval" -> info.cp)
-        .add("mate" -> info.mate)
+        .add("mate" -> info.exportMate)
         .add("best" -> info.best.map(_.uci))
-        .add("variation" -> info.variation.nonEmpty.option(info.variation mkString " "))
+        .add("variation" -> info.variation.nonEmpty.option(info.variation.mkString(" ")))
         .add("judgment" -> adviceOption.map { a =>
           Json
             .obj(
-              "name"    -> a.judgment.name,
-              "comment" -> a.makeComment(withEval = false, withBestMove = true)
+              "name" -> a.judgment.name,
+              "comment" -> a.makeComment(false)
             )
             .add(
               "glyph" -> withGlyph.option(
                 Json.obj(
-                  "name"   -> a.judgment.glyph.name,
+                  "id" -> a.judgment.glyph.id,
+                  "name" -> a.judgment.glyph.name,
                   "symbol" -> a.judgment.glyph.symbol
                 )
               )
@@ -32,35 +36,95 @@ object JsonView {
         })
     })
 
-  import Accuracy.povToPovLike
-
-  def player(pov: Accuracy.PovLike)(analysis: Analysis) =
+  def player(pov: SideAndStart)(
+      analysis: Analysis,
+      accuracy: Option[ByColor[AccuracyPercent]],
+      phases: ByColor[Map[GamePhase, AccuracyPercent]] = ByColor.fill(Map.empty)
+  ) =
     analysis.summary
       .find(_._1 == pov.color)
-      .map(_._2)
-      .map(s =>
-        JsObject(s map { case (nag, nb) =>
+      ._2F
+      .map { s =>
+        JsObject(s.map { (nag, nb) =>
           nag.toString.toLowerCase -> JsNumber(nb)
-        }).add("acpl" -> lila.analyse.Accuracy.mean(pov, analysis))
-      )
+        })
+          .add("acpl", lila.analyse.AccuracyCP.mean(pov, analysis))
+          .add("accuracy", accuracy.map(_(pov.color).toInt))
+          .add("phases", phaseJson(phases(pov.color)))
+      }
 
-  def bothPlayers(game: Game, analysis: Analysis) =
-    Json.obj(
-      "id"    -> analysis.id,
-      "white" -> player(game.whitePov)(analysis),
-      "black" -> player(game.blackPov)(analysis)
-    )
+  private def phaseJson(phases: Map[GamePhase, AccuracyPercent]): Option[JsObject] =
+    Option.when(phases.nonEmpty):
+      JsObject:
+        phaseNames.flatMap: phase =>
+          phases.get(phase).map(p => phase -> JsNumber(p.toInt))
 
-  def bothPlayers(pov: Accuracy.PovLike, analysis: Analysis) =
-    Json.obj(
-      "id"    -> analysis.id,
-      "white" -> player(pov.copy(color = chess.White))(analysis),
-      "black" -> player(pov.copy(color = chess.Black))(analysis)
-    )
+  def bothPlayers(
+      startedAtPly: Ply,
+      analysis: Analysis,
+      withAccuracy: Boolean = true,
+      division: Division = Division.empty
+  ) =
+    val accuracy = withAccuracy.so(AccuracyPercent.gameAccuracy(startedAtPly.turn, analysis))
+    val phases = AccuracyPercent.phaseAccuracies(division, analysis)
+    val both = ByColor[Option[JsObject]]: color =>
+      player(SideAndStart(color, startedAtPly))(analysis, accuracy, phases)
+    Json.obj("id" -> analysis.id.value, "nodesPerMove" -> analysis.nodesPerMove, "engine" -> analysis.engine)
+      ++ Json.toJsObject(both)
 
   def mobile(game: Game, analysis: Analysis) =
     Json.obj(
-      "summary" -> bothPlayers(game, analysis),
-      "moves"   -> moves(analysis)
+      "summary" -> bothPlayers(game.startedAtPly, analysis, withAccuracy = false),
+      "moves" -> moves(analysis)
     )
-}
+
+  def analysisHeader(root: lila.tree.Root, division: Division, analysis: Analysis) =
+    Json.obj(
+      "division" -> division,
+      "summary" -> bothPlayers(root.ply, analysis, division = division)
+    )
+
+  def augmentLocalAnalysis(json: JsValue): JsResult[JsObject] =
+    for
+      analysis <- (json \ "analysis").validate[lila.analyse.Analysis]
+      middle <- (json \ "division" \ "middle").validateOpt[Int]
+      end <- (json \ "division" \ "end").validateOpt[Int]
+    yield
+      val division = Division(middle.map(Ply(_)), end.map(Ply(_)), Ply(analysis.infos.size + 1))
+      val absoluteDivision = division.copy(
+        middle = division.middle.map(_ + analysis.startPly),
+        end = division.end.map(_ + analysis.startPly),
+        plies = division.plies + analysis.startPly
+      )
+      Json.obj(
+        "summary" -> bothPlayers(
+          analysis.startPly,
+          analysis,
+          division = absoluteDivision
+        ),
+        "moves" -> moves(analysis)
+      )
+
+  given Reads[Analysis] = Reads: js =>
+    for
+      _ <-
+        if (js \ "infos").asOpt[JsArray].exists(_.value.sizeIs > Analysis.MAX_PLIES) then
+          JsError("Too much info")
+        else JsSuccess(())
+      rawId <- (js \ "id").validate[String]
+      rawStudyIdOpt <- (js \ "studyId").validateOpt[String]
+      startPly <- (js \ "startPly").validate[Ply]
+      initialScore <- Info.readScore(js \ "initialEval", startPly)
+      infos <- (js \ "infos").validate[List[Info]]
+      date <- (js \ "date").validate[Instant]
+      engine <- (js \ "engine").validate[lila.tree.Engine]
+    yield Analysis(
+      id = rawStudyIdOpt match
+        case Some(sid) => Analysis.Id.Study(StudyId(sid), StudyChapterId(rawId))
+        case None => Analysis.Id.Game(GameId(rawId)),
+      initialScore = initialScore,
+      infos = infos,
+      startPly = startPly,
+      date = date,
+      engine = engine
+    )

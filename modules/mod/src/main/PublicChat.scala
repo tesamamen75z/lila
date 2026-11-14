@@ -1,65 +1,69 @@
 package lila.mod
 
-import lila.chat.{ Chat, UserChat }
+import lila.chat.UserChat
+import lila.core.relay.{ GetActiveRounds, RoundIdName as RelayRound }
+import lila.core.swiss.IdName as Swiss
+import lila.core.tournament.Tournament
 import lila.report.Suspect
-import lila.simul.Simul
-import lila.tournament.Tournament
-import lila.user.{ User, UserRepo }
+import lila.user.UserRepo
+
+type PublicChats[A] = List[(A, UserChat)]
 
 final class PublicChat(
     chatApi: lila.chat.ChatApi,
-    tournamentApi: lila.tournament.TournamentApi,
-    simulEnv: lila.simul.Env,
+    tournamentApi: lila.core.tournament.TournamentApi,
+    swissFeature: lila.core.swiss.SwissFeatureApi,
     userRepo: UserRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, Scheduler):
 
-  def all: Fu[(List[(Tournament, UserChat)], List[(Simul, UserChat)])] =
-    tournamentChats zip simulChats
+  def all: Fu[(PublicChats[Tournament], PublicChats[Swiss], PublicChats[RelayRound])] =
+    (tournamentChats, swissChats, relayChats).tupled
 
-  def deleteAll(userId: User.ID): Funit =
-    userRepo byId userId map2 Suspect flatMap { _ ?? deleteAll }
+  def deleteAll(userId: UserId): Funit =
+    userRepo.byId(userId).map2(Suspect.apply).flatMapz(deleteAll)
 
   def deleteAll(suspect: Suspect): Funit =
-    all.flatMap { case (tours, simuls) =>
-      (tours.map(_._2) ::: simuls.map(_._2))
-        .filter(_ hasLinesOf suspect.user)
-        .map(chatApi.userChat.delete(_, suspect.user, _.Global))
-        .sequenceFu
-        .void
-    }
+    all.flatMap: (tours, swisses, relays) =>
+      (tours._2F ::: swisses._2F ::: relays._2F)
+        .filter(_.hasLinesOf(suspect.user))
+        .parallelVoid(chatApi.userChat.delete(_, suspect.user, _.global))
 
-  private def tournamentChats: Fu[List[(Tournament, UserChat)]] =
-    tournamentApi.fetchVisibleTournaments.flatMap { visibleTournaments =>
-      val ids = visibleTournaments.all.map(_.id) map Chat.Id.apply
-      chatApi.userChat.findAll(ids).map { chats =>
-        chats.flatMap { chat =>
-          visibleTournaments.all.find(_.id == chat.id.value).map(tour => (tour, chat))
-        }
-      } map sortTournamentsByRelevance
-    }
+  private def tournamentChats: Fu[PublicChats[Tournament]] =
+    tournamentApi.fetchModable.flatMap: tours =>
+      val ids = tours.map(_.id.into(ChatId))
+      chatApi.userChat
+        .findAll(ids)
+        .map: chats =>
+          sortTournamentsByRelevance:
+            chats
+              .map(_.filterLines(!_.isLichess))
+              .filter(_.nonEmpty)
+              .flatMap: chat =>
+                tours
+                  .find(_.id.value == chat.id.value)
+                  .map(_ -> chat)
 
-  private def simulChats: Fu[List[(Simul, UserChat)]] =
-    fetchVisibleSimuls.flatMap { simuls =>
-      val ids = simuls.map(_.id) map Chat.Id.apply
-      chatApi.userChat.findAll(ids).map { chats =>
-        chats.flatMap { chat =>
-          simuls.find(_.id == chat.id.value).map(simul => (simul, chat))
-        }
-      }
-    }
+  private def getRelayRounds =
+    lila.common.Bus.ask[List[RelayRound], GetActiveRounds](GetActiveRounds(_))
 
-  private def fetchVisibleSimuls: Fu[List[Simul]] = {
-    simulEnv.allCreatedFeaturable.get {} zip
-      simulEnv.repo.allStarted zip
-      simulEnv.repo.allFinishedFeaturable(3) map { case ((created, started), finished) =>
-        created ::: started ::: finished
-      }
-  }
+  private def swissChats: Fu[PublicChats[Swiss]] =
+    swissFeature.idNames
+      .flatMap: swisses =>
+        val all = swisses.created ::: swisses.started
+        val ids = all.map(_.id.into(ChatId))
+        chatApi.userChat
+          .findAll(ids)
+          .map: chats =>
+            chats.flatMap: chat =>
+              all.find(_.id.value == chat.id.value).map(_ -> chat)
 
-  /** Sort the tournaments by the tournaments most likely to require moderation attention
-    */
+  private def relayChats: Fu[PublicChats[RelayRound]] = for
+    rounds <- getRelayRounds
+    chats <- chatApi.userChat.findAll(rounds.map(_.id.into(ChatId)))
+  yield chats.flatMap: chat =>
+    rounds.find(_.id.value == chat.id.value).map(_ -> chat)
+
+  // Sort the tournaments by the tournaments most likely to require moderation attention
   private def sortTournamentsByRelevance(tournaments: List[(Tournament, UserChat)]) =
-    tournaments.sortBy { t =>
+    tournaments.sortBy: t =>
       (t._1.isFinished, -t._1.nbPlayers)
-    }
-}

@@ -1,191 +1,164 @@
 package lila.activity
 
-import lila.db.dsl._
-import lila.game.Game
-import lila.study.Study
-import lila.user.User
+import reactivemongo.api.bson.*
+
+import lila.core.simul.Simul
+import lila.db.AsyncCollFailingSilently
+import lila.db.dsl.{ *, given }
 
 final class ActivityWriteApi(
-    coll: Coll,
-    studyApi: lila.study.StudyApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    withColl: AsyncCollFailingSilently,
+    studyApi: lila.core.study.StudyApi,
+    userApi: lila.core.user.UserApi
+)(using Executor):
 
-  import Activity._
-  import BSONHandlers._
-  import activities._
-  import model._
+  import Activity.*
+  import BSONHandlers.{ *, given }
+  import activities.*
+
+  def deleteAll(u: User): Funit = withColl(_.delete.one(regexId(u.id)).void)
 
   def game(game: Game): Funit =
-    game.userIds
-      .flatMap { userId =>
-        for {
-          pt     <- game.perfType
-          player <- game playerByUserId userId
-        } yield for {
-          a <- getOrCreate(userId)
-          setGames = !game.isCorrespondence ?? $doc(
-            ActivityFields.games -> a.games.orDefault
-              .add(pt, Score.make(game wonBy player.color, RatingProg make player))
-          )
-          setCorres = game.hasCorrespondenceClock ?? $doc(
-            ActivityFields.corres -> a.corres.orDefault.add(GameId(game.id), moved = false, ended = true)
-          )
-          setters = setGames ++ setCorres
-          _ <-
-            (!setters.isEmpty) ?? coll.update
-              .one($id(a.id), $set(setters), upsert = true)
-              .void
-        } yield ()
-      }
-      .sequenceFu
-      .void
+    (for
+      userId <- game.userIds
+      player <- game.player(userId)
+    yield update(userId): a =>
+      val setGames = (!game.isCorrespondence).so:
+        bdoc:
+          ActivityFields.games -> a.games.orZero
+            .add(game.perfKey, Score.make(game.wonBy(player.color), RatingProg.make(player.light)))
+      val setCorres = game.isCorrespondence.so:
+        bdoc:
+          ActivityFields.corres -> a.corres.orZero.add(game.id, moved = false, ended = true)
+      setGames ++ setCorres
+    ).parallel.void
 
-  def forumPost(post: lila.forum.Post): Funit =
-    post.userId.filter(User.lichessId !=) ?? { userId =>
-      getOrCreate(userId) flatMap { a =>
-        coll.update
-          .one(
-            $id(a.id),
-            $set(ActivityFields.posts -> (~a.posts + PostId(post.id))),
-            upsert = true
-          )
-          .void
-      }
-    }
+  def tourEntries(entries: List[lila.core.tournament.leaderboard.Entry]): Funit =
+    withColl: coll =>
+      entries.sequentiallyVoid: entry =>
+        coll.update.one(bid(today(entry.userId)), addToSet(ActivityFields.tours -> entry.id), upsert = true)
 
-  def puzzle(res: lila.puzzle.Puzzle.UserResult): Funit =
-    getOrCreate(res.userId) flatMap { a =>
-      coll.update
-        .one(
-          $id(a.id),
-          $set(ActivityFields.puzzles -> {
-            ~a.puzzles + Score.make(
-              res = res.result.win.some,
-              rp = RatingProg(Rating(res.rating._1), Rating(res.rating._2)).some
-            )
-          }),
-          upsert = true
-        )
-        .void
-    }
+  def forumPost(post: lila.core.forum.ForumPostMini): Funit =
+    post.userId
+      .filterNot(_.is(UserId.lichess))
+      .so: userId =>
+        update(userId): a =>
+          bdoc(ActivityFields.forumPosts -> (~a.forumPosts + post.id))
 
-  def storm(userId: User.ID, score: Int): Funit =
-    getOrCreate(userId) flatMap { a =>
-      coll.update
-        .one(
-          $id(a.id),
-          $set(ActivityFields.storm -> { ~a.storm + score }),
-          upsert = true
-        )
-        .void
-    }
+  def ublogPost(post: lila.core.ublog.UblogPost): Funit = update(post.created.by): a =>
+    bdoc(ActivityFields.ublogPosts -> (~a.ublogPosts + post.id))
 
-  def racer(userId: User.ID, score: Int): Funit =
-    getOrCreate(userId) flatMap { a =>
-      coll.update
-        .one(
-          $id(a.id),
-          $set(ActivityFields.racer -> { ~a.racer + score }),
-          upsert = true
-        )
-        .void
-    }
+  def puzzle(res: lila.puzzle.Puzzle.UserResult): Funit = update(res.userId): a =>
+    bdoc(ActivityFields.puzzles -> {
+      ~a.puzzles + Score.make(
+        res = res.win.yes.some,
+        rp = lila.core.rating.RatingProg(res.rating._1, res.rating._2).some
+      )
+    })
 
-  def streak(userId: User.ID, score: Int): Funit =
-    getOrCreate(userId) flatMap { a =>
-      coll.update
-        .one(
-          $id(a.id),
-          $set(ActivityFields.streak -> { ~a.streak + score }),
-          upsert = true
-        )
-        .void
-    }
+  def storm(userId: UserId, score: Int): Funit = update(userId): a =>
+    bdoc(ActivityFields.storm -> { ~a.storm + score })
 
-  def learn(userId: User.ID, stage: String) =
-    update(userId) { a =>
-      a.copy(learn = Some(~a.learn + Learn.Stage(stage))).some
-    }
+  def racer(userId: UserId, score: Int): Funit = update(userId): a =>
+    bdoc(ActivityFields.racer -> { ~a.racer + score })
 
-  def practice(prog: lila.practice.PracticeProgress.OnComplete) =
-    update(prog.userId) { a =>
-      a.copy(practice = Some(~a.practice + prog.studyId)).some
-    }
+  def streak(userId: UserId, score: Int): Funit = update(userId): a =>
+    bdoc(ActivityFields.streak -> { ~a.streak + score })
 
-  def simul(simul: lila.simul.Simul) =
-    simulParticipant(simul, simul.hostId) >>
-      simul.pairings.map(_.player.user).map { simulParticipant(simul, _) }.sequenceFu.void
+  def learn(userId: UserId, stage: String) = update(userId): a =>
+    bdoc(ActivityFields.learn -> { ~a.learn + LearnStage(stage) })
 
-  def corresMove(gameId: Game.ID, userId: User.ID) =
-    update(userId) { a =>
-      a.copy(corres = Some((~a.corres).add(GameId(gameId), moved = true, ended = false))).some
-    }
+  def practice(prog: lila.core.misc.practice.OnComplete) = update(prog.userId): a =>
+    bdoc(ActivityFields.practice -> { ~a.practice + prog.studyId })
 
-  def plan(userId: User.ID, months: Int) =
-    update(userId) { a =>
-      a.copy(patron = Some(Patron(months))).some
-    }
+  def simul(simul: Simul): Funit =
+    (simul.hostId :: simul.playerIds).sequentiallyVoid(simulParticipant(simul, _))
 
-  def follow(from: User.ID, to: User.ID) =
+  def corresMove(gameId: GameId, userId: UserId) = update(userId): a =>
+    bdoc(ActivityFields.corres -> (~a.corres).add(gameId, moved = true, ended = false))
+
+  def plan(userId: UserId, months: Int) = update(userId): _ =>
+    bdoc(ActivityFields.patron -> Patron(months))
+
+  def follow(from: UserId, to: UserId) =
     update(from) { a =>
-      a.copy(follows = Some(~a.follows addOut to)).some
+      bdoc(ActivityFields.follows -> (~a.follows).addOut(to))
     } >>
-      update(to) { a =>
-        a.copy(follows = Some(~a.follows addIn from)).some
+      update(to): a =>
+        bdoc(ActivityFields.follows -> (~a.follows).addIn(from))
+
+  def unfollowAll(from: User, following: Set[UserId]) =
+    withColl: coll =>
+      coll.secondary
+        .distinctEasy[UserId, Set]("f.o.ids", regexId(from.id))
+        .flatMap: extra =>
+          val all = following ++ extra
+          all.nonEmpty.so:
+            all.toList.sequentiallyVoid: userId =>
+              coll.update.one(
+                regexId(userId) ++ bdoc("f.i.ids" -> from.id),
+                pull("f.i.ids" -> from.id)
+              )
+
+  def study(id: StudyId) =
+    studyApi
+      .byId(id)
+      .flatMap:
+        _.filter(_.visibility == lila.core.study.Visibility.public).so: s =>
+          userApi
+            .isTroll(s.ownerId)
+            .not
+            .flatMapz:
+              update(s.ownerId): a =>
+                bdoc(ActivityFields.studies -> { ~a.studies + s.id })
+
+  def team(id: TeamId, userId: UserId) =
+    update(userId): a =>
+      bdoc(ActivityFields.teams -> { ~a.teams + id })
+
+  def streamStart(userId: UserId) =
+    update(userId): _ =>
+      bdoc(ActivityFields.stream -> true)
+
+  def swiss(id: SwissId, ranking: lila.core.swiss.Ranking) =
+    ranking.toList.sequentiallyVoid: (userId, rank) =>
+      update(userId): a =>
+        bdoc(ActivityFields.swisses -> { ~a.swisses + SwissRank(id, rank) })
+
+  private def simulParticipant(simul: Simul, userId: UserId) = update(userId) { a =>
+    bdoc(ActivityFields.simuls -> { ~a.simuls + simul.id })
+  }
+
+  private def update(userId: UserId)(makeSetters: Activity => Bdoc): Funit =
+    withColl: coll =>
+      coll.byId[Activity](today(userId)).dmap(_ | Activity.make(userId)).flatMap { activity =>
+        val setters = makeSetters(activity)
+        setters.isEmpty.not.so:
+          coll.update
+            .one(bid(activity.id), set(setters), upsert = true)
+            .flatMap:
+              _.upserted.nonEmpty.so(truncateAfterInserting(coll, activity.id))
+            .void
       }
 
-  def unfollowAll(from: User, following: Set[User.ID]) =
-    coll.secondaryPreferred.distinctEasy[User.ID, Set](
-      "f.o.ids",
-      regexId(from.id)
-    ) flatMap { extra =>
-      val all = following ++ extra
-      all.nonEmpty.?? {
-        logger.info(s"${from.id} unfollow ${all.size} users")
-        all
-          .map { userId =>
-            coll.update.one(
-              regexId(userId) ++ $doc("f.i.ids" -> from.id),
-              $pull("f.i.ids" -> from.id)
-            )
-          }
-          .sequenceFu
-          .void
-      }
-    }
-
-  def study(id: Study.Id) =
-    studyApi byId id flatMap {
-      _.filter(_.isPublic) ?? { s =>
-        update(s.ownerId) { a =>
-          a.copy(studies = Some(~a.studies + s.id)).some
+  private def truncateAfterInserting(coll: Coll, id: Activity.Id): Funit = {
+    // no need to do it every day
+    (id.userId.hashCode % 3) == (id.day.value % 3)
+  }.so:
+    coll
+      .find(regexId(id.userId), bid(true).some)
+      .sort(sort.desc("_id"))
+      .skip(Activity.recentNb)
+      .one[Bdoc]
+      .flatMap:
+        _.flatMap(_.getAsOpt[Activity.Id]("_id")).so { oldId =>
+          coll.delete
+            .one:
+              bdoc(
+                "_id" -> bdoc(
+                  "$lte" -> oldId,
+                  "$regex" -> BSONRegex(s"^${id.userId}$idSep", "")
+                )
+              )
+            .void
         }
-      }
-    }
-
-  def team(id: String, userId: User.ID) =
-    update(userId) { a =>
-      a.copy(teams = Some(~a.teams + id)).some
-    }
-
-  def streamStart(userId: User.ID) =
-    update(userId) { _.copy(stream = true).some }
-
-  def swiss(id: lila.swiss.Swiss.Id, ranking: lila.swiss.Ranking) =
-    ranking.map { case (userId, rank) =>
-      update(userId) { a => a.copy(swisses = Some(~a.swisses + SwissRank(id, rank))).some }
-    }.sequenceFu
-
-  private def simulParticipant(simul: lila.simul.Simul, userId: String) =
-    update(userId) { a =>
-      a.copy(simuls = Some(~a.simuls + SimulId(simul.id))).some
-    }
-
-  private def get(userId: User.ID)         = coll.byId[Activity, Id](Id today userId)
-  private def getOrCreate(userId: User.ID) = get(userId) map { _ | Activity.make(userId) }
-  private def save(activity: Activity)     = coll.update.one($id(activity.id), activity, upsert = true).void
-  private def update(userId: User.ID)(f: Activity => Option[Activity]): Funit =
-    getOrCreate(userId) flatMap { old =>
-      f(old) ?? save
-    }
-}

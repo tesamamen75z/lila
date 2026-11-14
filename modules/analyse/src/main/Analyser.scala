@@ -1,62 +1,60 @@
 package lila.analyse
 
+import monocle.syntax.all.*
+import play.api.libs.json.*
+
 import lila.common.Bus
-import lila.game.actorApi.InsertGame
-import lila.game.{ Game, GameRepo }
-import lila.hub.actorApi.map.TellIfExists
+import lila.tree.Analysis
 
 final class Analyser(
-    gameRepo: GameRepo,
-    analysisRepo: AnalysisRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    gameRepo: lila.core.game.GameRepo,
+    analysisRepo: AnalysisRepo,
+    divider: lila.core.game.Divider
+)(using Executor)
+    extends lila.tree.Analyser:
 
-  def get(game: Game): Fu[Option[Analysis]] =
-    analysisRepo byGame game
+  export analysisRepo.{ byId, byGame as get }
 
-  def byId(id: Analysis.ID): Fu[Option[Analysis]] = analysisRepo byId id
-
-  def save(analysis: Analysis): Funit =
-    analysis.studyId match {
-      case None =>
-        gameRepo game analysis.id flatMap {
-          _ ?? { game =>
-            gameRepo.setAnalysed(game.id)
-            analysisRepo.save(analysis) >>
-              sendAnalysisProgress(analysis, complete = true) >>- {
-                Bus.publish(actorApi.AnalysisReady(game, analysis), "analysisReady")
-                Bus.publish(InsertGame(game), "gameSearchInsert")
-              }
-          }
-        }
-      case Some(_) =>
-        analysisRepo.save(analysis) >>
-          sendAnalysisProgress(analysis, complete = true)
-    }
+  def save(analysis: Analysis, workHash: Option[() => Array[Byte]] = none): Funit = for
+    _ <- analysisRepo.save(analysis, analysis.studyId.isDefined.so(workHash).map(_()))
+    _ <- analysis.id.gameId.so: id =>
+      gameRepo.game(id).flatMapz { prev =>
+        val game = prev.focus(_.metadata.analysed).replace(true)
+        for _ <- gameRepo.setAnalysed(game.id, true)
+        yield Bus.pub(actorApi.AnalysisReady(game, analysis))
+      }
+    _ <- sendAnalysisProgress(analysis, complete = true)
+  yield ()
 
   def progress(analysis: Analysis): Funit = sendAnalysisProgress(analysis, complete = false)
 
+  def foundSameHash(forId: Analysis.Id, same: Analysis, workHash: Array[Byte]): Funit =
+    save(same.copy(id = forId), (() => workHash).some)
+
   private def sendAnalysisProgress(analysis: Analysis, complete: Boolean): Funit =
-    analysis.studyId match {
-      case None =>
-        gameRepo gameWithInitialFen analysis.id map {
-          _ ?? { case (game, initialFen) =>
-            Bus.publish(
-              TellIfExists(
-                analysis.id,
-                actorApi.AnalysisProgress(
-                  analysis = analysis,
-                  game = game,
-                  variant = game.variant,
-                  initialFen = initialFen | game.variant.initialFen
-                )
-              ),
-              "roundSocket"
+    analysis.id match
+      case Analysis.Id.Game(id) =>
+        gameRepo.gameWithInitialFen(id).mapz { g =>
+          Bus.pub(
+            lila.tree.AnalysisProgress(
+              id,
+              () => makeProgressPayload(analysis, g.game, g.fen | g.game.variant.initialFen)
             )
-          }
+          )
         }
-      case Some(_) =>
-        fuccess {
-          Bus.publish(actorApi.StudyAnalysisProgress(analysis, complete), "studyAnalysisProgress")
-        }
-    }
-}
+      case _ =>
+        fuccess:
+          Bus.pub(lila.tree.StudyAnalysisProgress(analysis, complete))
+
+  private def makeProgressPayload(
+      analysis: Analysis,
+      game: Game,
+      initialFen: chess.format.Fen.Full
+  ): JsObject =
+    import lila.tree.{ TreeBuilder, ExportOptions, Node }
+    val tree = TreeBuilder(game, analysis.some, initialFen, ExportOptions.default, lila.log.system.warn)
+    val division = divider(game.id, game.sans, game.variant, initialFen.some)
+    Json.obj(
+      "analysis" -> JsonView.bothPlayers(game.startedAtPly, analysis, division = division),
+      "tree" -> Node.lichobileNodeJsonWriter.writes(tree)
+    )

@@ -1,34 +1,28 @@
 package lila.relation
 
-case class Follower(u1: String) {
+def makeId(u1: UserId, u2: UserId) = s"$u1/$u2"
+
+case class Follower(u1: UserId):
   def userId = u1
-}
 
-case class Followed(u2: String) {
+case class Followed(u2: UserId):
   def userId = u2
-}
 
-case class Blocked(u2: String) {
+case class Blocked(u2: UserId):
   def userId = u2
-}
 
-case class Related(
-    user: lila.user.User,
+case class Related[U](
+    user: U,
     nbGames: Option[Int],
     followable: Boolean,
     relation: Option[Relation]
 )
 
-case class Relations(
-    in: Option[Relation],
-    out: Option[Relation]
-)
+private object BSONHandlers:
 
-object BSONHandlers {
+  import reactivemongo.api.bson.*
+  import lila.db.dsl.given
 
-  import reactivemongo.api.bson._
-
-  implicit private[relation] val followerBSONHandler = Macros.handler[Follower]
-  implicit private[relation] val followedBSONHandler = Macros.handler[Followed]
-  implicit private[relation] val blockedBSONHandler  = Macros.handler[Blocked]
-}
+  given BSONDocumentHandler[Follower] = Macros.handler
+  given BSONDocumentHandler[Followed] = Macros.handler
+  given BSONDocumentHandler[Blocked] = Macros.handler

@@ -1,107 +1,72 @@
-import { h, VNode } from 'snabbdom';
+import { licon, type LiconValue } from 'lib/licon';
+import { pubsub } from 'lib/pubsub';
+import { type Attrs, hl, type VNode, bind } from 'lib/view';
+import { userLine, profileUrl } from 'lib/view/userLink';
 
-import { DasherCtrl, Mode } from './dasher';
-import { view as pingView } from './ping';
-import { bind } from './util';
+import { type Mode, PaneCtrl } from './interfaces';
 
-export default function (ctrl: DasherCtrl): VNode {
-  const d = ctrl.data,
-    trans = ctrl.trans,
-    noarg = trans.noarg;
+export class LinksCtrl extends PaneCtrl {
+  render = (): VNode => {
+    const modeCfg = this.modeCfg;
+    return hl('div', [
+      this.userLinks(),
+      hl('div.subs', [
+        hl('button.sub.language', modeCfg('langs'), i18n.site.language),
+        hl('button.sub', modeCfg('sound'), i18n.site.sound),
+        hl('button.sub', modeCfg('theme'), i18n.site.theme),
+        hl('button.sub', modeCfg('board'), i18n.site.board),
+        hl('button.sub', modeCfg('piece'), i18n.site.pieceSet),
+        this.root.opts.zenable &&
+          hl('div.zen.selector', [
+            hl(
+              'button.text',
+              {
+                attrs: { 'data-icon': licon.DiscBigOutline, title: 'Keyboard: z', type: 'button' },
+                hook: bind('click', () => pubsub.emit('zen')),
+              },
+              i18n.preferences.zenMode,
+            ),
+          ]),
+      ]),
+      this.root.ping.render(),
+    ]);
+  };
 
-  function userLinks(): VNode | null {
+  private get data() {
+    return this.root.data;
+  }
+
+  private userLinks(): VNode | null {
+    const d = this.data;
+    const linkCfg = this.linkCfg;
     return d.user
-      ? h('div.links', [
-          h(
-            'a.user-link.online.text.is-green',
-            linkCfg(`/@/${d.user.name}`, d.user.patron ? '' : ''),
-            noarg('profile')
-          ),
-
-          h('a.text', linkCfg('/inbox', ''), noarg('inbox')),
-
-          h(
+      ? hl('div.links', [
+          hl('a.user-link.online', { attrs: { href: profileUrl(d.user.name) } }, [
+            userLine(d.user),
+            i18n.site.profile,
+          ]),
+          hl('a.text', linkCfg('/inbox', licon.Envelope), i18n.site.inbox),
+          hl(
             'a.text',
             linkCfg(
-              '/account/preferences/game-display',
-              '',
-              ctrl.opts.playing ? { target: '_blank', rel: 'noopener' } : undefined
+              '/account/profile',
+              licon.Gear,
+              this.root.opts.playing ? { target: '_blank' } : undefined,
             ),
-            noarg('preferences')
+            i18n.preferences.preferences,
           ),
-
-          !d.coach ? null : h('a.text', linkCfg('/coach/edit', ''), noarg('coachManager')),
-
-          !d.streamer ? null : h('a.text', linkCfg('/streamer/edit', ''), noarg('streamerManager')),
-
-          h(
-            'form.logout',
-            {
-              attrs: { method: 'post', action: '/logout' },
-            },
-            [
-              h(
-                'button.text',
-                {
-                  attrs: {
-                    type: 'submit',
-                    'data-icon': '',
-                  },
-                },
-                noarg('logOut')
-              ),
-            ]
-          ),
+          d.coach && hl('a.text', linkCfg('/coach/edit', licon.GraduateCap), i18n.site.coachManager),
+          d.streamer && hl('a.text', linkCfg('/streamer/edit', licon.Mic), i18n.site.streamerManager),
+          hl('form.logout', { attrs: { method: 'post', action: '/logout' } }, [
+            hl('button.text', { attrs: { type: 'submit', 'data-icon': licon.Power } }, i18n.site.logOut),
+          ]),
         ])
       : null;
   }
 
-  const langs = h('a.sub', modeCfg(ctrl, 'langs'), noarg('language'));
+  private readonly modeCfg = (m: Mode) => ({ hook: bind('click', () => this.root.setMode(m)) });
 
-  const sound = h('a.sub', modeCfg(ctrl, 'sound'), noarg('sound'));
-
-  const background = h('a.sub', modeCfg(ctrl, 'background'), noarg('background'));
-
-  const board = h('a.sub', modeCfg(ctrl, 'board'), noarg('boardGeometry'));
-
-  const theme = h('a.sub', modeCfg(ctrl, 'theme'), noarg('boardTheme'));
-
-  const piece = h('a.sub', modeCfg(ctrl, 'piece'), noarg('pieceSet'));
-
-  const zenToggle = ctrl.opts.playing
-    ? h('div.zen.selector', [
-        h(
-          'a.text',
-          {
-            attrs: {
-              'data-icon': '',
-              title: 'Keyboard: z',
-            },
-            hook: bind('click', () => lichess.pubsub.emit('zen')),
-          },
-          noarg('zenMode')
-        ),
-      ])
-    : null;
-
-  return h('div', [
-    userLinks(),
-    h('div.subs', [langs, sound, background, board, theme, piece, zenToggle]),
-    pingView(ctrl.ping),
-  ]);
-}
-
-const linkCfg = (href: string, icon: string, more?: Record<string, string>) => ({
-  attrs: {
-    href,
-    'data-icon': icon,
-    ...(more || {}),
-  },
-});
-
-function modeCfg(ctrl: DasherCtrl, m: Mode): any {
-  return {
-    hook: bind('click', () => ctrl.setMode(m)),
-    attrs: { 'data-icon': '' },
-  };
+  private readonly linkCfg = (href: string, icon: LiconValue, more?: Attrs) => ({
+    attrs: { href, 'data-icon': icon, ...more },
+  });
 }

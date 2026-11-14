@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="donate">Donér</string>
+  <string name="donateAsX">Donér som %s</string>
   <string name="lichessPatron">Lichess Protektor</string>
+  <string name="patronSince" comment="string is a date">Protektor siden %s</string>
   <string name="freeAccount">Gratis konto</string>
   <string name="becomePatron">Bliv Lichess Protektor</string>
   <string name="xBecamePatron">%s blev Lichess Protektor</string>
@@ -14,8 +16,8 @@
   <string name="noAdsNoSubs">Ingen annoncer, ingen abonnementer; men open-source og passion.</string>
   <string name="thankYou">Tak for dit bidrag!</string>
   <string name="youHaveLifetime">Du har en livstid-protektor-konto. Det er ret fantastisk!</string>
-  <string name="patronUntil">Du har en protektor-konto indtil %s.</string>
-  <string name="ifNotRenewed">Hvis den ikke fornyes, vil du blive nedgraderet til en gratis.</string>
+  <string name="patronUntil">Du har en protektor-konto indtil den %s.</string>
+  <string name="ifNotRenewedThenAccountWillRevert">Hvis ikke fornyet, vil din konto derefter blive til en almindelig konto igen.</string>
   <string name="weAreNonProfit">Vi er en nonprofitorganisation, da vi mener, at alle bør have adgang til en gratis, verdensomspændende skakplatform.</string>
   <string name="weRelyOnSupport">Vi er afhængige af støtte fra folk som dig for at gøre dette muligt. Hvis du nyder at bruge Lichess, så overvej gerne at støtte os med et bidrag og bliv protektor!</string>
   <string name="lifetime">Livstid</string>
@@ -28,7 +30,7 @@
   <string name="otherAmount">Andet</string>
   <string name="pleaseEnterAmountInX">Angiv venligst et beløb i %s</string>
   <string name="withCreditCard">Kreditkort</string>
-  <string name="withPaypal">PayPal</string>
+  <string name="logInToDonate">Log ind for at donere</string>
   <string name="weAreSmallTeam">Vi er et lille hold, så din støtte gør en kæmpe forskel!</string>
   <string name="celebratedPatrons">De værdsatte protektorer, som gør Lichess mulig</string>
   <string name="whereMoneyGoes">Hvad går pengene til?</string>
@@ -38,12 +40,13 @@ Dernæst betaler vi en fuldtidsudvikler: %s, grundlæggeren af Lichess.</string>
   <string name="officialNonProfit">Er Lichess officielt en nonprofit?</string>
   <string name="actOfCreation">Ja, her er fundatsen (på fransk)</string>
   <string name="changeMonthlySupport">Kan jeg ændre/annullere mit månedlige bidrag?</string>
-  <string name="changeOrContact">Ja, til enhver tid, fra denne side.
-Eller du kan %s.</string>
+  <string name="changeSupport">Hvis dine betalinger håndteres af PayPal, kan du opsige eller ændre dit bidrag via din egen PayPal-konto, eller du kan %1$s, så ordner vi det for dig. Hvis du ikke har brugt PayPal, håndteres dine betalinger af Stripe, og du kan opsige dit bidrag eller ændre beløbet på %2$s.</string>
+  <string name="patronPage">protektor-siden</string>
   <string name="contactSupport">kontakte Lichess-support</string>
   <string name="otherMethods">Andre måder at bidrage?</string>
+  <string name="lichessIsRegisteredWith">Lichess er registreret hos %s.</string>
   <string name="bankTransfers">Vi kan også modtage bankoverførsler</string>
-  <string name="bitcoin">Og her er vores bitcoin-adresse: %s</string>
+  <string name="onlyDonationFromAbove">Bemærk, at kun ved brug af donationsformularen ovenfor vil du få status af protektor.</string>
   <string name="patronFeatures">Er nogle funktioner forbeholdt protektorer?</string>
   <string name="noPatronFeatures">Nej, for Lichess er helt gratis, for evigt og for alle. Det er et løfte.
 Men protektorer kan bryste sig af et sejt, nyt profil-ikon.</string>
@@ -58,6 +61,7 @@ Men protektorer kan bryste sig af et sejt, nyt profil-ikon.</string>
   <string name="nextPayment">Næste betaling</string>
   <string name="youWillBeChargedXOnY">Du vil blive opkrævet %1$s den %2$s.</string>
   <string name="makeAdditionalDonation">Giv et ekstra bidrag nu</string>
+  <string name="giftPatronWingsShort">Giv protektor-vinger som gave</string>
   <string name="giftPatronWings">Giv protektor-vinger til en spiller</string>
   <string name="update">Opdatér</string>
   <string name="changeMonthlyAmount">Ændr det månedlige beløb (%s)</string>
@@ -65,6 +69,7 @@ Men protektorer kan bryste sig af et sejt, nyt profil-ikon.</string>
   <string name="xOrY">%1$s eller %2$s</string>
   <string name="decideHowMuch">Beslut hvor meget Lichess er værd for dig:</string>
   <string name="stopPayments">Træk dit kreditkort tilbage og stop betalinger:</string>
+  <string name="stopPaymentsPayPal">Annuller PayPal-abonnement og stop betalinger:</string>
   <string name="noLongerSupport">Støt ikke længere Lichess</string>
   <string name="viewOthers">Se andre Lichess-protektorer</string>
   <string name="date">Dato</string>
@@ -76,4 +81,8 @@ Men protektorer kan bryste sig af et sejt, nyt profil-ikon.</string>
   <string name="nowOneMonth">Du er nu Lichess Protektor i en måned!</string>
   <string name="downgradeNextMonth">Om en måned bliver du IKKE debiteret igen, og din konto bliver nedgraderet til gratis.</string>
   <string name="changeCurrency">Skift valuta</string>
+  <string name="paymentDetails">Betalingsoplysninger</string>
+  <string name="updatePaymentMethod">Opdatér betalingsmetode</string>
+  <string name="stripeManageSub">Administrer dit abonnement og download dine fakturaer og kvitteringer</string>
+  <string name="coverFees">Jeg vil tilføje %s for at hjælpe med at dække omkostningerne ved at behandle denne transaktion</string>
 </resources>

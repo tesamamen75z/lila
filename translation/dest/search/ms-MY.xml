@@ -12,8 +12,8 @@
   <string name="loser">Yang tewas</string>
   <string name="from">Daripada</string>
   <string name="to">Kepada</string>
-  <string name="humanOrComputer">Samaada lawan pemain adalah manusia atau komputer</string>
-  <string name="aiLevel">Level A.I.</string>
+  <string name="humanOrComputer">Sama ada lawan pemain adalah manusia atau komputer</string>
+  <string name="aiLevel">Tahap A.I.</string>
   <string name="source">Sumber</string>
   <string name="nbTurns">Jumlah giliran</string>
   <string name="result">Keputusan</string>
@@ -24,8 +24,13 @@
   <string name="onlyAnalysed">Hanya permainan yang mempuyai analisis komputer</string>
   <string name="color">Warna</string>
   <string name="evaluation">Penilaian</string>
-  <string name="maxNumber" comment="maxNumber&#10;&#10;The maximum number of games to return as search results">Jumlah maksimum</string>
+  <string name="maxNumber">Jumlah maksimum</string>
   <string name="maxNumberExplanation">Jumlah maksimum permainan yang kembali</string>
-  <string name="include" comment="include&#10;&#10;In the game export configuration, the title of a section for specifying the data to include.">Termasuk</string>
-  <string name="generateURL">Mencipta URL</string>
+  <string name="include">Termasuk</string>
+  <string name="descending">Menurun</string>
+  <string name="ascending">Menaik</string>
+  <plurals name="gamesFound">
+    <item quantity="other">%s permainan dijumpai</item>
+  </plurals>
+  <string name="ratingExplanation">Taraf purata antara kedua-dua pemain</string>
 </resources>

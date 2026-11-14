@@ -1,80 +1,54 @@
 package controllers
 
-import chess.format.{ FEN, Forsyth }
-import chess.Situation
-import play.api.libs.json._
-import views._
+import chess.format.Fen
+import chess.variant.Variant
+import play.api.libs.json.*
 
-import lila.app._
-import lila.common.Json._
+import lila.app.{ *, given }
+import lila.common.Json.given
 
-final class Editor(env: Env) extends LilaController(env) {
+final class Editor(env: Env) extends LilaController(env):
 
-  private lazy val positionsJson = lila.common.String.html.safeJsonValue {
-    JsArray(chess.StartingPosition.all map { p =>
+  private lazy val positionsJson =
+    JsArray(chess.StartingPosition.all.map { p =>
       Json.obj(
-        "eco"  -> p.eco,
+        "eco" -> p.eco,
         "name" -> p.name,
-        "fen"  -> p.fen
+        "fen" -> p.fen
       )
     })
-  }
 
-  private lazy val endgamePositionsJson = lila.common.String.html.safeJsonValue {
-    JsArray(chess.EndgamePosition.positions map { p =>
+  private lazy val endgamePositionsJson =
+    JsArray(chess.EndgamePosition.positions.map { p =>
       Json.obj(
         "name" -> p.name,
-        "fen"  -> p.fen
+        "fen" -> p.fen
       )
     })
-  }
 
   def index = load("")
 
-  def load(urlFen: String) =
-    Open { implicit ctx =>
-      val fenStr = lila.common.String
-        .decodeUriPath(urlFen)
-        .map(_.replace('_', ' ').trim)
-        .filter(_.nonEmpty)
-        .orElse(get("fen"))
-      fuccess {
-        val situation = readFen(fenStr)
-        Ok(
-          html.board.editor(
-            sit = situation,
-            fen = Forsyth >> situation,
-            positionsJson,
-            endgamePositionsJson
-          )
-        )
-      }
-    }
+  def load(urlFen: String) = Open:
+    val fen: Option[Fen.Full] = lila.common.String
+      .decodeUriPath(urlFen)
+      .filter(_.nonEmpty)
+      .map(Fen.Full.clean)
+    Ok.page:
+      views.boardEditor(fen, positionsJson, endgamePositionsJson)
+    .map(_.enforceCrossSiteIsolation)
 
-  def data =
-    Open { implicit ctx =>
-      fuccess {
-        val situation = readFen(get("fen"))
-        JsonOk(
-          html.board.bits.jsData(
-            sit = situation,
-            fen = Forsyth >> situation
-          )
-        )
-      }
-    }
+  def data = Auth: _ ?=>
+    Ok(views.boardEditor.jsData())
 
-  private def readFen(fen: Option[String]): Situation =
-    fen.map(_.trim).filter(_.nonEmpty).map(FEN.clean).flatMap(Forsyth.<<<).map(_.situation) |
-      Situation(chess.variant.Standard)
+  def game(id: GameId) = Open:
+    Found(env.game.gameRepo.game(id)): game =>
+      Redirect:
+        if game.playable
+        then routes.Round.watcher(game.id, Color.white).url
+        else editorUrl(get("fen").fold(Fen.write(game.chess))(Fen.Full.clean), game.variant)
 
-  def game(id: String) =
-    Open { implicit ctx =>
-      OptionResult(env.game.gameRepo game id) { game =>
-        Redirect {
-          if (game.playable) routes.Round.watcher(game.id, "white")
-          else routes.Editor.load(get("fen") | (chess.format.Forsyth >> game.chess).value)
-        }
-      }
-    }
-}
+  private[controllers] def editorUrl(fen: Fen.Full, variant: Variant): String =
+    if fen == Fen.initial && variant.standard then routes.Editor.index.url
+    else
+      val params = variant.exotic.so(s"?variant=${variant.key}")
+      routes.Editor.load(lila.ui.ChessHelper.underscoreFen(fen)).url + params

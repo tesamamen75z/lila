@@ -1,54 +1,20 @@
 package lila.shutup
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
+import com.softwaremill.macwire.*
 
-import lila.common.config._
-import lila.user.UserRepo
+import lila.core.config.*
 
 @Module
-private class ShutupConfig(
-    @ConfigName("collection.shutup") val shutupColl: CollName,
-    @ConfigName("actor.name") val actorName: String
-)
-
 final class Env(
-    appConfig: Configuration,
-    reporter: lila.hub.actors.Report,
-    relationApi: lila.relation.RelationApi,
-    gameRepo: lila.game.GameRepo,
-    userRepo: UserRepo,
+    relationApi: lila.core.relation.RelationApi,
+    reportApi: lila.core.report.ReportApi,
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
     db: lila.db.Db
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+)(using Executor):
 
-  private val config = appConfig.get[ShutupConfig]("shutup")(AutoConfig.loader)
+  private val coll = db(CollName("shutup"))
 
-  private lazy val coll = db(config.shutupColl)
+  val analyser = Analyser
 
-  lazy val api = wire[ShutupApi]
-
-  // api actor
-  system.actorOf(
-    Props(new Actor {
-      import lila.hub.actorApi.shutup._
-      def receive = {
-        case RecordPublicForumMessage(userId, text) =>
-          api.publicForumMessage(userId, text).unit
-        case RecordTeamForumMessage(userId, text) =>
-          api.teamForumMessage(userId, text).unit
-        case RecordPrivateMessage(userId, toUserId, text) =>
-          api.privateMessage(userId, toUserId, text).unit
-        case RecordPrivateChat(chatId, userId, text) =>
-          api.privateChat(chatId, userId, text).unit
-        case RecordPublicChat(userId, text, source) =>
-          api.publicChat(userId, text, source).unit
-      }
-    }),
-    name = config.actorName
-  )
-}
+  val api = wire[ShutupApi]

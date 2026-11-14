@@ -29,8 +29,8 @@
   <string name="puzzlesPlayed">Játszott feladványok</string>
   <string name="newRun">Új futam (gyorsbill.: Szóköz)</string>
   <string name="endRun">Futam vége (gyorsbillentyű: Enter)</string>
-  <string name="highscores">Legjobb pontszámaid</string>
-  <string name="viewBestRuns">Napi legjobb futamjaid</string>
+  <string name="highscores">Rekordok</string>
+  <string name="viewBestRuns">Legjobb futamok</string>
   <string name="bestRunOfDay">Napi legjobb futam</string>
   <string name="runs">Futamok</string>
   <string name="getReady">Felkészülni!</string>
@@ -50,4 +50,13 @@
   <string name="skip">kihagy</string>
   <string name="skipHelp">Kihagyhatsz egy lépést versenyenként:</string>
   <string name="skipExplanation">Ugord át ezt a lépést a szériád megőrzéséhez! Egy menetben csak egyszer működik.</string>
+  <string name="failedPuzzles">Sikertelen feladványok</string>
+  <string name="slowPuzzles">Lassú megfejtések</string>
+  <string name="skippedPuzzle">Kihagyott feladvány</string>
+  <string name="thisWeek">Ezen a héten</string>
+  <string name="thisMonth">Ebben a hónapban</string>
+  <string name="allTime">Mindenkori</string>
+  <string name="clickToReload">Kattints az újratöltéshez</string>
+  <string name="thisRunHasExpired">Ez a futam lejárt!</string>
+  <string name="thisRunWasOpenedInAnotherTab">Ez a futam egy másik lapon nyílt meg!</string>
 </resources>

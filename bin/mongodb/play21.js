@@ -22,7 +22,7 @@ db.f_topic.find().forEach(function (topic) {
         nbPostsTroll: topic['nbPosts'],
         lastPostIdTroll: topic['lastPostId'],
       },
-    }
+    },
   );
 });
 
@@ -36,7 +36,7 @@ db.f_categ.find().forEach(function (categ) {
         nbPostsTroll: categ['nbPosts'],
         lastPostIdTroll: categ['lastPostId'],
       },
-    }
+    },
   );
 });
 
@@ -44,7 +44,7 @@ print('remove useless author names in forum posts');
 db.f_post.update(
   { author: { $exists: true }, userId: { $exists: true } },
   { $unset: { author: true } },
-  { multi: true }
+  { multi: true },
 );
 
 print('mark all forum posts as not troll');
@@ -69,11 +69,13 @@ db.f_topic.ensureIndex({ categId: 1, updatedAt: -1, troll: 1 });
 print('user.settings.{chat,sound} should be a string');
 ['settings.chat', 'settings.sound'].forEach(function (name) {
   [true, false].forEach(function (value) {
-    var sel = {};
-    sel[name] = value;
+    const sel = {
+      [name]: value,
+    };
     db.user2.find(sel).forEach(function (user) {
-      var up = {};
-      up[name] = value.toString();
+      const up = {
+        [name]: value.toString(),
+      };
       db.user2.update({ _id: user['_id'] }, { $set: up });
     });
   });

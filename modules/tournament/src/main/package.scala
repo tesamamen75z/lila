@@ -1,18 +1,19 @@
-package lila
+package lila.tournament
 
-package object tournament extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.TourPlayerId
+export lila.gathering.Payouts
 
-  private[tournament] type Players = List[tournament.Player]
+import lila.core.chess.Rank
+import lila.core.user.{ RealName, LightUserApi }
 
-  private[tournament] type RankedPlayers = List[RankedPlayer]
+private type RankedPlayers = List[RankedPlayer]
+private type Ranking = Map[UserId, Rank]
+private type Waiting = Map[UserId, Rank]
 
-  private[tournament] type Pairings = List[tournament.Pairing]
+private lazy val logger = lila.log("tournament")
 
-  private[tournament] type Ranking = Map[lila.user.User.ID, Int]
-
-  private[tournament] type Waiting = Map[lila.user.User.ID, Int]
-
-  private[tournament] val logger = lila.log("tournament")
-
-  private[tournament] val pairingLogger = logger branch "pairing"
-}
+private type GetRealName = UserId => Option[RealName]
+private def getRealName(tour: Tournament)(using lightUserApi: LightUserApi): GetRealName =
+  if tour.realNames then lightUserApi.realName else _ => none

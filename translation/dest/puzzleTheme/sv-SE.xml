@@ -3,9 +3,10 @@
   <string name="advancedPawn">Avancerande bonde</string>
   <string name="advancedPawnDescription">En bonde som promoverar eller hotar att promovera är nyckeln till taktiken.</string>
   <string name="advantage">Fördel</string>
-  <string name="advantageDescription">Ta chansen att få en avgörande fördel. (200cp ≤ eval ≤ 600cp)</string>
+  <string name="advantageDescription">Ta chansen att få ett avgörande övertag. (200cp ≤ eval ≤ 600cp)</string>
   <string name="anastasiaMate">Anastasias matt</string>
   <string name="anastasiaMateDescription">En springare samarbetar med ett torn eller en dam för att fånga motståndarkungen mellan kanten på brädet och en vänlig pjäs.</string>
+  <string name="arabianMate">Arabisk matt</string>
   <string name="arabianMateDescription">En springare och ett torn samarbetar för att fånga motståndarkungen i ett hörn av brädet.</string>
   <string name="attackingF2F7">Attackera f2 eller f7</string>
   <string name="attackingF2F7Description">En attack som fokuserar på f2 eller f7 bonden, som i stekt leveröppning.</string>
@@ -15,6 +16,8 @@
   <string name="backRankMateDescription">Schackmatta kungen på första raden, när den är instängd av sina egna pjäser.</string>
   <string name="bishopEndgame">Löparslutspel</string>
   <string name="bishopEndgameDescription">Ett slutspel med bara löpare och bönder.</string>
+  <string name="bodenMate">Bodens matt</string>
+  <string name="bodenMateDescription">Två attackerande löpare på korsande diagonaler sätter en kung som är blockerad av egna pjäser i matt.</string>
   <string name="castling">Rockad</string>
   <string name="castlingDescription">För din kung i säkerhet, och använd ditt torn till att angripa.</string>
   <string name="capturingDefender">Ta försvararen</string>
@@ -22,6 +25,8 @@
   <string name="crushing">Krossande</string>
   <string name="crushingDescription">Upptäck motståndares blunder för att få en förkrossande fördel. (eval ≥ 600cp)</string>
   <string name="doubleBishopMate">Matt med två löpare</string>
+  <string name="doubleBishopMateDescription">Två attackerande löpare på intilligande diagonaler sätter en kung som är blockerad av egna pjäser i matt.</string>
+  <string name="dovetailMate">Cozios matt</string>
   <string name="dovetailMateDescription">En dam levererar matt till en närliggande kung, vars enda två flyktrutor blockeras av egna pjäser.</string>
   <string name="equality">Utjämning</string>
   <string name="equalityDescription">Kom tillbaka från en förlorad position och säkra en remi eller en utjämnad position. (eval ≤ 200cp)</string>
@@ -39,18 +44,21 @@
   <string name="doubleCheckDescription">Schack med två pjäser i samma drag, som ett resultat av avdragsattack (avdragsschack) där både den rörliga pjäsen och den avtäckta pjäsen attackerar motståndarens kung.</string>
   <string name="endgame">Slutspel</string>
   <string name="endgameDescription">En taktik under spelets sista fas.</string>
-  <string name="enPassantDescription">En taktik som involverar \"en passant\"-regeln, där en bonde kan slå en bonde som har passerat den med ett tvåstegsdrag.</string>
+  <string name="enPassant">En passant (slag i förbigående)</string>
   <string name="exposedKing">Oskyddad kung</string>
   <string name="exposedKingDescription">En taktik som involverar en kung med få försvarare runt omkring sig, leder ofta till schack matt.</string>
   <string name="fork">Gaffel</string>
-  <string name="forkDescription">Ett drag där den rörda pjäsen attackerar två motståndarpjäser samtidigt.</string>
   <string name="hangingPiece">Ogarderad pjäs</string>
   <string name="hangingPieceDescription">En taktik som drar fördel av att en motståndares pjäs är oförsvarad eller otillräckligt försvarad och fri att slå.</string>
-  <string name="hookMateDescription">Schackmatta med ett torn, en springare och en bonde tillsammans med en motståndarbonde för att begränsa motståndarkungens undanflykt.</string>
+  <string name="hookMate">Krokmatt</string>
   <string name="interference">Interference</string>
   <string name="interferenceDescription">Placerar en pjäs mellan två motståndares pjäser för att lämna en eller båda motståndarpjäserna ogarderade, till exempel springare på en garderad ruta mellan två torn.</string>
   <string name="intermezzo">Mellandrag</string>
   <string name="intermezzoDescription">Istället för att spela det förväntade draget, görs ett annat drag som utgör ett omedelbart hot som motståndaren måste svara på. Även känt som \"zwischenzug\" eller \"intermezzo\".</string>
+  <string name="killBoxMate">Dödsbox-matt</string>
+  <string name="killBoxMateDescription">Ett torn ligger bredvid motståndarens kung och understöds av en dam som också stänger kungens flyktrutor. Tornet och damen fångar fiendens kung i en 3 gånger 3-kvadrat, \"dödsbox\".</string>
+  <string name="vukovicMate">Vukovic matt</string>
+  <string name="vukovicMateDescription">Ett torn och en springare samarbetar för att fånga kungen. Tornen ger matt med stöd av en tredje pjäs, och springaren används för att blockera kungens flyktrutor.</string>
   <string name="knightEndgame">Springareslutspel</string>
   <string name="knightEndgameDescription">Ett slutspel med bara springare och bönder.</string>
   <string name="long">Långa schackproblem</string>
@@ -82,7 +90,6 @@
   <string name="pin">Fastlåsning</string>
   <string name="pinDescription">En taktik som involverar fastlåsning, där en attackerad pjäs inte kan flyttas utan att exponera en mer värdefull pjäs.</string>
   <string name="promotion">Promovering</string>
-  <string name="promotionDescription">En taktik som bygger på en bonde som förvandlas eller hotar att förvandlas.</string>
   <string name="queenEndgame">Damslutspel</string>
   <string name="queenEndgameDescription">Ett slutspel med endast dam och bönder.</string>
   <string name="queenRookEndgame">Dam och torn</string>
@@ -113,6 +120,9 @@
   <string name="xRayAttackDescription">En pjäs attackerar eller försvarar en ruta, genom en motståndarpjäs.</string>
   <string name="zugzwang">Zugzwang</string>
   <string name="zugzwangDescription">Motspelaren har begränsat antal möjliga drag, och alla möjliga drag förvärrar motspelarens position.</string>
-  <string name="healthyMix">Blandad kompott</string>
-  <string name="healthyMixDescription">Lite av varje. Du vet inte vad som kommer, så du behöver vara redo för allt! Precis som i riktiga partier.</string>
+  <string name="mix">Blandad kompott</string>
+  <string name="mixDescription">Lite av varje. Du vet inte vad som kommer, så du behöver vara redo för allt! Precis som i riktiga partier.</string>
+  <string name="playerGames">Spelarspel</string>
+  <string name="playerGamesDescription">Hitta pussel genererade från dina egna parti, eller från andra spelares parti.</string>
+  <string name="puzzleDownloadInformation">Dessa pussel tillhör den allmänna egendomen, och kan laddas ner från %s.</string>
 </resources>

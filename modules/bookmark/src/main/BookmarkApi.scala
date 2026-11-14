@@ -1,70 +1,71 @@
 package lila.bookmark
 
-import org.joda.time.DateTime
-import reactivemongo.api.bson._
+import reactivemongo.api.bson.*
 
-import lila.db.dsl._
-import lila.game.{ Game, GameRepo }
-import lila.user.User
+import lila.core.game.{ Game, GameApi }
+import lila.db.dsl.{ *, given }
 
-case class Bookmark(game: lila.game.Game, user: lila.user.User)
+final class BookmarkApi(val coll: Coll, gameApi: GameApi, paginator: PaginatorBuilder)(using Executor):
 
-final class BookmarkApi(
-    coll: Coll,
-    gameRepo: GameRepo,
-    paginator: PaginatorBuilder
-)(implicit ec: scala.concurrent.ExecutionContext) {
+  private def exists(gameId: GameId, userId: UserId): Fu[Boolean] =
+    coll.exists(selectId(gameId, userId))
 
-  private def exists(gameId: Game.ID, userId: User.ID): Fu[Boolean] =
-    coll exists selectId(gameId, userId)
+  def exists(game: Game, userId: UserId): Fu[Boolean] =
+    (game.bookmarks > 0).so(exists(game.id, userId))
 
-  def exists(game: Game, user: User): Fu[Boolean] =
-    if (game.bookmarks > 0) exists(game.id, user.id)
-    else fuFalse
+  def exists(game: Game, user: Option[UserId]): Fu[Boolean] =
+    user.so(exists(game, _))
 
-  def exists(game: Game, user: Option[User]): Fu[Boolean] =
-    user.?? { exists(game, _) }
+  def filterGameIdsBookmarkedBy(games: Seq[Game], user: Option[User]): Fu[Set[GameId]] =
+    user.so: u =>
+      val candidateIds = games.collect { case g if g.bookmarks > 0 => g.id }
+      candidateIds.nonEmpty.so:
+        coll.secondary
+          .distinctEasy[GameId, Set]("g", userIdQuery(u.id) ++ bdoc("g".in(candidateIds)))
 
-  def filterGameIdsBookmarkedBy(games: Seq[Game], user: Option[User]): Fu[Set[Game.ID]] =
-    user ?? { u =>
-      val candidateIds = games collect { case g if g.bookmarks > 0 => g.id }
-      candidateIds.nonEmpty ??
-        coll.secondaryPreferred
-          .distinctEasy[Game.ID, Set]("g", userIdQuery(u.id) ++ $doc("g" $in candidateIds))
-    }
+  def removeByGameId(gameId: GameId): Funit =
+    coll.delete.one(bdoc("g" -> gameId)).void
 
-  def removeByGameId(gameId: Game.ID): Funit =
-    coll.delete.one($doc("g" -> gameId)).void
+  def removeByGameIds(gameIds: List[GameId]): Funit =
+    coll.delete.one(bdoc("g".in(gameIds))).void
 
-  def removeByGameIds(gameIds: List[Game.ID]): Funit =
-    coll.delete.one($doc("g" $in gameIds)).void
+  def remove(gameId: GameId, userId: UserId): Funit = coll.delete.one(selectId(gameId, userId)).void
 
-  def remove(gameId: Game.ID, userId: User.ID): Funit = coll.delete.one(selectId(gameId, userId)).void
-
-  def toggle(gameId: Game.ID, userId: User.ID): Funit =
-    exists(gameId, userId) flatMap { e =>
-      (if (e) remove(gameId, userId) else add(gameId, userId, DateTime.now)) inject !e
-    } flatMap { bookmarked =>
-      gameRepo.incBookmarks(gameId, if (bookmarked) 1 else -1)
-    }
+  def toggle(
+      updateProxy: GameId => Update[Game] => Funit
+  )(gameId: GameId, userId: UserId, v: Option[Boolean]): Funit =
+    exists(gameId, userId)
+      .flatMap: e =>
+        val newValue = v.getOrElse(!e)
+        if e == newValue then funit
+        else
+          for
+            _ <- if newValue then add(gameId, userId, nowInstant) else remove(gameId, userId)
+            inc = if newValue then 1 else -1
+            _ <- gameApi.incBookmarks(gameId, inc)
+            _ <- updateProxy(gameId)(g => g.copy(bookmarks = g.bookmarks + inc))
+          yield ()
+      .recover:
+        lila.db.ignoreDuplicateKey
 
   def countByUser(user: User): Fu[Int] = coll.countSel(userIdQuery(user.id))
 
   def gamePaginatorByUser(user: User, page: Int) = paginator.byUser(user, page)
 
-  private def add(gameId: Game.ID, userId: User.ID, date: DateTime): Funit =
+  private def add(gameId: GameId, userId: UserId, date: Instant): Funit =
     coll.insert
-      .one(
-        $doc(
+      .one:
+        bdoc(
           "_id" -> makeId(gameId, userId),
-          "g"   -> gameId,
-          "u"   -> userId,
-          "d"   -> date
+          "g" -> gameId,
+          "u" -> userId,
+          "d" -> date
         )
-      )
       .void
 
-  private def userIdQuery(userId: User.ID)               = $doc("u" -> userId)
-  private def makeId(gameId: Game.ID, userId: User.ID)   = s"$gameId$userId"
-  private def selectId(gameId: Game.ID, userId: User.ID) = $id(makeId(gameId, userId))
-}
+  def userIdQuery(userId: UserId) = bdoc("u" -> userId)
+  private def makeId(gameId: GameId, userId: UserId) = s"$gameId$userId"
+  private def selectId(gameId: GameId, userId: UserId) = bid(makeId(gameId, userId))
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    coll.delete.one(userIdQuery(del.id)).void

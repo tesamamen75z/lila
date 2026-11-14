@@ -1,8 +1,4 @@
-import { VNode } from 'snabbdom';
-
-export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
-export type Redraw = () => void;
+import type { LiconValue } from 'lib/licon';
 
 export interface SimulOpts {
   data: SimulData;
@@ -11,7 +7,7 @@ export interface SimulOpts {
   $side: Cash;
   socketVersion: number;
   chat: any;
-  i18n: I18nDict;
+  showRatings: boolean;
   socketSend: SocketSend;
 }
 
@@ -31,28 +27,23 @@ export interface SimulData {
     text: string;
     author: string;
   };
-  team?: Team;
+  canJoin: boolean;
 }
 
 export interface Variant {
   key: VariantKey;
   name: string;
-  icon: string;
+  icon: LiconValue;
 }
 
-export interface Team {
-  id: string;
-  name: string;
-  isIn: boolean;
-}
-
-export interface Player extends LightUser {
+export interface Player extends LightUserOnline {
   rating: number;
   provisional?: boolean;
 }
 
-export interface Host extends LightUser {
+export interface Host extends LightUserOnline {
   rating: number;
+  provisional?: boolean;
   gameId?: string;
 }
 
@@ -75,9 +66,6 @@ export interface Game {
   fen: string;
   lastMove: string;
   orient: Color;
-  clock?: {
-    white: number;
-    black: number;
-  };
+  clock?: ByColor<number>;
   winner?: Color;
 }

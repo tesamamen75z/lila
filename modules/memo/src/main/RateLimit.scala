@@ -1,101 +1,132 @@
 package lila.memo
 
-import scala.concurrent.duration.FiniteDuration
+import alleycats.Zero
 
-/** side effect throttler that allows X ops per Y unit of time
+import lila.core.config.RateLimit as Enforce
+
+/** Throttler that allows X operations per Y unit of time Not thread safe
   */
 final class RateLimit[K](
     credits: Int,
     duration: FiniteDuration,
-    key: String,
-    enforce: Boolean = true,
+    limiterKey: String,
     log: Boolean = true
-) extends RateLimit.RateLimiter[K] {
-  import RateLimit._
+)(using enforce: Enforce)(using Executor)
+    extends RateLimit.RateLimiter[K]:
+  import RateLimit.*
 
   private val storage = lila.memo.CacheApi.scaffeineNoScheduler
     .expireAfterWrite(duration)
     .build[K, (Cost, ClearAt)]()
 
-  private def makeClearAt = nowMillis + duration.toMillis
+  private inline def makeClearAt = nowMillis + duration.toMillis
 
-  private lazy val logger  = lila.log("ratelimit").branch(key)
-  private lazy val monitor = lila.mon.security.rateLimit(key)
+  private val monitor = lila.mon.security.rateLimit(limiterKey)
 
-  def chargeable[A](k: K, cost: Cost = 1, msg: => String = "")(
-      op: Charge => A
-  )(default: => A): A =
-    apply(k, cost, msg) { op(c => apply(k, c, s"charge: $msg") {} {}) }(default)
+  def chargeable[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(
+      op: ChargeWith => A
+  ): A =
+    apply(k, default, cost, msg):
+      op(c => apply(k, {}, c, s"charge: $msg") {})
 
-  def apply[A](k: K, cost: Cost = 1, msg: => String = "")(op: => A)(default: => A): A =
-    if (cost < 1) op
+  def apply[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(op: => A): A =
+    if cost < 1 then op
     else
-      storage getIfPresent k match {
+      storage.getIfPresent(k) match
         case None =>
           storage.put(k, cost -> makeClearAt)
           op
-        case Some((a, clearAt)) if a < credits =>
+        case Some(a, clearAt) if a < credits =>
           storage.put(k, (a + cost) -> clearAt)
           op
-        case Some((_, clearAt)) if nowMillis > clearAt =>
+        case Some(_, clearAt) if nowMillis > clearAt =>
           storage.put(k, cost -> makeClearAt)
           op
-        case _ if enforce =>
-          if (log) logger.info(s"$credits/$duration $k cost: $cost $msg")
+        case _ if enforce.yes =>
+          if log then RateLimit.logger.info(s"$limiterKey $credits/$duration $k cost: $cost $msg")
           monitor.increment()
           default
         case _ =>
           op
-      }
-}
 
-object RateLimit {
+  def option[A](k: Option[K], default: => A, cost: Cost = 1)(op: => A): A =
+    k.fold(op)(apply(_, default, cost, msg = "")(op))
 
-  type Charge = Cost => Unit
-  type Cost   = Int
+  def status(k: K) = Status(storage.getIfPresent(k).so(_._1), credits)
 
-  trait RateLimiter[K] {
+  def isLimited(k: K): Option[Instant] =
+    enforce.yes
+      .so(storage.getIfPresent(k))
+      .flatMap:
+        case (a, _) if a < credits => none
+        case (_, clearAt) if nowMillis > clearAt => none
+        case (_, clearAt) =>
+          if log then logger.info(s"$credits/$duration $k")
+          monitor.increment()
+          millisToInstant(clearAt).some
 
-    def apply[A](k: K, cost: Cost = 1, msg: => String = "")(op: => A)(default: => A): A
+object RateLimit:
 
-    def chargeable[A](k: K, cost: Cost = 1, msg: => String = "")(op: Charge => A)(default: => A): A
-  }
+  type ChargeWith = Cost => Unit
+  type Charge = () => Unit
+  type Cost = Int
 
-  sealed trait Result
-  case object Through extends Result
-  case object Limited extends Result
+  type Default[A] = () => A
+  type Compute[A] = () => A
+
+  enum LimitResult:
+    case Through, Limited
+    def ok = this == Through
+
+  case class Limited(key: String, msg: String, until: Instant)
+
+  case class Status(used: Int, max: Int):
+    def reached = used >= max
+
+  trait RateLimiter[K]:
+    def apply[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(op: => A): A
+    def chargeable[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(op: ChargeWith => A): A
+    def hit[A](k: K, cost: Cost = 1, msg: => String = ""): Boolean = apply(k, false, cost, msg)(true)
+    def zero[A](k: K, cost: Cost = 1, msg: => String = "")(op: => A)(using default: Zero[A]): A =
+      apply[A](k, default.zero, cost, msg)(op)
+    def myCost[A](cost: Me ?=> Cost): [A] => (K, Default[A]) => Compute[A] => Me ?=> A =
+      [A] => (k, default) => op => _ ?=> apply(k, default(), cost)(op())
+    def myCostAdjusted[A](cost: Me ?=> Cost): [A] => (K, Default[A], Update[Cost]) => Compute[A] => Me ?=> A =
+      [A] => (k, default, costAdjust) => op => _ ?=> apply(k, default(), costAdjust(cost))(op())
+    def ctxCost[A](cost: Option[Me] ?=> Cost): [A] => (K, Default[A]) => Compute[A] => Option[Me] ?=> A =
+      [A] => (k, default) => op => _ ?=> apply(k, default(), cost)(op())
+
+  val logger = lila.log("ratelimit")
+
+  def combine[A, B](limitA: RateLimiter[A], limitB: RateLimiter[B]): RateLimiter[(A, B)] = new:
+    def apply[T](k: (A, B), default: => T, cost: Cost = 1, msg: => String = "")(op: => T): T =
+      limitA(k._1, default, cost, msg)(limitB(k._2, default, cost, msg)(op))
+    def chargeable[T](k: (A, B), default: => T, cost: Cost = 1, msg: => String = "")(op: ChargeWith => T): T =
+      limitA.chargeable(k._1, default, cost, msg)(_ => limitB.chargeable(k._2, default, cost, msg)(op))
 
   def composite[K](
       key: String,
-      enforce: Boolean = true,
       log: Boolean = true
-  )(rules: (String, Int, FiniteDuration)*): RateLimiter[K] = {
+  )(rules: (String, Int, FiniteDuration)*)(using Executor, Enforce): RateLimiter[K] =
 
-    val limiters: Seq[RateLimit[K]] = rules.map { case (subKey, credits, duration) =>
-      new RateLimit[K](
+    val limiters: Seq[RateLimit[K]] = rules.map: (subKey, credits, duration) =>
+      RateLimit[K](
         credits = credits,
         duration = duration,
-        key = s"$key.$subKey",
-        enforce = enforce,
+        limiterKey = s"$key.$subKey",
         log = log
       )
-    }
 
-    new RateLimiter[K] {
+    new RateLimiter[K]:
 
-      def apply[A](k: K, cost: Cost = 1, msg: => String = "")(op: => A)(default: => A): A = {
-        val accepted = limiters.foldLeft(true) {
-          case (true, limiter) => limiter(k, cost, msg)(true)(false)
-          case (false, _)      => false
-        }
-        if (accepted) op else default
-      }
+      def apply[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(op: => A): A =
+        val accepted = limiters.foldLeft(true):
+          case (true, limiter) => limiter(k, false, cost, msg)(true)
+          case (false, _) => false
+        if accepted then op else default
 
-      def chargeable[A](k: K, cost: Cost = 1, msg: => String = "")(op: Charge => A)(default: => A): A = {
-        apply(k, cost, msg) { op(c => apply(k, c, s"charge: $msg") {} {}) }(default)
-      }
-    }
-  }
+      def chargeable[A](k: K, default: => A, cost: Cost = 1, msg: => String = "")(op: ChargeWith => A): A =
+        apply(k, default, cost, msg):
+          op(c => apply(k, default, c, s"charge: $msg") {})
 
   private type ClearAt = Long
-}

@@ -1,6 +1,3 @@
-import { Prop } from 'common';
-import { StoredBooleanProp } from 'common/storage';
-
 export interface Goal {
   result: string;
   moves?: number;
@@ -14,9 +11,7 @@ export interface StudyPracticeData {
     desc: string;
   };
   url: string;
-  completion: {
-    [key: string]: number;
-  };
+  completion: Record<string, number>;
   structure: PracticeSection[];
 }
 
@@ -30,18 +25,4 @@ export interface PracticeStudy {
   id: string;
   slug: string;
   name: string;
-}
-
-export interface StudyPracticeCtrl {
-  onLoad(): void;
-  onJump(): void;
-  onCeval(): void;
-  data: StudyPracticeData;
-  goal: Prop<Goal>;
-  success: Prop<boolean | null>;
-  nbMoves: Prop<number>;
-  reset(): void;
-  isWhite(): boolean;
-  analysisUrl: Prop<string>;
-  autoNext: StoredBooleanProp;
 }

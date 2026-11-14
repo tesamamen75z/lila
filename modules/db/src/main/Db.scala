@@ -1,52 +1,50 @@
 package lila.db
 
-import reactivemongo.api._
-import scala.concurrent.duration._
-import scala.concurrent.Future
+import reactivemongo.api.*
 
-import lila.common.Chronometer
-import lila.common.config.CollName
+import lila.core.config.CollName
 import lila.db.dsl.Coll
 
 final class AsyncDb(
     name: String,
     uri: String,
     driver: AsyncDriver
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  private lazy val connection =
-    MongoConnection.fromString(uri) flatMap { parsedUri =>
+  private lazy val connection: Fu[(MongoConnection, Option[String])] =
+    MongoConnection.fromString(uri).flatMap { parsedUri =>
       driver.connect(parsedUri, name.some).dmap(_ -> parsedUri.db)
     }
 
-  private def db: Future[DB] =
-    connection flatMap { case (conn, dbName) =>
-      conn database dbName.getOrElse("lichess")
-    }
+  private def makeDb: Future[DB] =
+    connection.flatMap: (conn, dbName) =>
+      conn.database(dbName.getOrElse("lichess"))
 
-  def apply(name: CollName) = new AsyncColl(name, () => db.dmap(_(name.value)))
-}
+  private val dbCache = new SingleFutureCache[DB](
+    compute = () => makeDb,
+    expireAfterMillis = 1000
+  )
+
+  def apply(name: CollName) = new AsyncColl(name, () => dbCache.get.map(_.collection(name.value)))
 
 final class Db(
     name: String,
     uri: String,
     driver: AsyncDriver
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  private val logger = lila.db.logger branch name
+  private lazy val db: DB =
+    lila.log.system.info(s"MongoDB $name connecting to $uri")
+    val connected = scala.concurrent.Await.result(
+      MongoConnection
+        .fromString(uri)
+        .flatMap: parsedUri =>
+          driver
+            .connect(parsedUri, name.some)
+            .flatMap(_.database(parsedUri.db.getOrElse("lichess"))),
+      5.seconds
+    )
+    lila.log.system.info(s"MongoDB $name connected  to $uri")
+    connected
 
-  private lazy val db: DB = Chronometer.syncEffect(
-    MongoConnection
-      .fromString(uri)
-      .flatMap { parsedUri =>
-        driver
-          .connect(parsedUri, name.some)
-          .flatMap(_ database parsedUri.db.getOrElse("lichess"))
-      }
-      .await(5.seconds, s"db:$name")
-  ) { lap =>
-    logger.info(s"MongoDB connected to $uri in ${lap.showDuration}")
-  }
-
-  def apply(name: CollName): Coll = db(name.value)
-}
+  def apply(name: CollName): Coll = db.collection(name.value)

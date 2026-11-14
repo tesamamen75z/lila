@@ -1,251 +1,194 @@
-import config from '../config';
-import RacerCtrl from '../ctrl';
-import renderClock from 'puz/view/clock';
-import { MaybeVNodes, bind } from 'common/snabbdom';
-import { h, VNode } from 'snabbdom';
-import { playModifiers, renderCombo } from 'puz/view/util';
-import { renderRace } from './race';
-import { renderBoard } from './board';
-import { povMessage } from 'puz/run';
+import { licon } from 'lib/licon';
+import { povMessage } from 'lib/puz/run';
+import renderClock from 'lib/puz/view/clock';
+import renderHistory from 'lib/puz/view/history';
+import { playModifiers, renderCombo } from 'lib/puz/view/util';
+import { copyMeInput, type MaybeVNodes, bind, div, p, button, strong, span, a, form, h2 } from 'lib/view';
 
-export default function (ctrl: RacerCtrl): VNode {
-  return h(
-    'div.racer.racer-app.racer--play',
-    {
-      class: {
-        ...playModifiers(ctrl.run),
-        [`racer--${ctrl.status()}`]: true,
-      },
-    },
-    [renderRace(ctrl), renderBoard(ctrl), h('div.puz-side', selectScreen(ctrl))]
+import config from '@/config';
+import type RacerCtrl from '@/ctrl';
+
+import { renderBoard } from './board';
+import { renderRace } from './race';
+
+export default function (ctrl: RacerCtrl) {
+  return div(
+    '.racer.racer-app.racer--play',
+    { class: { ...playModifiers(ctrl.run), [`racer--${ctrl.status()}`]: true } },
+    [
+      renderBoard(ctrl),
+      div('.puz-side', selectScreen(ctrl)),
+      renderRace(ctrl),
+      ctrl.status() === 'post' && ctrl.run.history.length > 0 ? renderHistory(ctrl) : null,
+    ],
   );
 }
 
 const selectScreen = (ctrl: RacerCtrl): MaybeVNodes => {
-  const noarg = ctrl.trans.noarg;
+  const combo = comboZone(ctrl);
   switch (ctrl.status()) {
     case 'pre': {
-      const povMsg = h('p.racer__pre__message__pov', ctrl.trans(povMessage(ctrl.run)));
+      const povMsg = p('.racer__pre__message__pov', povMessage(ctrl.run));
       return ctrl.race.lobby
         ? [
-            waitingToStart(noarg),
-            h('div.racer__pre__message.racer__pre__message--with-skip', [
-              h('div.racer__pre__message__text', [
-                h(
-                  'p',
-                  ctrl.knowsSkip() ? noarg(ctrl.vm.startsAt ? 'getReady' : 'waitingForMorePlayers') : skipHelp(noarg)
+            waitingToStart,
+            div('.racer__pre__message.racer__pre__message--with-skip', [
+              div('.racer__pre__message__text', [
+                p(
+                  ctrl.knowsSkip()
+                    ? i18n.storm[ctrl.vm.startsAt ? 'getReady' : 'waitingForMorePlayers']
+                    : skipHelp,
                 ),
                 povMsg,
               ]),
-              ctrl.knowsSkip() ? null : renderSkip(ctrl),
+              !ctrl.knowsSkip() ? renderSkip(ctrl) : null,
             ]),
-            comboZone(ctrl),
+            combo,
           ]
         : [
-            waitingToStart(noarg),
-            h('div.racer__pre__message', [
-              ...(ctrl.raceFull()
+            waitingToStart,
+            div('.racer__pre__message', [
+              ctrl.raceFull()
                 ? ctrl.isPlayer()
                   ? [renderStart(ctrl)]
-                  : []
+                  : null
                 : ctrl.isPlayer()
-                ? [renderLink(ctrl), renderStart(ctrl)]
-                : [renderJoin(ctrl)]),
+                  ? [renderLink(ctrl), renderStart(ctrl)]
+                  : [renderJoin(ctrl)],
               povMsg,
             ]),
-            comboZone(ctrl),
+            combo,
           ];
     }
     case 'racing': {
       const clock = renderClock(ctrl.run, ctrl.end, false);
       return ctrl.isPlayer()
-        ? [playerScore(ctrl), h('div.puz-clock', [clock, renderSkip(ctrl)]), comboZone(ctrl)]
+        ? [playerScore(ctrl), div('.puz-clock', [clock, renderSkip(ctrl)]), combo]
         : [
-            spectating(noarg),
-            h('div.racer__spectating', [
-              h('div.puz-clock', clock),
-              ctrl.race.lobby ? lobbyNext(ctrl) : waitForRematch(noarg),
+            spectating,
+            div('.racer__spectating', [
+              div('.puz-clock', clock),
+              ctrl.race.lobby ? lobbyNext(ctrl) : waitForRematch,
             ]),
-            comboZone(ctrl),
+            combo,
           ];
     }
     case 'post': {
       const nextRace = ctrl.race.lobby ? lobbyNext(ctrl) : friendNext(ctrl);
-      const raceComplete = h('h2', noarg('raceComplete'));
+      const raceComplete = h2(i18n.storm.raceComplete);
       return ctrl.isPlayer()
-        ? [playerScore(ctrl), h('div.racer__post', [raceComplete, yourRank(ctrl), nextRace]), comboZone(ctrl)]
-        : [spectating(noarg), h('div.racer__post', [raceComplete, nextRace]), comboZone(ctrl)];
+        ? [playerScore(ctrl), div('.racer__post', [raceComplete, yourRank(ctrl), nextRace]), combo]
+        : [spectating, div('.racer__post', [raceComplete, nextRace]), combo];
     }
+    default:
+      return [];
   }
 };
 
 const renderSkip = (ctrl: RacerCtrl) =>
-  h(
-    'button.racer__skip.button.button-red',
+  button(
+    '.racer__skip.button.button-red',
     {
-      class: {
-        disabled: !ctrl.canSkip(),
-      },
-      attrs: {
-        title: ctrl.trans.noarg('skipExplanation'),
-      },
+      class: { disabled: !ctrl.canSkip() },
+      title: i18n.storm.skipExplanation,
       hook: bind('click', ctrl.skip),
     },
-    ctrl.trans.noarg('skip')
+    i18n.storm.skip,
   );
 
-const skipHelp = (noarg: TransNoArg) => h('p', noarg('skipHelp'));
+const skipHelp = p(i18n.storm.skipHelp);
+const puzzleRacer = strong('Puzzle Racer');
 
-const puzzleRacer = () => h('strong', 'Puzzle Racer');
+const waitingToStart = div(
+  '.puz-side__top.puz-side__start',
+  div('.puz-side__start__text', [puzzleRacer, span(i18n.storm.waitingToStart)]),
+);
 
-const waitingToStart = (noarg: TransNoArg) =>
-  h(
-    'div.puz-side__top.puz-side__start',
-    h('div.puz-side__start__text', [puzzleRacer(), h('span', noarg('waitingToStart'))])
-  );
-
-const spectating = (noarg: TransNoArg) =>
-  h(
-    'div.puz-side__top.puz-side__start',
-    h('div.puz-side__start__text', [puzzleRacer(), h('span', noarg('spectating'))])
-  );
+const spectating = div(
+  '.puz-side__top.puz-side__start',
+  div('.puz-side__start__text', [puzzleRacer, span(i18n.storm.spectating)]),
+);
 
 const renderBonus = (bonus: number) => `+${bonus}`;
 
-const renderControls = (ctrl: RacerCtrl): VNode =>
-  h(
-    'div.puz-side__control',
-    h('a.puz-side__control__flip.button', {
-      class: {
-        active: ctrl.flipped,
-        'button-empty': !ctrl.flipped,
-      },
-      attrs: {
-        'data-icon': '',
-        title: ctrl.trans.noarg('flipBoard') + ' (Keyboard: f)',
-      },
+const renderControls = (ctrl: RacerCtrl) =>
+  div(
+    '.puz-side__control',
+    button('.puz-side__control__flip.button', {
+      class: { active: ctrl.flipped, 'button-empty': !ctrl.flipped },
+      'data-icon': licon.ChasingArrows,
+      title: i18n.site.flipBoard + ' (Keyboard: f)',
       hook: bind('click', ctrl.flip),
-    })
+    }),
   );
 
 const comboZone = (ctrl: RacerCtrl) =>
-  h('div.puz-side__table', [renderControls(ctrl), renderCombo(config, renderBonus)(ctrl.run)]);
+  div('.puz-side__table', [renderControls(ctrl), renderCombo(config, renderBonus)(ctrl.run)]);
 
-const playerScore = (ctrl: RacerCtrl): VNode =>
-  h('div.puz-side__top.puz-side__solved', [h('div.puz-side__solved__text', ctrl.myScore() || 0)]);
+const playerScore = ({ myScore }: RacerCtrl) =>
+  div('.puz-side__top.puz-side__solved', [div('.puz-side__solved__text', `${myScore() || 0}`)]);
 
-const renderLink = (ctrl: RacerCtrl) =>
-  h('div.puz-side__link', [
-    h('p', ctrl.trans.noarg('toInviteSomeoneToPlayGiveThisUrl')),
-    h('div', [
-      h(`input#racer-url-${ctrl.race.id}.copyable.autoselect`, {
-        attrs: {
-          spellcheck: false,
-          readonly: 'readonly',
-          value: `${window.location.protocol}//${window.location.host}/racer/${ctrl.race.id}`,
-        },
-      }),
-      h('button.copy.button', {
-        attrs: {
-          title: 'Copy URL',
-          'data-rel': `racer-url-${ctrl.race.id}`,
-          'data-icon': '',
-        },
-      }),
-    ]),
+const renderLink = ({ race }: RacerCtrl) =>
+  div('.puz-side__link', [
+    p(i18n.site.toInviteSomeoneToPlayGiveThisUrl),
+    copyMeInput(`${window.location.protocol}//${window.location.host}/racer/${race.id}`, {
+      inputAttrs: { readonly: true },
+    }),
   ]);
 
-const renderStart = (ctrl: RacerCtrl) =>
-  ctrl.isOwner() && !ctrl.vm.startsAt
-    ? h(
-        'div.puz-side__start',
-        h(
-          'button.button.button-fat',
-          {
-            class: {
-              disabled: ctrl.players().length < 2,
-            },
-            hook: bind('click', ctrl.start),
-            attrs: {
-              disabled: ctrl.players().length < 2,
-            },
-          },
-          ctrl.trans.noarg('startTheRace')
-        )
-      )
-    : null;
+const renderStart = (ctrl: RacerCtrl) => {
+  if (!ctrl.isOwner() || ctrl.vm.startsAt) return null;
+  return div(
+    '.puz-side__start',
+    button(
+      '.button.button-fat',
+      {
+        class: { disabled: ctrl.players().length < 2 },
+        hook: bind('click', ctrl.start),
+        disabled: ctrl.players().length < 2,
+      },
+      i18n.storm.startTheRace,
+    ),
+  );
+};
 
 const renderJoin = (ctrl: RacerCtrl) =>
-  h(
-    'div.puz-side__join',
-    h(
-      'button.button.button-fat',
-      {
-        hook: bind('click', ctrl.join),
-      },
-      ctrl.trans.noarg('joinTheRace')
-    )
+  div(
+    '.puz-side__join',
+    button('.button.button-fat', { hook: bind('click', ctrl.join) }, i18n.storm.joinTheRace),
   );
 
 const yourRank = (ctrl: RacerCtrl) => {
   const score = ctrl.myScore();
-  if (!score) return;
+  if (!score) return undefined;
   const players = ctrl.players();
   const rank = players.filter(p => p.score > score).length + 1;
-  return h('strong.race__post__rank', ctrl.trans('yourRankX', `${rank}/${players.length}`));
+  return strong('.race__post__rank', i18n.storm.yourRankX(`${rank}/${players.length}`));
 };
 
-const waitForRematch = (noarg: TransNoArg) =>
-  h(
-    `a.racer__new-race.button.button-fat.button-navaway.disabled`,
-    {
-      attrs: { disabled: true },
-    },
-    noarg('waitForRematch')
-  );
+const waitForRematch = button(
+  '.racer__new-race.button.button-fat.button-navaway.disabled',
+  { disabled: true },
+  i18n.storm.waitForRematch,
+);
 
-const lobbyNext = (ctrl: RacerCtrl) =>
-  h(
-    'form',
-    {
-      attrs: {
-        action: '/racer/lobby',
-        method: 'post',
-      },
-    },
-    [
-      h(
-        `button.racer__new-race.button.button-navaway${ctrl.race.lobby ? '.button-fat' : '.button-empty'}`,
-        ctrl.trans.noarg('nextRace')
-      ),
-    ]
-  );
-
-const friendNext = (ctrl: RacerCtrl) =>
-  h('div.racer__post__next', [
-    h(
-      `a.racer__rematch.button.button-fat.button-navaway`,
-      {
-        attrs: { href: `/racer/${ctrl.race.id}/rematch` },
-      },
-      ctrl.trans.noarg('joinRematch')
+const lobbyNext = ({ race }: RacerCtrl) =>
+  form({ action: '/racer/lobby', method: 'post' }, [
+    button(
+      `.racer__new-race.button.button-navaway${race.lobby ? '.button-fat' : '.button-empty'}`,
+      i18n.storm.nextRace,
     ),
-    h(
-      'form.racer__post__next__new',
-      {
-        attrs: {
-          action: '/racer',
-          method: 'post',
-        },
-      },
-      h(
-        'button.racer__post__next__button.button.button-empty',
-        {
-          attrs: {
-            type: 'submit',
-          },
-        },
-        ctrl.trans.noarg('createNewGame')
-      )
+  ]);
+
+const friendNext = ({ race }: RacerCtrl) =>
+  div('.racer__post__next', [
+    a(`/racer/${race.id}/rematch`)(
+      `.racer__rematch.button.button-fat.button-navaway`,
+      i18n.storm.joinRematch,
+    ),
+    form(
+      '.racer__post__next__new',
+      { action: '/racer', method: 'post' },
+      button('.racer__post__next__button.button.button-empty', { type: 'submit' }, i18n.storm.createNewGame),
     ),
   ]);

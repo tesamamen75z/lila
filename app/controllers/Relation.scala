@@ -1,176 +1,174 @@
 package controllers
 
-import play.api.libs.json.Json
-import scala.concurrent.duration._
+import play.api.libs.json.{ Json, Writes }
+import play.api.mvc.Result
+import scalalib.Json.given
+import scalalib.paginator.{ AdapterLike, Paginator }
 
-import lila.api.Context
-import lila.app._
-import lila.common.config.MaxPerSecond
-import lila.common.paginator.{ AdapterLike, Paginator, PaginatorJson }
+import lila.app.{ *, given }
+import lila.core.LightUser
+import lila.core.perf.UserWithPerfs
+import lila.rating.UserPerfsExt.bestRatedPerf
 import lila.relation.Related
-import lila.relation.RelationStream._
-import lila.user.{ User => UserModel }
-import views._
 
-final class Relation(
-    env: Env,
-    apiC: => Api
-) extends LilaController(env) {
+final class Relation(env: Env, apiC: => Api) extends LilaController(env):
 
   val api = env.relation.api
 
-  private def renderActions(userId: String, mini: Boolean)(implicit ctx: Context) =
-    (ctx.userId ?? { api.fetchRelation(_, userId) }) zip
-      (ctx.isAuth ?? { env.pref.api followable userId }) zip
-      (ctx.userId ?? { api.fetchBlocks(userId, _) }) flatMap { case ((relation, followable), blocked) =>
-        negotiate(
-          html = fuccess(Ok {
-            if (mini)
-              html.relation.mini(userId, blocked = blocked, followable = followable, relation = relation)
-            else
-              html.relation.actions(userId, relation = relation, blocked = blocked, followable = followable)
-          }),
-          api = _ =>
-            fuccess(
-              Ok(
-                Json.obj(
-                  "followable" -> followable,
-                  "following"  -> relation.contains(true),
-                  "blocking"   -> relation.contains(false)
-                )
-              )
-            )
-        )
-      }
+  private def renderActions(username: UserName, mini: Boolean)(using ctx: Context) = for
+    user <- env.user.lightUserApi.asyncFallbackName(username)
+    relation <- ctx.userId.so(api.fetchRelation(_, user.id))
+    followable <- ctx.isAuth.so(env.pref.api.followable(user.id))
+    blocked <- ctx.userId.so(api.fetchBlocks(user.id, _))
+    res <-
+      if mini then
+        fuccess:
+          Ok.snip:
+            views.relation.mini(user.id, blocked = blocked, followable = followable, relation)
+      else
+        for messageable <- ctx.me.soUse(env.socialInfo.messageable(user.id))
+        yield JsonOk:
+          views.relation.actions(
+            user,
+            relation,
+            blocked = blocked,
+            followable = followable,
+            messageable = messageable
+          )
+  yield res
 
-  private val FollowLimitPerUser = new lila.memo.RateLimit[lila.user.User.ID](
-    credits = 150,
-    duration = 72.hour,
-    key = "follow.user"
-  )
+  private def RatelimitWith(
+      str: UserStr
+  )(f: LightUser => Fu[Result])(using me: Me)(using Context): Fu[Result] =
+    Found(env.user.lightUserApi.async(str.id)): user =>
+      limit.follow(me, rateLimited):
+        f(user)
 
-  def follow(userId: String) =
-    Auth { implicit ctx => me =>
-      FollowLimitPerUser(me.id) {
-        api.reachedMaxFollowing(me.id) flatMap {
-          case true =>
-            env.msg.api
-              .postPreset(
-                me.id,
-                lila.msg.MsgPreset.maxFollow(me.username, env.relation.maxFollow.value)
-              ) inject Ok
-          case _ =>
-            api.follow(me.id, UserModel normalize userId).nevermind >> renderActions(userId, getBool("mini"))
-        }
-      }(rateLimitedFu)
-    }
-
-  def unfollow(userId: String) =
-    Auth { implicit ctx => me =>
-      FollowLimitPerUser(me.id) {
-        api.unfollow(me.id, UserModel normalize userId).nevermind >> renderActions(userId, getBool("mini"))
-      }(rateLimitedFu)
-    }
-
-  def block(userId: String) =
-    Auth { implicit ctx => me =>
-      FollowLimitPerUser(me.id) {
-        api.block(me.id, UserModel normalize userId).nevermind >> renderActions(userId, getBool("mini"))
-      }(rateLimitedFu)
-    }
-
-  def unblock(userId: String) =
-    Auth { implicit ctx => me =>
-      api.unblock(me.id, UserModel normalize userId).nevermind >> renderActions(userId, getBool("mini"))
-    }
-
-  def following(username: String, page: Int) =
-    Open { implicit ctx =>
-      Reasonable(page, 20) {
-        OptionFuResult(env.user.repo named username) { user =>
-          RelatedPager(api.followingPaginatorAdapter(user.id), page) flatMap { pag =>
-            negotiate(
-              html = api countFollowers user.id map { nbFollowers =>
-                Ok(html.relation.bits.following(user, pag, nbFollowers))
-              },
-              api = _ => Ok(jsonRelatedPaginator(pag)).fuccess
-            )
-          }
-        }
-      }
-    }
-
-  def followers(username: String, page: Int) =
-    Open { implicit ctx =>
-      Reasonable(page, 20) {
-        OptionFuResult(env.user.repo named username) { user =>
-          RelatedPager(api.followersPaginatorAdapter(user.id), page) flatMap { pag =>
-            negotiate(
-              html = api countFollowing user.id map { nbFollowing =>
-                Ok(html.relation.bits.followers(user, pag, nbFollowing))
-              },
-              api = _ => Ok(jsonRelatedPaginator(pag)).fuccess
-            )
-          }
-        }
-      }
-    }
-
-  def apiFollowing(name: String) = apiRelation(name, Direction.Following)
-
-  def apiFollowers(name: String) = apiRelation(name, Direction.Followers)
-
-  private def apiRelation(name: String, direction: Direction) =
-    Action.async { implicit req =>
-      env.user.repo.named(name) flatMap {
-        _ ?? { user =>
-          apiC.jsonStream {
-            env.relation.stream
-              .follow(user, direction, MaxPerSecond(20))
-              .map(env.api.userApi.one)
-          }.fuccess
-        }
-      }
-    }
-
-  private def jsonRelatedPaginator(pag: Paginator[Related]) = {
-    import lila.user.JsonView.nameWrites
-    import lila.relation.JsonView.relatedWrites
-    Json.obj("paginator" -> PaginatorJson(pag.mapResults { r =>
-      relatedWrites.writes(r) ++ Json
-        .obj(
-          "perfs" -> r.user.perfs.bestPerfType.map { best =>
-            lila.user.JsonView.perfs(r.user, best.some)
-          }
-        )
-        .add("online" -> env.socket.isOnline(r.user.id))
-    }))
+  def follow(username: UserStr) = AuthOrScoped(_.Follow.Write, _.Web.Mobile) { ctx ?=> me ?=>
+    RatelimitWith(username): user =>
+      for
+        reachedMax <- api.reachedMaxFollowing(me)
+        res <-
+          if reachedMax then
+            val msg = lila.msg.MsgPreset.maxFollow(me.username, env.relation.maxFollow)
+            for
+              _ <- env.msg.api.postPreset(me, msg)
+              res <- rateLimited(msg.name)
+            yield res
+          else
+            for
+              _ <- api.follow(me, user.id).recoverDefault
+              res <- negotiate(renderActions(user.name, getBool("mini")), jsonOkResult)
+            yield res
+      yield res
   }
 
-  def blocks(page: Int) =
-    Auth { implicit ctx => me =>
-      Reasonable(page, 20) {
-        RelatedPager(api.blockingPaginatorAdapter(me.id), page) map { pag =>
-          html.relation.bits.blocks(me, pag)
-        }
-      }
-    }
+  def followBc = follow
 
-  private def RelatedPager(adapter: AdapterLike[String], page: Int)(implicit ctx: Context) =
+  def unfollow(username: UserStr) = AuthOrScoped(_.Follow.Write, _.Web.Mobile) { ctx ?=> me ?=>
+    RatelimitWith(username): user =>
+      api.unfollow(me, user.id).recoverDefault >> negotiate(
+        renderActions(user.name, getBool("mini")),
+        jsonOkResult
+      )
+  }
+  def unfollowBc = unfollow
+
+  def block(username: UserStr) = AuthOrScoped(_.Follow.Write, _.Web.Mobile) { ctx ?=> me ?=>
+    RatelimitWith(username): user =>
+      for
+        _ <- api.block(me, user.id).recoverDefault
+        _ <- env.relation.subs.subscribe(me, user.id, false)
+        res <- negotiate(
+          renderActions(user.name, getBool("mini")),
+          jsonOkResult
+        )
+      yield res
+  }
+
+  def unblock(username: UserStr) = AuthOrScoped(_.Follow.Write, _.Web.Mobile) { ctx ?=> me ?=>
+    RatelimitWith(username): user =>
+      api.unblock(me, user.id).recoverDefault >> negotiate(
+        renderActions(user.name, getBool("mini")),
+        jsonOkResult
+      )
+  }
+
+  def following(username: UserStr, page: Int) = Open:
+    Reasonable(page, Max(20)):
+      Found(meOrFetch(username)): user =>
+        for
+          _ <- (page == 1).so(api.unfollowInactiveAccounts(user.id))
+          pag <- RelatedPager(api.followingPaginatorAdapter(user.id), page)
+          res <- negotiate(
+            if ctx.is(user) || isGrantedOpt(_.CloseAccount)
+            then Ok.page(views.relation.friends(user, pag))
+            else Found(ctx.me)(me => Redirect(routes.Relation.following(me.username))),
+            Ok(jsonRelatedPaginator(pag))
+          )
+        yield res
+
+  def apiFollowing = Scoped(_.Follow.Read, _.Web.Mobile) { ctx ?=> _ ?=>
+    apiC.jsonDownload:
+      env.relation.stream
+        .follow(MaxPerSecond(30))
+        .mapAsync(1): ids =>
+          env.user.api.listWithPerfs(ids.toList, includeClosed = false)
+        .mapConcat(identity)
+        .map(env.api.userApi.one(_, None))
+  }
+
+  def apiMobileFollowing = Scoped(_.Web.Mobile) { ctx ?=> _ ?=>
+    import env.user.lightUserApi.reader
+    val nb = getInt("nb").fold(10)(_.squeeze(1, 100))
+    env.relation.stream
+      .recentlySeenList(nb, env.user.lightUserApi.projection, env.round.playing.apply)
+      .map(jsToNdJson)
+  }
+
+  // for lichobile, remove at some point
+  def bcAction(action: String, user: UserStr) = action.match
+    case "follow" => follow(user)
+    case "unfollow" => unfollow(user)
+    case "block" => block(user)
+    case "unblock" => unblock(user)
+    case _ => Auth(_ ?=> _ ?=> notFoundJson())
+
+  private def jsonRelatedPaginator(pag: Paginator[Related[UserWithPerfs]]) =
+    import lila.common.Json.{ *, given }
+    given Writes[UserWithPerfs] = writeAs(_.user.light)
+    import lila.relation.JsonView.given
+    Json.obj("paginator" -> pag.mapResults: r =>
+      Json.toJsObject(r) ++ Json
+        .obj:
+          "perfs" -> r.user.perfs.bestRatedPerf.map:
+            lila.user.JsonView.keyedPerfJson
+        .add("online" -> env.socket.isOnline.exec(r.user.id)))
+
+  def blocks(page: Int) = Auth { ctx ?=> me ?=>
+    Reasonable(page, Max(20)):
+      Ok.async:
+        RelatedPager(api.blockingPaginatorAdapter(me), page, includeClosed = true).map:
+          views.relation.blocks(me, _)
+  }
+
+  private def RelatedPager(adapter: AdapterLike[UserId], page: Int, includeClosed: Boolean = false)(using
+      Context
+  ) =
     Paginator(
-      adapter = adapter mapFutureList followship,
+      adapter = adapter.mapFutureList(followship.curried(includeClosed)),
       currentPage = page,
-      maxPerPage = lila.common.config.MaxPerPage(30)
+      maxPerPage = MaxPerPage(30)
     )
 
-  private def followship(userIds: Seq[String])(implicit ctx: Context): Fu[List[Related]] =
-    env.user.repo usersFromSecondary userIds.map(UserModel.normalize) flatMap { users =>
-      (ctx.isAuth ?? { env.pref.api.followableIds(users map (_.id)) }) flatMap { followables =>
-        users.map { u =>
-          ctx.userId ?? { api.fetchRelation(_, u.id) } map { rel =>
-            lila.relation.Related(u, none, followables(u.id), rel)
-          }
-        }.sequenceFu
-      }
-    }
-}
+  private def followship(includeClosed: Boolean, userIds: Seq[UserId])(using
+      ctx: Context
+  ): Fu[List[Related[UserWithPerfs]]] = for
+    users <- env.user.api.listWithPerfs(userIds.toList, includeClosed)
+    followables <- ctx.isAuth.so(env.pref.api.followableIds(users.map(_.id)))
+    rels <- users.sequentially: u =>
+      ctx.userId
+        .so(api.fetchRelation(_, u.id))
+        .map: rel =>
+          lila.relation.Related(u, none, followables(u.id), rel)
+  yield rels

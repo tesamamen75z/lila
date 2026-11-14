@@ -1,67 +1,55 @@
 package lila.tournament
 
-import chess.{ Black, Color, White }
-import scala.util.chaining._
+import alleycats.Zero
+import chess.{ Black, ByColor, Color, IntRating, White }
+import monocle.syntax.all.*
 
-import lila.game.{ Game, Player => GamePlayer, GameRepo, Source }
-import lila.user.User
+import lila.core.game.Source
 
 final class AutoPairing(
-    gameRepo: GameRepo,
+    gameRepo: lila.core.game.GameRepo,
+    newPlayer: lila.core.game.NewPlayer,
     duelStore: DuelStore,
-    lightUserApi: lila.user.LightUserApi,
-    onStart: Game.ID => Unit
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    lightUserApi: lila.core.user.LightUserApi,
+    onStart: lila.core.game.OnStart
+)(using Executor):
 
-  def apply(
-      tour: Tournament,
-      pairing: Pairing,
-      playersMap: Map[User.ID, Player],
-      ranking: Ranking
-  ): Fu[Game] = {
-    val player1 = playersMap get pairing.user1 err s"Missing pairing player1 $pairing"
-    val player2 = playersMap get pairing.user2 err s"Missing pairing player2 $pairing"
-    val clock   = tour.clock.toClock
-    val game = Game
-      .make(
-        chess = chess.Game(
-          variantOption = Some {
-            if (tour.position.isEmpty) tour.variant
-            else chess.variant.FromPosition
-          },
-          fen = tour.position
-        ) pipe { g =>
-          val turns = g.player.fold(0, 1)
-          g.copy(
-            clock = clock.some,
-            turns = turns,
-            startedAtTurn = turns
+  def apply(tour: Tournament, pairing: Pairing.WithPlayers, ranking: Ranking): Fu[Game] =
+    val clock = tour.clock.toClock
+    val fen: Option[chess.format.Fen.Full] = tour.position.map(_.into(chess.format.Fen.Full))
+    val game = lila.core.game
+      .newGame(
+        chess = chess
+          .Game(
+            if tour.position.isEmpty then tour.variant
+            else chess.variant.FromPosition,
+            fen
           )
-        },
-        whitePlayer = makePlayer(White, player1),
-        blackPlayer = makePlayer(Black, player2),
-        mode = tour.mode,
-        source = Source.Tournament,
+          .copy(clock = clock.some),
+        players = ByColor(makePlayer(White, pairing.player1), makePlayer(Black, pairing.player2)),
+        rated = tour.rated,
+        source = Source.Arena,
         pgnImport = None
       )
-      .withId(pairing.gameId)
-      .withTournamentId(tour.id)
+      .withId(pairing.pairing.gameId)
+      .focus(_.metadata.tournamentId)
+      .replace(tour.id.some)
       .start
-    (gameRepo insertDenormalized game) >>- {
-      onStart(game.id)
-      duelStore.add(
-        tour = tour,
-        game = game,
-        p1 = usernameOf(pairing.user1) -> ~game.whitePlayer.rating,
-        p2 = usernameOf(pairing.user2) -> ~game.blackPlayer.rating,
-        ranking = ranking
-      )
-    } inject game
-  }
+    for
+      _ <- gameRepo.insertDenormalized(game)
+      _ =
+        onStart.exec(game.id)
+        given Zero[IntRating] = Zero(IntRating(0))
+        duelStore.add(
+          tour = tour.id,
+          game = game.id,
+          p1 = usernameOf(pairing.player1) -> ~game.whitePlayer.rating,
+          p2 = usernameOf(pairing.player2) -> ~game.blackPlayer.rating,
+          ranking = ranking
+        )
+    yield game
 
   private def makePlayer(color: Color, player: Player) =
-    GamePlayer.make(color, player.userId, player.rating, player.provisional)
+    newPlayer(color, player.userId, player.rating, player.provisional)
 
-  private def usernameOf(userId: User.ID) =
-    lightUserApi.sync(userId).fold(userId)(_.name)
-}
+  private def usernameOf(player: Player) = lightUserApi.syncFallback(player.userId).name

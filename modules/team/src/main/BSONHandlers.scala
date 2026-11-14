@@ -1,14 +1,20 @@
 package lila.team
 
-import reactivemongo.api.bson.Macros
+import reactivemongo.api.bson.*
 
-import lila.hub.LeaderTeam
+import lila.core.team.{ Access, LightTeam, TeamData }
+import lila.db.dsl.{ *, given }
 
-private object BSONHandlers {
+private object BSONHandlers:
 
-  import lila.db.dsl.BSONJodaDateTimeHandler
-  implicit val TeamBSONHandler       = Macros.handler[Team]
-  implicit val RequestBSONHandler    = Macros.handler[Request]
-  implicit val MemberBSONHandler     = Macros.handler[Member]
-  implicit val LeaderTeamBSONHandler = Macros.handler[LeaderTeam]
-}
+  given BSONHandler[Access] = valueMapHandler(Access.byId)(_.id)
+  given BSONDocumentHandler[Team] = Macros.handler
+  given BSONDocumentHandler[TeamRequest] = Macros.handler
+  given BSONDocumentHandler[TeamUpdate[TeamId, UserId]] = Macros.handler
+  given BSONDocumentHandler[TeamUpdates[TeamId]] = Macros.handler
+  given BSONHandler[TeamSecurity.Permission] = valueMapHandler(TeamSecurity.Permission.byKey)(_.key)
+  given BSONDocumentHandler[TeamMember] =
+    Macros.handler[TeamMember].afterWrite(lila.db.Util.removeEmptyArray("perms"))
+
+  given BSONDocumentHandler[LightTeam] = Macros.handler
+  given BSONDocumentHandler[TeamData] = Macros.handler

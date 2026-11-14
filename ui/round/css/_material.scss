@@ -1,5 +1,7 @@
+@use 'sass:math';
+@import '../../lib/css/component/material';
+
 .material {
-  @extend %flex-center-nowrap;
   align-self: center;
   height: 40px;
   line-height: 0;
@@ -7,63 +9,40 @@
 
   div {
     display: inline-block;
-    margin-left: 10px;
+    margin-inline-start: 10px;
   }
 
   mpiece {
-    margin-left: -10px;
+    margin-inline-start: -10px;
     width: 32px;
     height: 32px;
     background-size: cover;
     display: inline-block;
 
     &.pawn {
-      background-image: url(../piece/mono/P.svg);
-    }
-
-    &.bishop {
-      background-image: url(../piece/mono/B.svg);
-    }
-
-    &.knight {
-      background-image: url(../piece/mono/N.svg);
-    }
-
-    &.rook {
-      background-image: url(../piece/mono/R.svg);
-    }
-
-    &.queen {
-      background-image: url(../piece/mono/Q.svg);
-    }
-
-    &.king {
-      background-image: url(../piece/mono/K.svg);
-    }
-
-    @if $theme == 'transp' {
-      filter: brightness(1.3) drop-shadow(0 1px 1px #000);
+      margin-inline-start: -15px;
     }
   }
 
   score {
-    font-family: 'Roboto';
+    @extend %roboto;
+
     line-height: 32px;
     vertical-align: top;
   }
 
-  @include breakpoint($mq-col1) {
+  @include mq-is-col1 {
     height: $col1-mat-height;
-    margin-left: 3vmin;
+    margin-inline-start: 3vmin;
 
     div {
-      margin-left: 8px;
+      margin-inline-start: 8px;
     }
 
     mpiece {
-      width: $col1-mat-height * 3/4;
-      height: $col1-mat-height * 3/4;
-      margin-left: -8px;
+      width: math.div($col1-mat-height * 3, 4);
+      height: math.div($col1-mat-height * 3, 4);
+      margin-inline-start: -8px !important;
     }
   }
 }

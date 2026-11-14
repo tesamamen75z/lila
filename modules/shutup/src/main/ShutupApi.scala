@@ -1,110 +1,108 @@
 package lila.shutup
 
-import reactivemongo.api.bson._
+import reactivemongo.api.bson.*
 
-import lila.db.dsl._
-import lila.game.GameRepo
-import lila.hub.actorApi.shutup.PublicSource
-import lila.user.{ User, UserRepo }
+import lila.core.chat.PublicSource
+import lila.core.shutup.PublicLine
+import lila.db.dsl.{ *, given }
 
 final class ShutupApi(
     coll: Coll,
-    gameRepo: GameRepo,
-    userRepo: UserRepo,
-    relationApi: lila.relation.RelationApi,
-    reporter: lila.hub.actors.Report
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
+    relationApi: lila.core.relation.RelationApi,
+    reportApi: lila.core.report.ReportApi
+)(using Executor)
+    extends lila.core.shutup.ShutupApi:
 
-  implicit private val UserRecordBSONHandler = Macros.handler[UserRecord]
-  import PublicLine.PublicLineBSONHandler
+  private given BSONDocumentHandler[UserRecord] = Macros.handler
+  import lila.shutup.PublicLine.given
 
-  def getPublicLines(userId: User.ID): Fu[List[PublicLine]] =
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    coll.delete.one(bid(del.id))
+
+  def getPublicLines(userId: UserId): Fu[List[PublicLine]] =
     coll
-      .find($doc("_id" -> userId), $doc("pub" -> 1).some)
+      .find(bid(userId), bdoc("pub" -> 1).some)
       .one[Bdoc]
-      .map {
+      .map:
         ~_.flatMap(_.getAsOpt[List[PublicLine]]("pub"))
-      }
 
-  def publicForumMessage(userId: User.ID, text: String) = record(userId, text, TextType.PublicForumMessage)
-  def teamForumMessage(userId: User.ID, text: String)   = record(userId, text, TextType.TeamForumMessage)
-  def publicChat(userId: User.ID, text: String, source: PublicSource) =
-    record(userId, text, TextType.PublicChat, source.some)
+  def teamForumMessage(userId: UserId, text: String) = record(userId, text, TextType.TeamForumMessage)
+  def publicText(userId: UserId, text: String, source: PublicSource) =
+    record(userId, text, TextType.of(source), source.some)
 
-  def privateChat(chatId: String, userId: User.ID, text: String) =
-    gameRepo.getSourceAndUserIds(chatId) flatMap {
-      case (source, _) if source.has(lila.game.Source.Friend) => funit // ignore challenges
-      case (_, userIds) =>
-        record(userId, text, TextType.PrivateChat, none, userIds find (userId !=))
-    }
+  def privateChat(chatId: String, userId: UserId, text: String) =
+    gameRepo
+      .getSourceAndUserIds(GameId(chatId))
+      .flatMap:
+        case (source, _) if source.has(lila.core.game.Source.Friend) => funit // ignore challenges
+        case (_, userIds) =>
+          record(userId, text, TextType.PrivateChat, none, userIds.find(userId !=))
 
-  def privateMessage(userId: User.ID, toUserId: User.ID, text: String) =
+  def privateMessage(userId: UserId, toUserId: UserId, text: String) =
     record(userId, text, TextType.PrivateMessage, none, toUserId.some)
 
   private def record(
-      userId: User.ID,
+      userId: UserId,
       text: String,
       textType: TextType,
       source: Option[PublicSource] = None,
-      toUserId: Option[User.ID] = None
+      toUserId: Option[UserId] = None
   ): Funit =
-    userRepo isTroll userId flatMap {
-      case true => funit
-      case false =>
-        toUserId ?? { relationApi.fetchFollows(_, userId) } flatMap {
-          case true => funit
-          case false =>
-            val analysed = Analyser(text)
-            val pushPublicLine = source.ifTrue(analysed.nbBadWords > 0) ?? { source =>
-              $doc(
-                "pub" -> $doc(
-                  "$each"  -> List(PublicLine.make(text, source)),
-                  "$slice" -> -20
+    userApi
+      .isTroll(userId)
+      .not
+      .flatMapz:
+        toUserId
+          .so(relationApi.fetchFollows(_, userId))
+          .not
+          .flatMapz:
+            for
+              analysed <- Analyser(text).removeEngineIfBot(userApi.isBot(userId))
+              pushPublicLine = source.ifTrue(analysed.badWords.nonEmpty).so { source =>
+                bdoc(
+                  "pub" -> bdoc(
+                    "$each" -> List(lila.shutup.PublicLine.make(text, source)),
+                    "$slice" -> -20
+                  )
                 )
-              )
-            }
-            val push = $doc(
-              textType.key -> $doc(
-                "$each"  -> List(BSONDouble(analysed.ratio)),
-                "$slice" -> -textType.rotation
-              )
-            ) ++ pushPublicLine
-            coll.ext
-              .findAndUpdate[UserRecord](
-                selector = $id(userId),
-                update = $push(push),
+              }
+              res <- coll.findAndUpdateSimplified[UserRecord](
+                selector = bid(userId),
+                update = push:
+                  bdoc(
+                    textType.key -> bdoc(
+                      "$each" -> List(BSONDouble(analysed.ratio)),
+                      "$slice" -> -textType.rotation
+                    )
+                  ) ++ pushPublicLine
+                ,
                 fetchNewObject = true,
                 upsert = true
               )
-              .flatMap {
-                case None             => fufail(s"can't find user record for $userId")
-                case Some(userRecord) => legiferate(userRecord)
-              }
-        }
-    }
+              _ <- res match
+                case None => fufail(s"can't find user record for $userId")
+                case Some(userRecord) => legiferate(userRecord, analysed)
+            yield ()
 
-  private def legiferate(userRecord: UserRecord): Funit =
-    userRecord.reports.exists(_.unacceptable) ?? {
-      reporter ! lila.hub.actorApi.report.Shutup(userRecord.userId, reportText(userRecord))
-      coll.update
-        .one(
-          $id(userRecord.userId),
-          $unset(
-            TextType.PublicForumMessage.key,
-            TextType.TeamForumMessage.key,
-            TextType.PrivateMessage.key,
-            TextType.PrivateChat.key,
-            TextType.PublicChat.key
-          )
+  private def legiferate(userRecord: UserRecord, analysed: TextAnalysis): Funit =
+    (analysed.critical || userRecord.reports.exists(_.unacceptable)).so:
+      val text = analysed.critical.so("Critical comm alert\n") ++ {
+        val repText = reportText(userRecord)
+        if repText.isEmpty then analysed.badWords.mkString(", ") else repText
+      }
+      for
+        _ <- reportApi.autoCommReport(userRecord.userId, text, analysed.critical)
+        _ <- coll.update.one(
+          bid(userRecord.userId),
+          unset(TextType.values.map(_.key))
         )
-        .void
-    }
+      yield ()
 
   private def reportText(userRecord: UserRecord) =
     userRecord.reports
-      .collect {
+      .collect:
         case r if r.unacceptable =>
           s"${r.textType.name}: ${r.nbBad} dubious (out of ${r.ratios.size})"
-      }
       .mkString("\n")
-}

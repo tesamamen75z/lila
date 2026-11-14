@@ -1,105 +1,96 @@
 package lila.activity
 
-import org.joda.time.Interval
 import play.api.i18n.Lang
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.common.Iso
-import lila.common.Json._
-import lila.game.JsonView.colorWrites
-import lila.game.LightPov
+import lila.activity.activities.*
+import lila.common.Json.{ *, given }
+import lila.core.game.LightPov
+import lila.core.i18n.Translate
+import lila.core.rating.{ RatingProg, Score }
+import lila.core.simul.Simul
+import lila.core.tournament.leaderboard.Ratio
 import lila.rating.PerfType
-import lila.simul.Simul
-import lila.study.JsonView.studyIdNameWrites
-import lila.tournament.LeaderboardApi.{ Entry => TourEntry, Ratio => TourRatio }
-import lila.user.User
-
-import activities._
-import model._
 
 final class JsonView(
-    getTourName: lila.tournament.GetTourName,
-    getTeamName: lila.team.GetTeamName
-) {
+    getTourName: lila.core.tournament.GetTourName,
+    getLightTeam: lila.core.team.LightTeam.GetterSync,
+    routeUrl: lila.core.config.RouteUrl
+):
 
-  private object Writers {
-    implicit val intervalWrites = OWrites[Interval] { i =>
-      Json.obj("start" -> i.getStart, "end" -> i.getEnd)
-    }
-    implicit val perfTypeWrites   = Writes[PerfType](pt => JsString(pt.key))
-    implicit val ratingWrites     = intIsoWriter(Iso.int[Rating](Rating.apply, _.value))
-    implicit val ratingProgWrites = Json.writes[RatingProg]
-    implicit val scoreWrites      = Json.writes[Score]
-    implicit val gamesWrites = OWrites[Games] { games =>
-      JsObject {
-        games.value.toList.sortBy(-_._2.size).map { case (pt, score) =>
-          pt.key -> scoreWrites.writes(score)
-        }
-      }
-    }
-    implicit val variantWrites: Writes[chess.variant.Variant] = Writes { v =>
-      JsString(v.key)
-    }
+  private object Writers:
+    given OWrites[TimeInterval] = OWrites: i =>
+      Json.obj("start" -> i.start, "end" -> i.end)
+    given Writes[PerfType] = writeAs(_.key)
+    given Writes[RatingProg] = Json.writes
+    given Writes[Score] = Json.writes
+    given OWrites[Games] = OWrites: games =>
+      JsObject:
+        games.value.toList
+          .sortBy((_, s) => -s.size)
+          .map: (pk, score) =>
+            pk.value -> Json.toJson(score)
+
+    given Writes[chess.variant.Variant] = writeAs(_.key)
+
     // writes as percentage
-    implicit val tourRatioWrites = Writes[TourRatio] { r =>
-      JsNumber((r.value * 100).toInt atLeast 1)
-    }
-    implicit def tourEntryWrites(implicit lang: Lang) =
-      OWrites[TourEntry] { e =>
-        Json.obj(
-          "tournament" -> Json.obj(
-            "id"   -> e.tourId,
-            "name" -> ~getTourName.get(e.tourId)
-          ),
-          "nbGames"     -> e.nbGames,
-          "score"       -> e.score,
-          "rank"        -> e.rank,
-          "rankPercent" -> e.rankRatio
-        )
-      }
-    implicit def toursWrites(implicit lang: Lang) = Json.writes[ActivityView.Tours]
-    implicit val puzzlesWrites                    = Json.writes[Puzzles]
-    implicit val stormWrites                      = Json.writes[Storm]
-    implicit val racerWrites                      = Json.writes[Racer]
-    implicit val streakWrites                     = Json.writes[Streak]
-    implicit def simulWrites(user: User) =
-      OWrites[Simul] { s =>
-        Json.obj(
-          "id"       -> s.id,
-          "name"     -> s.name,
-          "isHost"   -> (s.hostId == user.id),
-          "variants" -> s.variants,
-          "score"    -> Score(s.wins, s.losses, s.draws, none)
-        )
-      }
-    implicit val playerWrites = OWrites[lila.game.Player] { p =>
+    given Writes[Ratio] = Writes: r =>
+      JsNumber((r.value * 100).toInt.atLeast(1))
+
+    given (using Lang): OWrites[lila.core.tournament.leaderboard.Entry] = OWrites: e =>
+      val name = getTourName.sync(e.tourId).orZero
+      Json.obj(
+        "tournament" -> Json.obj(
+          "id" -> e.tourId,
+          "name" -> name
+        ),
+        "nbGames" -> e.nbGames,
+        "score" -> e.score,
+        "rank" -> e.rank,
+        "rankPercent" -> e.rankRatio
+      )
+    given (using Lang): Writes[ActivityView.Tours] = Json.writes
+    given Writes[Puzzles] = writeWrap("score")(_.value)
+    given Writes[Storm] = Json.writes
+    given Writes[Racer] = Json.writes
+    given Writes[Streak] = Json.writes
+    def simulWrites(user: User) = OWrites[Simul]: s =>
+      Json.obj(
+        "id" -> s.id,
+        "name" -> s.name,
+        "isHost" -> (s.hostId == user.id),
+        "variants" -> s.variants,
+        "score" -> s.hostScore
+      )
+    given lightPlayerWrites: OWrites[lila.core.game.LightPlayer] = OWrites: p =>
       Json
         .obj()
         .add("aiLevel" -> p.aiLevel)
         .add("user" -> p.userId)
         .add("rating" -> p.rating)
-    }
-    implicit val lightPovWrites = OWrites[LightPov] { p =>
+
+    given OWrites[lila.core.game.Player] = lightPlayerWrites.contramap(_.light)
+
+    given OWrites[LightPov] = OWrites: p =>
       Json.obj(
-        "id"       -> p.game.id,
-        "color"    -> p.color,
-        "url"      -> s"/${p.game.id}/${p.color.name}",
+        "id" -> p.game.id,
+        "color" -> p.color,
+        "url" -> routeUrl(routes.Round.watcher(p.game.id, p.color)),
         "opponent" -> p.opponent
       )
-    }
-    implicit val followListWrites = Json.writes[FollowList]
-    implicit val followsWrites    = Json.writes[Follows]
-    implicit val teamsWrites = Writes[Teams] { s =>
-      JsArray(s.value.map { id =>
-        Json.obj("url" -> s"/team/$id", "name" -> getTeamName(id))
+    given Writes[FollowList] = Json.writes
+    given Writes[Follows] = Json.writes
+    given Writes[Teams] = Writes: s =>
+      JsArray(s.value.flatMap(getLightTeam(_)).map { team =>
+        Json.obj("url" -> routeUrl(routes.Team.show(team.id)), "name" -> team.name).add("flair" -> team.flair)
       })
-    }
-    implicit val patronWrites = Json.writes[Patron]
-  }
-  import Writers._
+    given Writes[Patron] = Json.writes
+  import Writers.{ *, given }
 
-  def apply(a: ActivityView, user: User)(implicit lang: Lang): Fu[JsObject] =
-    fuccess {
+  private given OWrites[lila.core.study.IdName] = Json.writes
+
+  def apply(a: ActivityView, user: User)(using Lang, Translate): Fu[JsObject] =
+    fuccess:
       Json
         .obj("interval" -> a.interval)
         .add("games", a.games)
@@ -110,37 +101,37 @@ final class JsonView(
         .add("tournaments", a.tours)
         .add(
           "practice",
-          a.practice.map(_.toList.sortBy(-_._2) map { case (study, nb) =>
+          a.practice.map(_.toList.sortBy(-_._2).map { (study, nb) =>
             Json.obj(
-              "url"         -> s"/practice/-/${study.slug}/${study.id}",
-              "name"        -> study.name,
+              "url" -> routeUrl(routes.Practice.show("-", study.slug, study.id)),
+              "name" -> study.name.txt(),
               "nbPositions" -> nb
             )
           })
         )
-        .add("simuls", a.simuls.map(_ map simulWrites(user).writes))
+        .add("simuls", a.simuls.map(_.map(simulWrites(user).writes)))
         .add(
           "correspondenceMoves",
-          a.corresMoves.map { case (nb, povs) =>
+          a.corresMoves.map: (nb, povs) =>
             Json.obj("nb" -> nb, "games" -> povs)
-          }
         )
         .add(
           "correspondenceEnds",
-          a.corresEnds.map { case (score, povs) =>
-            Json.obj("score" -> score, "games" -> povs)
-          }
+          a.corresEnds.map:
+            _.map { case (pk, (score, povs)) =>
+              pk.value -> Json.obj("score" -> score, "games" -> povs)
+            }
         )
         .add("follows" -> a.follows)
         .add("studies" -> a.studies)
         .add("teams" -> a.teams)
-        .add("posts" -> a.posts.map(_ map { case (topic, posts) =>
+        .add("posts" -> a.forumPosts.map(_.map { (topic, posts) =>
           Json.obj(
-            "topicUrl"  -> s"/forum/${topic.categId}/${topic.slug}",
+            "topicUrl" -> routeUrl(routes.ForumTopic.show(topic.categId, topic.slug)),
             "topicName" -> topic.name,
             "posts" -> posts.map { p =>
               Json.obj(
-                "url"  -> s"/forum/redirect/post/${p.id}",
+                "url" -> routeUrl(routes.ForumPost.redirect(p.id)),
                 "text" -> p.text.take(500)
               )
             }
@@ -148,5 +139,3 @@ final class JsonView(
         }))
         .add("patron" -> a.patron)
         .add("stream" -> a.stream)
-    }
-}

@@ -1,8 +1,8 @@
-package lila
+package lila.team
 
-package object team extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[team] def logger = lila.log("team")
+private lazy val logger = lila.log("team")
 
-  type GameTeams = chess.Color.Map[Team.ID]
-}
+type GameTeams = chess.ByColor[TeamId]

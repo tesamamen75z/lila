@@ -1,5 +1,3 @@
-import { Prop } from 'common';
-
 export interface ForecastData {
   onMyTurn?: boolean;
   steps?: ForecastStep[][];
@@ -9,19 +7,7 @@ export interface ForecastStep {
   ply: Ply;
   uci: Uci;
   san: San;
-  fen: Fen;
-  check?: Key;
+  fen: FEN;
 }
 
-export interface ForecastCtrl {
-  reloadToLastPly(): void;
-  truncate(fc: ForecastStep[]): ForecastStep[];
-  playAndSave(node: ForecastStep): void;
-  findStartingWithNode(node: ForecastStep): ForecastStep[][];
-  isCandidate(fc: ForecastStep[]): boolean;
-  addNodes(fc: ForecastStep[]): void;
-  removeIndex(index: number): void;
-  list(): ForecastStep[][];
-  loading: Prop<boolean>;
-  onMyTurn: boolean;
-}
+export type ForecastList = ForecastStep[][];

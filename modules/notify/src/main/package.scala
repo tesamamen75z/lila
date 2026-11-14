@@ -1,3 +1,4 @@
-package lila
+package lila.notify
 
-package object notify extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

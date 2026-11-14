@@ -1,104 +1,164 @@
 package lila.study
 
-import chess.format.FEN
-import play.api.data._
-import play.api.data.Forms._
+import chess.format.Fen
+import chess.format.pgn.PgnStr
+import chess.variant.Variant
+import play.api.data.*
+import play.api.data.Forms.*
+import play.api.data.format.Formatter
 
-import lila.common.Form.cleanNonEmptyText
+import lila.common.Form.{ cleanNonEmptyText, defaulting, formatter, into, tagifyValues, typeIn, given }
+import lila.core.study.Visibility
 
-object StudyForm {
+object StudyForm:
 
-  object importGame {
+  private given Formatter[ChapterMaker.Mode] =
+    formatter.stringOptionFormatter(_.key, ChapterMaker.Mode.apply)
+
+  private given Formatter[ChapterMaker.Orientation] =
+    formatter.stringFormatter(_.key, ChapterMaker.Orientation.apply)
+
+  given Formatter[Visibility] =
+    formatter.stringOptionFormatter[Visibility](_.key, Visibility.byKey.get)
+
+  private given Formatter[Settings.UserSelection] =
+    formatter.stringOptionFormatter[Settings.UserSelection](_.key, Settings.UserSelection.byKey.get)
+
+  // also bound by JSON read from websocket message
+  case class FormData(
+      name: String,
+      flair: Option[String],
+      visibility: Visibility,
+      computer: Settings.UserSelection,
+      explorer: Settings.UserSelection,
+      cloneable: Settings.UserSelection,
+      shareable: Settings.UserSelection,
+      chat: Settings.UserSelection,
+      sticky: Option[Boolean],
+      description: Option[Boolean]
+  ):
+    def studyName = StudyName.from(lila.common.String.fullCleanUp(name).take(100).nonEmptyOption)
+    def settings = Settings(computer, explorer, cloneable, shareable, chat, sticky | true, ~description)
+
+  val form: Form[FormData] = Form:
+    val userSelectionField = typeIn(Settings.UserSelection.values.toSet)
+    mapping(
+      "name" -> nonEmptyText(minLength = 1, maxLength = 100),
+      "flair" -> optional(nonEmptyText(maxLength = 100)),
+      "visibility" -> typeIn(Visibility.values.toSet),
+      "computer" -> userSelectionField,
+      "explorer" -> userSelectionField,
+      "cloneable" -> userSelectionField,
+      "shareable" -> userSelectionField,
+      "chat" -> userSelectionField,
+      "sticky" -> optional(boolean),
+      "description" -> optional(boolean)
+    )(FormData.apply)(unapply)
+
+  object importGame:
 
     lazy val form = Form(
       mapping(
-        "gameId"      -> optional(nonEmptyText),
-        "orientation" -> optional(nonEmptyText),
-        "fen"         -> optional(lila.common.Form.fen.playable(strict = false)),
-        "pgn"         -> optional(nonEmptyText),
-        "variant"     -> optional(nonEmptyText),
-        "as"          -> optional(nonEmptyText)
-      )(Data.apply)(Data.unapply)
+        "gameId" -> optional(of[GameId]),
+        "orientation" -> optional(of[ChapterMaker.Orientation]),
+        "fen" -> optional(lila.common.Form.fen.playable(strict = false)),
+        "pgn" -> optional(nonEmptyText.into[PgnStr]),
+        "variant" -> optional(of[Variant]),
+        "as" -> optional(nonEmptyText),
+        "mode" -> optional(of[ChapterMaker.Mode])
+      )(Data.apply)(unapply)
     )
 
     case class Data(
-        gameId: Option[String] = None,
-        orientationStr: Option[String] = None,
-        fen: Option[FEN] = None,
-        pgnStr: Option[String] = None,
-        variantStr: Option[String] = None,
-        asStr: Option[String] = None
-    ) {
+        gameId: Option[GameId] = None,
+        orientation: Option[ChapterMaker.Orientation] = None,
+        fen: Option[Fen.Full] = None,
+        pgnStr: Option[PgnStr] = None,
+        variant: Option[Variant] = None,
+        asStr: Option[String] = None,
+        mode: Option[ChapterMaker.Mode] = None
+    ):
+      def as: As = asStr match
+        case None | Some("study") => As.NewStudy
+        case Some(studyId) => As.ChapterOf(StudyId(studyId))
 
-      def orientation = orientationStr.flatMap(chess.Color.fromName) | chess.White
+      def isNewStudy = as == As.NewStudy
 
-      def as: As =
-        asStr match {
-          case None | Some("study") => AsNewStudy
-          case Some(studyId)        => AsChapterOf(Study.Id(studyId))
-        }
+      def toChapterData = ChapterMaker.Data(
+        name = StudyChapterName(""),
+        game = gameId.map(_.value),
+        variant = variant,
+        fen = fen,
+        pgn = pgnStr,
+        orientation = orientation | ChapterMaker.Orientation.Auto,
+        mode = mode | ChapterMaker.Mode.Normal,
+        initial = false
+      )
 
-      def toChapterData =
-        ChapterMaker.Data(
-          name = Chapter.Name(""),
-          game = gameId,
-          variant = variantStr,
-          fen = fen,
-          pgn = pgnStr,
-          orientation = orientation.name,
-          mode = ChapterMaker.Mode.Normal.key,
-          initial = false
-        )
-    }
+    enum As:
+      case NewStudy
+      case ChapterOf(studyId: StudyId)
 
-    sealed trait As
-    case object AsNewStudy                    extends As
-    case class AsChapterOf(studyId: Study.Id) extends As
-  }
-
-  object importPgn {
+  object importPgn:
 
     lazy val form = Form(
       mapping(
-        "name"        -> cleanNonEmptyText,
-        "orientation" -> optional(nonEmptyText),
-        "variant"     -> optional(nonEmptyText),
-        "mode"        -> nonEmptyText.verifying(ChapterMaker.Mode(_).isDefined),
-        "initial"     -> boolean,
-        "sticky"      -> boolean,
-        "pgn"         -> nonEmptyText
-      )(Data.apply)(Data.unapply)
+        "name" -> optional(cleanNonEmptyText(minLength = 1, maxLength = 100)),
+        "orientation" -> optional(of[ChapterMaker.Orientation]),
+        "variant" -> optional(of[Variant]),
+        "mode" -> defaulting(of[ChapterMaker.Mode], ChapterMaker.Mode.Normal),
+        "initial" -> boolean,
+        "sticky" -> boolean,
+        "pgn" -> nonEmptyText.into[PgnStr],
+        "isDefaultName" -> boolean
+      )(Data.apply)(unapply)
     )
 
     case class Data(
-        name: String,
-        orientationStr: Option[String] = None,
-        variantStr: Option[String] = None,
-        mode: String,
+        name: Option[String],
+        orientation: Option[ChapterMaker.Orientation] = None,
+        variant: Option[Variant] = None,
+        mode: ChapterMaker.Mode,
         initial: Boolean,
         sticky: Boolean,
-        pgn: String
-    ) {
+        pgn: PgnStr,
+        isDefaultName: Boolean
+    ):
 
-      def toChapterDatas = {
-        val pgns = MultiPgn.split(pgn, max = 32).value
-        pgns.zipWithIndex map { case (onePgn, index) =>
-          ChapterMaker.Data(
-            // only the first chapter can be named
-            name = Chapter.Name((index == 0) ?? name),
-            variant = variantStr,
-            pgn = onePgn.some,
-            orientation = orientationStr | "white",
-            mode = mode,
-            initial = initial && index == 0
-          )
-        }
-      }
-    }
-  }
+      def toChapterDatas: List[ChapterMaker.Data] =
+        MultiPgn
+          .split(pgn, max = Study.maxChapters)
+          .value
+          .mapWithIndex: (onePgn, index) =>
+            ChapterMaker.Data(
+              // only the first chapter can be named
+              name = StudyChapterName((index == 0).so(~name)),
+              variant = variant,
+              pgn = onePgn.some,
+              orientation = orientation | ChapterMaker.Orientation.Auto,
+              mode = mode,
+              initial = initial && index == 0,
+              isDefaultName = index > 0 || name.isEmpty || isDefaultName
+            )
 
-  def topicsForm = Form(single("topics" -> text))
+  def topicsForm = Form:
+    single:
+      "topics" -> tagifyValues.field[String, StudyTopics]("value"): strs =>
+        StudyTopics.fromStrs(strs, StudyTopics.userMax)
 
   def topicsForm(topics: StudyTopics) =
-    Form(single("topics" -> text)) fill topics.value.map(_.value).mkString(", ")
-}
+    Form(single("topics" -> text)).fill(topics.value.mkString(","))
+
+  val replaceChapterPgnMoves = Form(single("pgn" -> nonEmptyText.into[PgnStr]))
+
+  def chapterTagsForm = Form:
+    import chess.format.pgn.{ Tags, Parser }
+    given Formatter[Tags] = formatter.stringTryFormatter(
+      pgn =>
+        for
+          raw <- Parser.tags(PgnStr(pgn)).left.map(_.value)
+          validated <- StudyPgnTags.validateTagTypes(raw)
+        yield validated,
+      _ => "" // unused, API only
+    )
+    single("pgn" -> of[Tags])

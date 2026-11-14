@@ -1,3 +1,8 @@
-package lila
+package lila.socket
 
-package object socket extends PackageObject
+import play.api.libs.json.JsObject
+
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+
+private lazy val logger = lila.log("socket")

@@ -1,45 +1,56 @@
 package lila.game
 
-import chess.Color
+import scalalib.SecureRandom
 
-import lila.common.{ SecureRandom, ThreadLocalRandom }
-import lila.db.dsl._
+import lila.common.BatchProvider
+import lila.core.game.{ Game, NewGame }
+import lila.core.id.GameId
+import lila.db.dsl.{ *, given }
+import lila.mon.extensions.*
 
-final class IdGenerator(gameRepo: GameRepo)(implicit ec: scala.concurrent.ExecutionContext) {
+final class IdGenerator(gameRepo: GameRepo)(using Executor, Scheduler) extends lila.core.game.IdGenerator:
 
-  import IdGenerator._
+  import lila.core.game.IdGenerator.*
 
-  def game: Fu[Game.ID] = {
-    val id = uncheckedGame
-    gameRepo.exists(id).flatMap {
-      case true  => game
-      case false => fuccess(id)
-    }
-  }
+  private val batchProvider =
+    BatchProvider[GameId]("idGenerator", timeout = 3.seconds, lila.mon.asyncActorMonitor.full): () =>
+      // must NOT use `games(nb)` for it would cause a deadlock
+      // due to `games` calling `game` which calls `batchProvider.one`
+      val ids = List.fill(512)(uncheckedGame).distinct
+      gameRepo.coll
+        .distinctEasy[GameId, List]("_id", inIds(ids), _.sec)
+        .monValue: collisions =>
+          lila.mon.game.idGenerator(collisions.size)
+        .map:
+          case Nil => ids
+          case collisions => ids.filterNot(collisions.contains)
 
-  def games(nb: Int): Fu[Set[Game.ID]] =
-    if (nb < 1) fuccess(Set.empty)
-    else if (nb == 1) game.dmap(Set(_))
-    else if (nb < 5) Set.fill(nb)(game).sequenceFu
-    else {
+  def game: Fu[GameId] = batchProvider.one
+
+  def games(nb: Int): Fu[List[GameId]] =
+    if nb < 1 then fuccess(Nil)
+    else if nb == 1 then game.dmap(List(_))
+    else if nb < 5 then scala.concurrent.Future.sequence(List.fill(nb)(game))
+    else
       val ids = Set.fill(nb)(uncheckedGame)
-      gameRepo.coll.distinctEasy[Game.ID, Set]("_id", $inIds(ids)) flatMap { collisions =>
-        games(collisions.size) dmap { _ ++ (ids diff collisions) }
-      }
-    }
-}
+      gameRepo.coll
+        .distinctEasy[GameId, Set]("_id", inIds(ids))
+        .monValue: collisions =>
+          lila.mon.game.idGenerator(collisions.size)
+        .flatMap: collisions =>
+          games(collisions.size).dmap(_ ++ (ids.diff(collisions)))
+        .map(_.toList)
 
-object IdGenerator {
+  def withUniqueId(sloppy: NewGame): Fu[Game] =
+    game.map(sloppy.withId)
 
-  private[this] val whiteSuffixChars = ('0' to '4') ++ ('A' to 'Z') mkString
-  private[this] val blackSuffixChars = ('5' to '9') ++ ('a' to 'z') mkString
+object IdGenerator:
 
-  def uncheckedGame: Game.ID = ThreadLocalRandom nextString Game.gameIdSize
+  private val whiteSuffixChars = (('0' to '4') ++ ('A' to 'Z')).mkString
+  private val blackSuffixChars = (('5' to '9') ++ ('a' to 'z')).mkString
 
-  def player(color: Color): Player.ID = {
+  def player(color: Color): GamePlayerId =
     // Trick to avoid collisions between player ids in the same game.
     val suffixChars = color.fold(whiteSuffixChars, blackSuffixChars)
-    val suffix      = suffixChars(SecureRandom nextInt suffixChars.length)
-    SecureRandom.nextString(Game.playerIdSize - 1) + suffix
-  }
-}
+    val suffix = suffixChars(SecureRandom.nextInt(suffixChars.length))
+    GamePlayerId(SecureRandom.nextString(GamePlayerId.size - 1) + suffix)

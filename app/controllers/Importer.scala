@@ -1,112 +1,78 @@
 package controllers
 
+import chess.format.pgn.PgnStr
 import play.api.libs.json.Json
-import play.api.mvc._
-import scala.concurrent.duration._
-import views._
+import play.api.mvc.*
 
-import lila.app._
-import lila.common.{ HTTPRequest, IpAddress }
+import scala.util.{ Left, Right }
 
-final class Importer(env: Env) extends LilaController(env) {
+import lila.app.{ *, given }
+import lila.common.HTTPRequest
+import lila.common.Json.given
 
-  private val ImportRateLimitPerIP = lila.memo.RateLimit.composite[IpAddress](
-    key = "import.game.ip",
-    enforce = env.net.rateLimit.value
-  )(
-    ("fast", 4, 1.minute),
-    ("slow", 150, 1.hour)
-  )
+final class Importer(env: Env) extends LilaController(env):
 
-  def importGame =
-    OpenBody { implicit ctx =>
-      fuccess {
-        val pgn  = ctx.body.queryString.get("pgn").flatMap(_.headOption).getOrElse("")
-        val data = lila.importer.ImportData(pgn, None)
-        Ok(html.game.importGame(env.importer.forms.importForm.fill(data)))
-      }
-    }
+  def importGame = OpenBody:
+    val pgn = ~get("pgn")
+    val data = lila.game.importer.ImportData(PgnStr(pgn), None)
+    Ok.page(views.game.ui.importer(lila.game.importer.form.fill(data)))
 
-  def sendGame =
-    OpenBody { implicit ctx =>
-      implicit def req = ctx.body
-      env.importer.forms.importForm
-        .bindFromRequest()
-        .fold(
-          failure =>
-            negotiate( // used by mobile app
-              html = Ok(html.game.importGame(failure)).fuccess,
-              api = _ => BadRequest(jsonError("Invalid PGN")).fuccess
-            ),
-          data =>
-            ImportRateLimitPerIP(HTTPRequest ipAddress req, cost = 1) {
-              doImport(data, req, ctx.me) flatMap {
-                case Some(game) =>
-                  ctx.me.ifTrue(data.analyse.isDefined && game.analysable) ?? { me =>
-                    env.fishnet.analyser(
-                      game,
-                      lila.fishnet.Work.Sender(
-                        userId = me.id,
-                        ip = HTTPRequest.ipAddress(ctx.req).some,
-                        mod = isGranted(_.Hunter) || isGranted(_.Relay),
-                        system = false
-                      )
-                    )
-                  } inject Redirect(routes.Round.watcher(game.id, "white"))
-                case None => Redirect(routes.Importer.importGame).fuccess
-              }
-            }(rateLimitedFu)
-        )
-    }
-
-  def apiSendGame = {
-    def commonImport(req: Request[_], me: Option[lila.user.User]): Fu[Result] =
-      ImportRateLimitPerIP(HTTPRequest ipAddress req, cost = if (me.isDefined) 1 else 2) {
-        env.importer.forms.importForm
-          .bindFromRequest()(req, formBinding)
-          .fold(
-            err => BadRequest(apiFormError(err)).fuccess,
-            data =>
-              doImport(data, req, me) map {
-                _.fold(BadRequest(jsonError("The PGN could not be replayed"))) { game =>
-                  JsonOk {
-                    Json.obj(
-                      "id"  -> game.id,
-                      "url" -> s"${env.net.baseUrl}/${game.id}"
-                    )
-                  }
-                }
-              }
-          )
-      }(rateLimitedFu)
-    AnonOrScopedBody(parse.anyContent)()(
-      anon = req => commonImport(req, none),
-      scoped = req => me => commonImport(req, me.some)
+  def sendGame = OpenOrScopedBody(parse.anyContent)()(doSendGame)
+  def apiSendGame = AnonOrScopedBody(parse.anyContent)()(doSendGame)
+  private def doSendGame(using ctx: BodyContext[Any]) =
+    bindForm(lila.game.importer.form)(
+      err =>
+        negotiate(
+          BadRequest.page(views.game.ui.importer(err)),
+          jsonFormError(err)
+        ),
+      data =>
+        limit.gameImport(ctx.ip, () => rateLimited): () =>
+          env.game.importer
+            .importAsGame(data.pgn)
+            .flatMap: game =>
+              ctx.me.so(env.game.cached.clearNbImportedByCache(_)).inject(Right(game))
+            .recover { case _: Exception =>
+              Left("The PGN contains illegal and/or ambiguous moves.")
+            }
+            .flatMap {
+              case Right(game) =>
+                negotiate(
+                  html = ctx.me
+                    .filter(_ => data.analyse.isDefined && lila.game.GameExt.analysable(game))
+                    .soUse: me ?=>
+                      env.fishnet
+                        .analyser(
+                          game,
+                          lila.fishnet.Work.Sender(
+                            userId = me,
+                            ip = ctx.ip.some,
+                            mod = isGranted(_.UserEvaluate),
+                            system = false
+                          )
+                        )
+                        .void
+                    .inject(Redirect(routes.Round.watcher(game.id, Color.white))),
+                  json =
+                    if HTTPRequest.isLichobile
+                    then Redirect(routes.Round.watcher(game.id, Color.white))
+                    else
+                      Ok:
+                        Json.obj(
+                          "id" -> game.id,
+                          "url" -> routeUrl(routes.Round.watcher(game.id, Color.white))
+                        )
+                )
+              case Left(error) =>
+                negotiate(
+                  Redirect(routes.Importer.importGame).flashFailure(error),
+                  BadRequest(jsonError(error))
+                )
+            }
     )
-  }
 
-  private def doImport(
-      data: lila.importer.ImportData,
-      req: RequestHeader,
-      me: Option[lila.user.User]
-  ): Fu[Option[lila.game.Game]] =
-    env.importer.importer(data, me.map(_.id)) flatMap { game =>
-      me.map(_.id).??(env.game.cached.clearNbImportedByCache) inject game.some
-    } recover { case e: Exception =>
-      lila
-        .log("importer")
-        .warn(s"Imported game validates but can't be replayed:\n${data.pgn}", e)
-      none
-    }
-
-  def masterGame(id: String, orientation: String) =
-    Open { implicit ctx =>
-      env.explorer.importer(id) map {
-        _ ?? { game =>
-          val url      = routes.Round.watcher(game.id, orientation).url
-          val fenParam = get("fen").??(f => s"?fen=$f")
-          Redirect(s"$url$fenParam")
-        }
-      }
-    }
-}
+  def masterGame(id: GameId, orientation: Color) = Open:
+    Found(env.explorer.importer(id)): game =>
+      val url = routes.Round.watcher(game.id, orientation).url
+      val fenParam = get("fen").so(f => s"?fen=$f")
+      Redirect(s"$url$fenParam")

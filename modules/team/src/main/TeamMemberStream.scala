@@ -1,43 +1,40 @@
 package lila.team
 
-import akka.stream.scaladsl._
-import reactivemongo.akkastream.cursorProducer
-import reactivemongo.api.ReadPreference
-import scala.concurrent.duration._
+import org.apache.pekko.stream.scaladsl.*
+import reactivemongo.pekkostream.cursorProducer
 
-import lila.common.config.MaxPerSecond
-import lila.db.dsl._
-import lila.user.{ User, UserRepo }
+import lila.core.LightUser
+import lila.core.perf.UserWithPerfs
+import lila.db.dsl.{ *, given }
 
 final class TeamMemberStream(
-    memberRepo: MemberRepo,
-    userRepo: UserRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    mat: akka.stream.Materializer
-) {
+    memberRepo: TeamMemberRepo,
+    userApi: lila.core.user.UserApi,
+    lightApi: lila.core.user.LightUserApi
+)(using Executor, org.apache.pekko.stream.Materializer):
 
-  def apply(team: Team, perSecond: MaxPerSecond): Source[User, _] =
-    idsBatches(team, perSecond)
-      .mapAsync(1)(userRepo.usersFromSecondary)
-      .mapConcat(identity)
-
-  def subscribedIds(team: Team, perSecond: MaxPerSecond): Source[User.ID, _] =
-    idsBatches(team, perSecond, $doc("unsub" $ne true))
+  def apply(team: Team, fullUser: Boolean): Source[(UserWithPerfs | LightUser, Instant), ?] =
+    idsBatches(team, MaxPerSecond(if fullUser then 20 else 50))
+      .limit(if fullUser then 1000 else 5000)
+      .mapAsync(1): members =>
+        val users =
+          if fullUser
+          then userApi.listWithPerfs(members._1F.toList, includeClosed = false)
+          else lightApi.asyncManyFallback(members._1F.toList)
+        users.map(_.zip(members._2F))
       .mapConcat(identity)
 
   private def idsBatches(
       team: Team,
       perSecond: MaxPerSecond,
-      selector: Bdoc = $empty
-  ): Source[Seq[User.ID], _] =
+      selector: Bdoc = emptyBdoc
+  ): Source[Seq[(UserId, Instant)], ?] =
     memberRepo.coll
-      .find($doc("team" -> team.id) ++ selector, $doc("user" -> true).some)
-      .sort($sort desc "date")
+      .find(bdoc("team" -> team.id) ++ selector, bdoc("user" -> true, "date" -> true).some)
+      .sort(sort.desc("date"))
       .batchSize(perSecond.value)
-      .cursor[Bdoc](ReadPreference.secondaryPreferred)
+      .cursor[Bdoc](ReadPref.sec)
       .documentSource()
       .grouped(perSecond.value)
-      .map(_.flatMap(_.getAsOpt[User.ID]("user")))
-      .throttle(1, 1 second)
-}
+      .map(_.flatMap(u => u.getAsOpt[UserId]("user").zip(u.getAsOpt[Instant]("date"))))
+      .throttle(1, 1.second)

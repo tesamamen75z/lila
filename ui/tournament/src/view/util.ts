@@ -1,84 +1,38 @@
-import { Attrs, h, Hooks, VNode, VNodeChildren } from 'snabbdom';
-import { numberFormat } from 'common/number';
-import { SimplePlayer } from '../interfaces';
+import { h } from 'snabbdom';
 
-export function bind(eventName: string, f: (e: Event) => any, redraw?: () => void): Hooks {
-  return onInsert(el =>
-    el.addEventListener(eventName, e => {
-      const res = f(e);
-      if (redraw) redraw();
-      return res;
-    })
-  );
-}
+import { licon } from 'lib/licon';
+import { dataIcon, type MaybeVNodes } from 'lib/view';
+import { userFlair, userLine, userRating, userTitle, profileUrl } from 'lib/view/userLink';
 
-export function onInsert(f: (element: HTMLElement) => void): Hooks {
-  return {
-    insert(vnode) {
-      f(vnode.elm as HTMLElement);
-    },
-  };
-}
+import type { SimplePlayer } from '../interfaces';
 
-export function dataIcon(icon: string): Attrs {
-  return {
-    'data-icon': icon,
-  };
-}
-
-export function ratio2percent(r: number) {
-  return Math.round(100 * r) + '%';
-}
-
-export function playerName(p: { title?: string; name: string }) {
-  return p.title ? [h('span.utitle', p.title), ' ' + p.name] : p.name;
-}
-
-export function player(p: SimplePlayer, asLink: boolean, withRating: boolean, defender = false, leader = false) {
+export const player = (
+  p: SimplePlayer,
+  asLink: boolean,
+  withRating: boolean,
+  defender = false,
+  leader = false,
+) => {
+  const profileHref = profileUrl(p.name);
   return h(
-    'a.ulpt.user-link' + (((p.title || '') + p.name).length > 15 ? '.long' : ''),
+    'a.ulpt.user-link.online' + (((p.title || '') + p.name).length > 15 ? '.long' : ''),
     {
-      attrs: asLink || 'ontouchstart' in window ? { href: '/@/' + p.name } : { 'data-href': '/@/' + p.name },
-      hook: {
-        destroy: vnode => $.powerTip.destroy(vnode.elm as HTMLElement),
-      },
+      attrs: asLink || 'ontouchstart' in window ? { href: profileHref } : { 'data-href': profileHref },
+      hook: { destroy: vnode => $.powerTip.destroy(vnode.elm) },
     },
     [
       h(
         'span.name' + (defender ? '.defender' : leader ? '.leader' : ''),
-        defender ? { attrs: dataIcon('') } : leader ? { attrs: dataIcon('') } : {},
-        playerName(p)
+        defender ? { attrs: dataIcon(licon.Shield) } : leader ? { attrs: dataIcon(licon.Crown) } : {},
+        [p.patronColor && userLine({ patronColor: p.patronColor }), ...fullName(p)],
       ),
-      withRating ? h('span.rating', ' ' + p.rating + (p.provisional ? '?' : '')) : null,
-    ]
+      withRating ? h('span.rating', userRating({ ...p, brackets: false })) : null,
+    ],
   );
-}
+};
 
-export function numberRow(name: string, value: number): VNode;
-export function numberRow(name: string, value: [number, number], typ: 'percent'): VNode;
-export function numberRow(name: string, value: VNodeChildren, typ: 'raw'): VNode;
-export function numberRow(name: string, value: any, typ?: string) {
-  return h('tr', [
-    h('th', name),
-    h(
-      'td',
-      typ === 'raw'
-        ? value
-        : typ === 'percent'
-        ? value[1] > 0
-          ? ratio2percent(value[0] / value[1])
-          : 0
-        : numberFormat(value)
-    ),
-  ]);
-}
-
-export function spinner(): VNode {
-  return h('div.spinner', [
-    h('svg', { attrs: { viewBox: '0 0 40 40' } }, [
-      h('circle', {
-        attrs: { cx: 20, cy: 20, r: 18, fill: 'none' },
-      }),
-    ]),
-  ]);
-}
+export const fullName = (p: LightUserNoId & { realName?: string }): MaybeVNodes => [
+  userTitle(p),
+  ...(p.realName ? [p.realName, h('br'), h('span.username-low', `(${p.name})`)] : [p.name]),
+  userFlair(p),
+];

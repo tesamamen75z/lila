@@ -1,42 +1,43 @@
 package lila.plan
 
-import org.joda.time.DateTime
-
-import lila.user.User
-
 case class Patron(
-    _id: Patron.UserId,
+    _id: UserId,
     stripe: Option[Patron.Stripe] = none,
-    payPal: Option[Patron.PayPal] = none,
+    payPal: Option[Patron.PayPalLegacy] = none,
+    payPalCheckout: Option[Patron.PayPalCheckout] = none,
     free: Option[Patron.Free] = none,
-    expiresAt: Option[DateTime] = none,
-    lifetime: Option[Boolean] = None,
-    lastLevelUp: Option[DateTime] = None
-) {
+    expiresAt: Option[Instant] = none,
+    lastLevelUp: Option[Instant] = None
+):
 
-  def id = _id
+  inline def id = _id
+  inline def userId = _id
 
-  def userId = _id.value
-
-  def canLevelUp = lastLevelUp.exists(_.isBefore(DateTime.now.minusDays(25)))
+  def canLevelUp = lastLevelUp.exists(_.isBefore(nowInstant.minusDays(25)))
 
   def levelUpIfPossible =
     copy(
-      lastLevelUp = if (canLevelUp) Some(DateTime.now) else lastLevelUp orElse Some(DateTime.now)
+      lastLevelUp = if canLevelUp then nowInstant.some else lastLevelUp.orElse(nowInstant.some)
     )
 
   def expireInOneMonth: Patron =
     copy(
-      expiresAt = DateTime.now.plusMonths(1).plusDays(1).some
+      expiresAt = nowInstant.plusMonths(1).plusDays(1).some
     )
 
   def expireInOneMonth(cond: Boolean): Patron =
-    if (cond) expireInOneMonth
+    if cond then expireInOneMonth
     else copy(expiresAt = none)
 
   def removeStripe =
     copy(
       stripe = none,
+      expiresAt = none
+    )
+
+  def removePayPalCheckout =
+    copy(
+      payPalCheckout = none,
       expiresAt = none
     )
 
@@ -48,27 +49,27 @@ case class Patron(
 
   def isDefined = stripe.isDefined || payPal.isDefined
 
-  def isLifetime = ~lifetime
-}
+object Patron:
 
-object Patron {
+  case class Stripe(customerId: StripeCustomerId)
 
-  case class UserId(value: String) extends AnyVal
+  case class PayPalCheckout(
+      orderId: PayPalOrderId,
+      payerId: PayPalPayerId,
+      subscriptionId: Option[PayPalSubscriptionId]
+  ):
+    def renew = subscriptionId.isDefined
 
-  case class Stripe(customerId: CustomerId)
-
-  case class PayPal(
-      email: Option[PayPal.Email],
-      subId: Option[PayPal.SubId],
-      lastCharge: DateTime
-  ) {
-
+  case class PayPalLegacy(
+      email: Option[PayPalLegacy.Email],
+      subId: Option[PayPalLegacy.SubId],
+      lastCharge: Instant
+  ):
     def renew = subId.isDefined
-  }
-  object PayPal {
-    case class Email(value: String) extends AnyVal
-    case class SubId(value: String) extends AnyVal
-  }
+  object PayPalLegacy:
+    opaque type Email = String
+    object Email extends OpaqueString[Email]
+    opaque type SubId = String
+    object SubId extends OpaqueString[SubId]
 
-  case class Free(at: DateTime, by: Option[User.ID])
-}
+  case class Free(at: Instant, by: Option[UserId])

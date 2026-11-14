@@ -2,32 +2,32 @@ package lila.report
 
 import play.api.data.Form
 import play.api.data.Forms.{ single, text }
+import reactivemongo.api.bson.BSONHandler
+import scalalib.Iso
 
-import lila.common.Ints
+import lila.core.data.Ints
+import lila.core.report.ScoreThresholds
 import lila.memo.SettingStore.{ Formable, StringReader }
-
-case class ScoreThresholds(mid: Int, high: Int)
 
 private case class Thresholds(score: () => ScoreThresholds, discord: () => Int)
 
-private object ReportThresholds {
+private object ReportThresholds:
 
   private val defaultScoreThresholds = ScoreThresholds(40, 50)
 
-  val thresholdsIso = lila.common.Iso
+  given iso: Iso.StringIso[ScoreThresholds] = lila.common.Iso
     .ints(",")
     .map[ScoreThresholds](
       {
         case Ints(List(m, h)) => ScoreThresholds(m, h)
-        case _                => defaultScoreThresholds
+        case _ => defaultScoreThresholds
       },
       t => Ints(List(t.mid, t.high))
     )
 
-  implicit val scoreThresholdsBsonHandler  = lila.db.dsl.isoHandler(thresholdsIso)
-  implicit val scoreThresholdsStringReader = StringReader.fromIso(thresholdsIso)
-  implicit val scoreThresholdsFormable =
-    new Formable[ScoreThresholds](t => Form(single("v" -> text)) fill thresholdsIso.to(t))
+  given BSONHandler[ScoreThresholds] = lila.db.dsl.isoHandler
+  given StringReader[ScoreThresholds] = StringReader.fromIso
+  given Formable[ScoreThresholds] = Formable(t => Form(single("v" -> text)).fill(iso.to(t)))
 
   def makeScoreSetting(store: lila.memo.SettingStore.Builder) =
     store[ScoreThresholds](
@@ -39,7 +39,6 @@ private object ReportThresholds {
   def makeDiscordSetting(store: lila.memo.SettingStore.Builder) =
     store[Int](
       "discordScoreThreshold",
-      default = 80,
-      text = "Discord score threshold. Comm reports with higher scores are notified in Discord".some
+      default = 150,
+      text = "Zulip score threshold. Comm reports with higher scores are notified in Zulip".some
     )
-}

@@ -1,14 +1,7 @@
-package lila
+package lila.app
 
-import play.api.http._
-import play.api.mvc.Codec
-import scalatags.Text.Frag
+export lila.core.lilaism.Lilaism.{ User as UserModel, Game as GameModel, *, given }
+export lila.common.extensions.*
+export lila.api.Context.{ *, given }
 
-package object app extends PackageObject {
-
-  implicit def contentTypeOfFrag(implicit codec: Codec): ContentTypeOf[Frag] =
-    ContentTypeOf[Frag](Some(ContentTypes.HTML))
-
-  implicit def writeableOfFrag(implicit codec: Codec): Writeable[Frag] =
-    Writeable(frag => codec.encode(frag.render))
-}
+private lazy val loggerHttp = lila.log("http")

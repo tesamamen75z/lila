@@ -1,40 +1,23 @@
-import { h, Hooks, VNode } from 'snabbdom';
-import { Player } from '../interfaces';
-import SimulCtrl from '../ctrl';
+import { h } from 'snabbdom';
 
-export function onInsert(f: (element: HTMLElement) => void): Hooks {
-  return {
-    insert(vnode: VNode) {
-      f(vnode.elm as HTMLElement);
-    },
-  };
-}
+import { fullName, userLine, userRating, profileUrl } from 'lib/view/userLink';
 
-export function bind(eventName: string, f: (e: Event) => void): Hooks {
-  return onInsert(el => el.addEventListener(eventName, f));
-}
+import type SimulCtrl from '@/ctrl';
+import type { Player } from '@/interfaces';
 
-export function player(p: Player) {
+export function player(p: Player, ctrl: SimulCtrl) {
   return h(
-    'a.ulpt.user-link.online',
+    'a.ulpt.user-link.' + (p.online || ctrl.data.host.id !== p.id ? 'online' : 'offline'),
     {
-      attrs: { href: '/@/' + p.name },
-      hook: {
-        destroy(vnode) {
-          $.powerTip.destroy(vnode.elm as HTMLElement);
-        },
-      },
+      attrs: { href: profileUrl(p.name) },
+      hook: { destroy: vnode => $.powerTip.destroy(vnode.elm) },
     },
     [
-      h(`i.line${p.patron ? '.patron' : ''}`),
-      h('span.name', userName(p)),
-      h('em', ` ${p.rating}${p.provisional ? '?' : ''}`),
-    ]
+      userLine({ line: true, ...p }),
+      h('span.name', fullName(p)),
+      ctrl.opts.showRatings ? h('em', userRating(p)) : null,
+    ],
   );
 }
 
-const userName = (u: LightUser) => (u.title ? [h('span.utitle', u.title), ' ' + u.name] : [u.name]);
-
-export function title(ctrl: SimulCtrl) {
-  return h('h1', [ctrl.data.fullName, h('span.author', ctrl.trans.vdom('by', player(ctrl.data.host)))]);
-}
+export const title = ({ data }: SimulCtrl) => h('h1', data.fullName);

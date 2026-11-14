@@ -1,29 +1,24 @@
 package lila.perfStat
 
-import akka.actor._
-import com.softwaremill.macwire._
-import play.api.Configuration
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
 
-import lila.common.config._
+import lila.core.config.*
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    lightUser: lila.common.LightUser.GetterSync,
-    lightUserApi: lila.user.LightUserApi,
-    gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    rankingsOf: lila.user.RankingsOf,
-    rankingApi: lila.user.RankingApi,
-    db: lila.db.Db
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    mongoCache: lila.memo.MongoCache.Api,
+    lightUser: lila.core.LightUser.GetterSyncFallback,
+    lightUserApi: lila.core.user.LightUserApi,
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
+    rankingRepo: lila.core.user.RankingRepo,
+    rankingsOf: UserId => lila.core.rating.UserRankMap,
+    yoloDb: lila.db.AsyncDb @@ lila.db.YoloDb
+)(using Executor, Scheduler):
 
-  private lazy val storage = new PerfStatStorage(
-    coll = db(appConfig.get[CollName]("perfStat.collection.perf_stat"))
-  )
+  private lazy val storage = PerfStatStorage:
+    yoloDb(CollName("perf_stat")).failingSilently()
 
   lazy val indexer = wire[PerfStatIndexer]
 
@@ -31,10 +26,11 @@ final class Env(
 
   lazy val jsonView = wire[JsonView]
 
-  lila.common.Bus.subscribeFun("finishGame") {
-    case lila.game.actorApi.FinishGame(game, _, _) if !game.aborted =>
-      indexer addGame game addFailureEffect { e =>
+  lila.common.Bus.sub[lila.core.game.FinishGame]:
+    case lila.core.game.FinishGame(game, _) if !game.aborted =>
+      indexer.addGame(game).addFailureEffect { e =>
         lila.log("perfStat").error(s"index game ${game.id}", e)
-      } unit
-  }
-}
+      }
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    storage.deleteAllFor(del.id)

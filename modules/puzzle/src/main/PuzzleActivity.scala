@@ -1,71 +1,55 @@
 package lila.puzzle
 
-import akka.stream.scaladsl._
-import play.api.libs.json._
-import reactivemongo.akkastream.cursorProducer
-import reactivemongo.api.ReadPreference
-import scala.concurrent.duration._
+import org.apache.pekko.stream.scaladsl.*
+import play.api.libs.json.*
+import reactivemongo.pekkostream.cursorProducer
 
-import lila.common.config.MaxPerSecond
-import lila.common.Json.jodaWrites
-import lila.db.dsl._
-import lila.user.User
+import lila.common.Json.given
+import lila.db.dsl.{ *, given }
 
-final class PuzzleActivity(
-    colls: PuzzleColls
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem
-) {
+final class PuzzleActivity(colls: PuzzleColls)(using Executor, org.apache.pekko.actor.ActorSystem):
 
-  import PuzzleActivity._
-  import BsonHandlers._
-  import JsonView._
+  import PuzzleActivity.*
+  import BsonHandlers.given
 
-  def stream(config: Config): Source[String, _] =
-    Source futureSource {
-      colls.round.map {
-        _.find($doc(PuzzleRound.BSONFields.user -> config.user.id))
-          .sort($sort desc PuzzleRound.BSONFields.date)
-          .batchSize(config.perSecond.value)
-          .cursor[PuzzleRound](ReadPreference.secondaryPreferred)
-          .documentSource(config.max | Int.MaxValue)
-          .grouped(config.perSecond.value)
-          .throttle(1, 1 second)
-          .mapAsync(1)(enrich)
-          .mapConcat(identity)
-          .map { json =>
-            s"${Json.stringify(json)}\n"
-          }
-      }
-    }
+  def stream(config: Config): Source[JsObject, ?] =
+    val perSecond = MaxPerSecond(20)
+
+    val baseQuery = bdoc(PuzzleRound.BSONFields.user -> config.user.id)
+    val timeQueries = List(
+      config.before.map(before => bdoc(PuzzleRound.BSONFields.date.lt(before))),
+      config.since.map(since => bdoc(PuzzleRound.BSONFields.date.gte(since)))
+    ).flatten
+    val finalQuery = baseQuery.++(timeQueries*)
+
+    Source.futureSource:
+      colls.round
+        .map(_.find(finalQuery))
+        .map(_.sort(sort.desc(PuzzleRound.BSONFields.date)))
+        .map(_.batchSize(perSecond.value))
+        .map(_.cursor[PuzzleRound]())
+        .map(_.documentSource(config.max.fold(Int.MaxValue)(_.value)))
+        .map(_.grouped(perSecond.value))
+        .map(_.throttle(1, 1.second))
+        .map(_.mapAsync(1)(enrich))
+        .map(_.mapConcat(identity))
 
   private def enrich(rounds: Seq[PuzzleRound]): Fu[Seq[JsObject]] =
-    colls.puzzle {
-      _.primitiveMap[Puzzle.Id, Double](
-        ids = rounds.map(_.id.puzzleId),
-        field = s"${Puzzle.BSONFields.glicko}.r",
-        fieldExtractor = _.child("glicko").flatMap(_ double "r")
-      ) map { ratings =>
-        rounds flatMap { round =>
-          ratings get round.id.puzzleId map { puzzleRating =>
-            Json.obj(
-              "id"           -> round.id.puzzleId,
-              "date"         -> round.date,
-              "win"          -> round.win,
-              "puzzleRating" -> puzzleRating.toInt
-            )
-          }
+    colls.puzzle:
+      _.optionsByOrderedIds[Puzzle, PuzzleId](rounds.map(_.id.puzzleId))(_.id).map: puzzles =>
+        rounds.zip(puzzles).collect { case (round, Some(puzzle)) =>
+          Json.obj(
+            "date" -> round.date,
+            "win" -> round.win,
+            "puzzle" -> JsonView.puzzleJsonStandalone(puzzle)
+          )
         }
-      }
-    }
-}
 
-object PuzzleActivity {
+object PuzzleActivity:
 
   case class Config(
       user: User,
-      max: Option[Int] = None,
-      perSecond: MaxPerSecond
+      max: Option[Max],
+      before: Option[Instant],
+      since: Option[Instant]
   )
-}

@@ -1,11 +1,23 @@
-import makeSocket from './socket';
-import * as xhr from './xhr';
-import { myPage, players } from './pagination';
+import type { Prop } from 'lib';
+import { pubsub } from 'lib/pubsub';
+import { storedMapAsProp } from 'lib/storage';
+import { redirectFirst } from 'lib/tournament';
+import { alerts, prompt } from 'lib/view';
+import { maxPerPage, myPage, pagerData } from 'lib/view/pagination';
+
+import type {
+  TournamentData,
+  TournamentOpts,
+  Pages,
+  PlayerInfo,
+  TeamInfo,
+  Standing,
+  Player,
+} from './interfaces';
+import { type TournamentSocket, makeSocket } from './socket';
 import * as sound from './sound';
-import * as tour from './tournament';
-import { TournamentData, TournamentOpts, Pages, PlayerInfo, TeamInfo, Standing, Player } from './interfaces';
-// eslint-disable-next-line no-duplicate-imports
-import { TournamentSocket } from './socket';
+import { joinWithTeamSelector } from './view/battle';
+import * as xhr from './xhr';
 
 interface CtrlTeamInfo {
   requested?: string;
@@ -15,37 +27,46 @@ interface CtrlTeamInfo {
 export default class TournamentController {
   opts: TournamentOpts;
   data: TournamentData;
-  trans: Trans;
   socket: TournamentSocket;
   page: number;
   pages: Pages = {};
-  lastPageDisplayed: number | undefined;
+  lastPageDisplayed?: number;
   focusOnMe: boolean;
   joinSpinner = false;
   playerInfo: { id?: string; player?: Player; data?: PlayerInfo } = {};
   teamInfo: CtrlTeamInfo = {};
   disableClicks = true;
   searching = false;
-  joinWithTeamSelector = false;
   redraw: () => void;
-
-  private lastStorage = lichess.storage.make('last-redirect');
+  nbWatchers = 0;
+  collapsedDescription: Prop<boolean>;
 
   constructor(opts: TournamentOpts, redraw: () => void) {
     this.opts = opts;
     this.data = opts.data;
     this.redraw = redraw;
-    this.trans = lichess.trans(opts.i18n);
     this.socket = makeSocket(opts.socketSend, this);
     this.page = this.data.standing.page;
-    this.focusOnMe = tour.isIn(this);
+    this.focusOnMe = this.isIn();
+    this.collapsedDescription = storedMapAsProp<boolean>(
+      'tournament.collapsed-description-store',
+      this.data.id,
+      20,
+      () => false,
+    );
     setTimeout(() => (this.disableClicks = false), 1500);
     this.loadPage(this.data.standing);
-    this.scrollToMe();
+    const playerInfo = opts.data.playerInfo;
+    if (playerInfo) {
+      this.playerInfo = { id: playerInfo.player.id, player: playerInfo.player, data: playerInfo };
+    } else this.scrollToMe();
     sound.end(this.data);
     sound.countDown(this.data);
-    this.recountTeams();
+    this.setupBattle();
     this.redirectToMyGame();
+    pubsub.on('socket.in.crowd', data => {
+      this.nbWatchers = data.nb;
+    });
   }
 
   askReload = (): void => {
@@ -54,16 +75,16 @@ export default class TournamentController {
   };
 
   reload = (data: TournamentData): void => {
+    const willChangeJoinStatus = !!this.data.me !== !!data.me || this.data.me?.withdraw !== data.me?.withdraw;
     // we joined a private tournament! Reload the page to load the chat
-    if (!this.data.me && data.me && this.data.private) lichess.reload();
-    this.data = { ...this.data, ...data };
-    this.data.me = data.me; // to account for removal on withdraw
+    if (!this.data.me && data.me && this.data.private) site.reload();
+    this.data = { ...this.data, ...data, me: data.me }; // to account for removal on withdraw
     if (data.playerInfo?.player.id === this.playerInfo.id) this.playerInfo.data = data.playerInfo!;
     this.loadPage(data.standing);
     if (this.focusOnMe) this.scrollToMe();
     sound.end(data);
     sound.countDown(data);
-    this.joinSpinner = false;
+    if (willChangeJoinStatus) this.joinSpinner = false;
     this.recountTeams();
     this.redirectToMyGame();
   };
@@ -75,28 +96,30 @@ export default class TournamentController {
       this.data.teamBattle.hasMoreThanTenTeams = Object.keys(this.data.teamBattle.teams).length > 10;
   }
 
-  private redirectToMyGame() {
-    const gameId = this.myGameId();
-    if (gameId) this.redirectFirst(gameId);
+  private setupBattle() {
+    if (this.data.teamBattle) {
+      this.recountTeams();
+      const locationTeam = location.hash.startsWith('#team/') && location.hash.slice(6);
+      if (locationTeam) this.showTeamInfo(locationTeam);
+    }
   }
 
-  redirectFirst = (gameId: string, rightNow?: boolean) => {
-    const delay = rightNow || document.hasFocus() ? 10 : 1000 + Math.random() * 500;
-    setTimeout(() => {
-      if (this.lastStorage.get() !== gameId) {
-        this.lastStorage.set(gameId);
-        lichess.redirect('/' + gameId);
-      }
-    }, delay);
-  };
+  private redirectToMyGame() {
+    const gameId = this.myGameId();
+    if (gameId) redirectFirst(gameId);
+  }
+
+  pager = () => pagerData(this);
 
   loadPage = (data: Standing) => {
     if (!data.failed || !this.pages[data.page]) this.pages[data.page] = data.players;
   };
 
-  setPage = (page: number) => {
-    this.page = page;
-    xhr.loadPage(this, page);
+  setPage = (page?: number) => {
+    if (page && page !== this.page && page >= 1 && page <= this.pager().nbPages) {
+      this.page = page;
+      xhr.loadPage(this, page);
+    }
   };
 
   jumpToPageOf = (name: string) => {
@@ -106,7 +129,20 @@ export default class TournamentController {
       this.page = data.page;
       this.searching = false;
       this.focusOnMe = false;
-      this.pages[this.page].filter(p => p.name.toLowerCase() == userId).forEach(this.showPlayerInfo);
+      this.pages[this.page].filter(p => p.name.toLowerCase() === userId).forEach(this.showPlayerInfo);
+      this.redraw();
+    });
+  };
+
+  jumpToRank = (rank: number) => {
+    const page = 1 + Math.floor((rank - 1) / maxPerPage);
+    const row = (rank - 1) % maxPerPage;
+    xhr.loadPage(this, page).then(() => {
+      if (!this.pages[page] || row >= this.pages[page].length) return;
+      this.page = page;
+      this.searching = false;
+      this.focusOnMe = false;
+      this.showPlayerInfo(this.pages[page][row]);
       this.redraw();
     });
   };
@@ -118,7 +154,7 @@ export default class TournamentController {
 
   userNextPage = () => this.userSetPage(this.page + 1);
   userPrevPage = () => this.userSetPage(this.page - 1);
-  userLastPage = () => this.userSetPage(players(this).nbPages);
+  userLastPage = () => this.userSetPage(this.pager().nbPages);
 
   withdraw = () => {
     xhr.withdraw(this);
@@ -126,18 +162,15 @@ export default class TournamentController {
     this.focusOnMe = false;
   };
 
-  join = (team?: string) => {
-    this.joinWithTeamSelector = false;
+  join = async (team?: string) => {
     if (!this.data.verdicts.accepted)
-      return this.data.verdicts.list.forEach(v => {
-        if (v.verdict !== 'ok') alert(v.verdict);
-      });
+      return await alerts(this.data.verdicts.list.map(v => v.verdict).filter(v => v !== 'ok'));
     if (this.data.teamBattle && !team && !this.data.me) {
-      this.joinWithTeamSelector = true;
+      joinWithTeamSelector(this);
     } else {
       let password;
       if (this.data.private && !this.data.me) {
-        password = prompt(this.trans.noarg('password'));
+        password = await prompt(i18n.site.tournamentEntryCode);
         if (password === null) {
           return;
         }
@@ -148,10 +181,7 @@ export default class TournamentController {
     }
   };
 
-  scrollToMe = () => {
-    const page = myPage(this);
-    if (page && page !== this.page) this.setPage(page);
-  };
+  scrollToMe = () => this.setPage(myPage(this));
 
   toggleFocusOnMe = () => {
     if (!this.data.me) return;
@@ -165,7 +195,7 @@ export default class TournamentController {
     this.teamInfo.requested = undefined;
     this.playerInfo = {
       id: this.playerInfo.id === userId ? undefined : userId,
-      player: player,
+      player,
     };
     if (this.playerInfo.id) xhr.playerInfo(this, this.playerInfo.id);
   };
@@ -187,5 +217,11 @@ export default class TournamentController {
     if (teamInfo.id === this.teamInfo.requested) this.teamInfo.loaded = teamInfo;
   };
 
-  toggleSearch = () => (this.searching = !this.searching);
+  toggleSearch = () => {
+    this.searching = !this.searching;
+  };
+
+  isIn = () => !!this.data.me && !this.data.me.withdraw;
+
+  willBePaired = () => this.isIn() && !this.data.pairingsClosed;
 }

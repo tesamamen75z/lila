@@ -1,101 +1,121 @@
 package lila.user
 
-import lila.db.dsl._
-import org.joda.time.DateTime
+import scalalib.ThreadLocalRandom
+import scalalib.paginator.Paginator
+
+import lila.core.perm.Granter
+import lila.db.dsl.{ *, given }
 
 case class Note(
     _id: String,
-    from: User.ID,
-    to: User.ID,
+    from: UserId,
+    to: UserId,
     text: String,
     mod: Boolean,
     dox: Boolean,
-    date: DateTime
-) {
-  def userIds            = List(from, to)
-  def isFrom(user: User) = user.id == from
-}
+    date: Instant
+) extends lila.core.user.Note:
+  def userIds = List(from, to)
+  def isFrom(user: User) = user.id.is(from)
+  def searchable = mod && from.isnt(UserId.lichess) && from.isnt(UserId.watcherbot) &&
+    !text.startsWith("Appeal reply:")
 
-case class UserNotes(user: User, notes: List[Note])
+final class NoteApi(coll: Coll)(using Executor) extends lila.core.user.NoteApi:
 
-final class NoteApi(
-    userRepo: UserRepo,
-    coll: Coll
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    ws: play.api.libs.ws.StandaloneWSClient
-) {
+  import reactivemongo.api.bson.*
+  private given bsonHandler: BSONDocumentHandler[Note] = Macros.handler[Note]
 
-  import reactivemongo.api.bson._
-  import lila.db.BSON.BSONJodaDateTimeHandler
-  implicit private val noteBSONHandler = Macros.handler[Note]
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    for
+      _ <- coll.delete.one(bdoc("from" -> del.id, "mod" -> false)) // hits the from_1 partial index
+      maybeKeepModNotes = del.user.marks.dirty.so(bdoc("mod" -> false))
+      _ <- coll.delete.one(bdoc("to" -> del.id) ++ maybeKeepModNotes)
+    yield ()
 
-  def get(user: User, me: User, isMod: Boolean): Fu[List[Note]] =
+  def getForMyPermissions(user: User, max: Max = Max(30))(using me: Me): Fu[List[Note]] =
     coll
       .find(
-        $doc("to" -> user.id) ++ {
-          if (isMod)
-            $or(
-              $doc("from" -> me.id),
-              $doc("mod"  -> true)
+        bdoc("to" -> user.id) ++ {
+          if Granter(_.ModNote) then
+            or(
+              bdoc("from" -> me.userId),
+              bdoc("mod" -> true)
             )
-          else $doc("from" -> me.id)
-        }
+          else bdoc("from" -> me.userId, "mod" -> false)
+        } ++
+          (!Granter(_.Admin)).so(bdoc("dox" -> false))
       )
-      .sort($sort desc "date")
+      .sort(sort.desc("date"))
       .cursor[Note]()
-      .list(20)
+      .list(max.value)
 
-  def byUserForMod(id: User.ID): Fu[List[Note]] =
+  def toUserForMod(id: UserId, max: Max = Max(50)): Fu[List[Note]] =
     coll
-      .find($doc("to" -> id, "mod" -> true))
-      .sort($sort desc "date")
+      .find(bdoc("to" -> id, "mod" -> true))
+      .sort(sort.desc("date"))
       .cursor[Note]()
-      .list(50)
+      .list(max.value)
 
-  def byUsersForMod(ids: List[User.ID]): Fu[List[Note]] =
+  def recentToUserForMod(id: UserId): Fu[Option[Note]] =
+    toUserForMod(id, Max(1))
+      .map(_.headOption.filter(_.date.isAfter(nowInstant.minusMinutes(5))))
+
+  def byUsersForMod(ids: List[UserId]): Fu[List[Note]] =
     coll
-      .find($doc("to" $in ids, "mod" -> true))
-      .sort($sort desc "date")
+      .find(bdoc("to".in(ids), "mod" -> true))
+      .sort(sort.desc("date"))
       .cursor[Note]()
       .list(100)
 
-  def write(to: User, text: String, from: User, modOnly: Boolean, dox: Boolean) = {
-
+  def write(to: UserId, text: String, modOnly: Boolean, dox: Boolean)(using me: MyId): Funit =
     val note = Note(
-      _id = lila.common.ThreadLocalRandom nextString 8,
-      from = from.id,
-      to = to.id,
+      _id = ThreadLocalRandom.nextString(8),
+      from = me,
+      to = to,
       text = text,
       mod = modOnly,
-      dox = modOnly && (dox || Title.fromUrl.toFideId(text).isDefined),
-      date = DateTime.now
+      dox = modOnly && dox,
+      date = nowInstant
     )
-
-    coll.insert.one(note) >>-
-      lila.common.Bus.publish(
-        lila.hub.actorApi.user.Note(
-          from = from.username,
-          to = to.username,
-          text = note.text,
-          mod = modOnly
-        ),
-        "userNote"
-      )
-  } >> {
-    modOnly ?? Title.fromUrl(text) flatMap {
-      _ ?? { userRepo.addTitle(to.id, _) }
-    }
-  }
+    bsonHandler
+      .writeTry(note)
+      .toFuture
+      .flatMap: base =>
+        val bson = if note.searchable then base ++ searchableBsonFlag else base
+        coll.insert.one(bson).void
 
   def lichessWrite(to: User, text: String) =
-    userRepo.lichess flatMap {
-      _ ?? {
-        write(to, text, _, modOnly = true, dox = false)
-      }
-    }
+    write(to.id, text, modOnly = true, dox = false)(using UserId.lichessAsMe)
 
   def byId(id: String): Fu[Option[Note]] = coll.byId[Note](id)
 
-  def delete(id: String) = coll.delete.one($id(id))
-}
+  def delete(id: String) = coll.delete.one(bid(id))
+
+  def setDox(id: String, dox: Boolean) = coll.updateField(bid(id), "dox", dox).void
+
+  private val searchableBsonFlag = bdoc("s" -> true)
+
+  def search(query: String, page: Int, withDox: Boolean): Fu[Paginator[Note]] =
+    Paginator(
+      adapter = new:
+        private val selector =
+          val base = searchableBsonFlag ++ (!withDox).so(bdoc("dox" -> false))
+          if query.nonEmpty
+          then base ++ textSearch(query)
+          else base
+        def nbResults: Fu[Int] =
+          if query.nonEmpty
+          then coll.countSel(selector)
+          else fuccess(500_000)
+        def slice(offset: Int, length: Int): Fu[List[Note]] =
+          coll
+            .aggregateList(length, _.sec): framework =>
+              import framework.*
+              Match(selector) -> List(Sort(Descending("date")), Skip(offset), Limit(length))
+            .map:
+              _.flatMap:
+                _.asOpt[Note]
+      ,
+      currentPage = page,
+      maxPerPage = MaxPerPage(30)
+    )

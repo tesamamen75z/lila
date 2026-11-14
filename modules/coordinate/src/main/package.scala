@@ -1,3 +1,4 @@
-package lila
+package lila.coordinate
 
-package object coordinate extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

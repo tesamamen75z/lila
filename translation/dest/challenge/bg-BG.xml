@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Предизвикателства</string>
+  <string name="challengesX">Предизвикателства: %1$s</string>
   <string name="challengeToPlay">Предизвикайте на партия</string>
   <string name="challengeDeclined">Предизвикателството е отказано</string>
   <string name="challengeAccepted">Предизвикателството е прието!</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">Не желая да играя този вариант в момента.</string>
   <string name="declineNoBot">Не приемам предизвикателства от ботове.</string>
   <string name="declineOnlyBot">Приемам предизвикателства само от ботове.</string>
+  <string name="inviteLichessUser">Или поканете Lichess потребител:</string>
 </resources>

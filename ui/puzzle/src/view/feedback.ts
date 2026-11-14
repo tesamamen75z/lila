@@ -1,80 +1,70 @@
+import { h, type VNode } from 'snabbdom';
+
+import { capitalize } from 'lib/game';
+import { bind, requiresI18n, type MaybeVNode } from 'lib/view';
+
+import type PuzzleCtrl from '../ctrl';
 import afterView from './after';
-import { bind } from '../util';
-import { Controller, MaybeVNode } from '../interfaces';
-import { h, VNode } from 'snabbdom';
 
-const viewSolution = (ctrl: Controller): VNode =>
+const viewSolution = (ctrl: PuzzleCtrl): VNode =>
   ctrl.streak
-    ? h(
-        'div.view_solution.skip',
-        {
-          class: { show: !!ctrl.streak?.data.skip },
-        },
-        [
+    ? h('div.view_solution.skip', { class: { show: ctrl.streak?.data.skip } }, [
+        requiresI18n('storm', ctrl.redraw, cat =>
           h(
-            'a.button.button-empty',
-            {
-              hook: bind('click', ctrl.skip),
-              attrs: {
-                title: ctrl.trans.noarg('streakSkipExplanation'),
-              },
-            },
-            ctrl.trans.noarg('skip')
+            'button.button.button-empty',
+            { hook: bind('click', ctrl.skip), attrs: { title: i18n.puzzle.streakSkipExplanation } },
+            cat.skip,
           ),
-        ]
-      )
-    : h(
-        'div.view_solution',
-        {
-          class: { show: ctrl.vm.canViewSolution },
-        },
-        [
-          h(
-            'a.button.button-empty',
-            {
-              hook: bind('click', ctrl.viewSolution),
-            },
-            ctrl.trans.noarg('viewTheSolution')
-          ),
-        ]
-      );
+        ),
+      ])
+    : h('div.view_solution', { class: { show: ctrl.canViewSolution() } }, [
+        ctrl.mode !== 'view'
+          ? h(
+              'button.button' + (ctrl.showHint() ? '' : '.button-empty'),
+              { hook: bind('click', ctrl.toggleHint) },
+              i18n.site.getAHint,
+            )
+          : undefined,
+        h(
+          'button.button.button-empty',
+          { hook: bind('click', ctrl.viewSolution) },
+          i18n.site.viewTheSolution,
+        ),
+      ]);
 
-const initial = (ctrl: Controller): VNode =>
+const initial = (ctrl: PuzzleCtrl): VNode =>
   h('div.puzzle__feedback.play', [
     h('div.player', [
-      h('div.no-square', h('piece.king.' + ctrl.vm.pov)),
+      h('div.no-square', h('piece.king.' + ctrl.pov)),
       h('div.instruction', [
-        h('strong', ctrl.trans.noarg('yourTurn')),
-        h('em', ctrl.trans.noarg(ctrl.vm.pov === 'white' ? 'findTheBestMoveForWhite' : 'findTheBestMoveForBlack')),
+        h('strong', i18n.site.yourTurn),
+        h('em', i18n.puzzle[`findTheBestMoveFor${capitalize(ctrl.pov)}`]),
       ]),
     ]),
     viewSolution(ctrl),
   ]);
 
-const good = (ctrl: Controller): VNode =>
+const good = (ctrl: PuzzleCtrl): VNode =>
   h('div.puzzle__feedback.good', [
     h('div.player', [
       h('div.icon', '✓'),
-      h('div.instruction', [h('strong', ctrl.trans.noarg('bestMove')), h('em', ctrl.trans.noarg('keepGoing'))]),
+      h('div.instruction', [h('strong', i18n.puzzle.bestMove), h('em', i18n.puzzle.keepGoing)]),
     ]),
     viewSolution(ctrl),
   ]);
 
-const fail = (ctrl: Controller): VNode =>
+const fail = (ctrl: PuzzleCtrl): VNode =>
   h('div.puzzle__feedback.fail', [
     h('div.player', [
       h('div.icon', '✗'),
-      h('div.instruction', [
-        h('strong', ctrl.trans.noarg('notTheMove')),
-        h('em', ctrl.trans.noarg('trySomethingElse')),
-      ]),
+      h('div.instruction', [h('strong', i18n.puzzle.notTheMove), h('em', i18n.puzzle.trySomethingElse)]),
     ]),
     viewSolution(ctrl),
   ]);
 
-export default function (ctrl: Controller): MaybeVNode {
-  if (ctrl.vm.mode === 'view') return afterView(ctrl);
-  switch (ctrl.vm.lastFeedback) {
+export default function (ctrl: PuzzleCtrl): MaybeVNode {
+  if (ctrl.mode === 'view') return afterView(ctrl);
+  switch (ctrl.lastFeedback) {
     case 'init':
       return initial(ctrl);
     case 'good':
@@ -82,5 +72,5 @@ export default function (ctrl: Controller): MaybeVNode {
     case 'fail':
       return fail(ctrl);
   }
-  return;
+  return undefined;
 }

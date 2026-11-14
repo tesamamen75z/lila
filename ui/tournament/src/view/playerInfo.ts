@@ -1,118 +1,96 @@
-import { h, VNode } from 'snabbdom';
-import { spinner, bind, numberRow, playerName, dataIcon, player as renderPlayer } from './util';
+import { status } from 'lib/game';
+import { licon } from 'lib/licon';
+import { spinnerVdom as spinner, type VNode, bind, dataIcon, hl } from 'lib/view';
+import { numberRow } from 'lib/view/util';
+
+import type TournamentController from '../ctrl';
+import type { Player } from '../interfaces';
 import { teamName } from './battle';
-import * as status from 'game/status';
-import TournamentController from '../ctrl';
-import { Player } from '../interfaces';
+import { fullName, player as renderPlayer } from './util';
 
-function result(win: boolean, stat: number): string {
-  switch (win) {
-    case true:
-      return '1';
-    case false:
-      return '0';
-    default:
-      return stat >= status.ids.mate ? '½' : '*';
-  }
-}
-
-function playerTitle(player: Player) {
-  return h('h2', [h('span.rank', player.rank + '. '), renderPlayer(player, true, false, false)]);
-}
+const playerTitle = (player: Player, tourId: string) =>
+  hl('h2', [
+    player.rank
+      ? hl('a.rank', { attrs: { href: `/tournament/${tourId}?player=${player.id}` } }, `${player.rank}. `)
+      : '',
+    renderPlayer(player, true, false, false),
+  ]);
 
 function setup(vnode: VNode) {
-  const el = vnode.elm as HTMLElement,
-    p = lichess.powertip;
+  const el = vnode.elm as HTMLElement;
+  const p = site.powertip;
   p.manualUserIn(el);
   p.manualGameIn(el);
 }
 
 export default function (ctrl: TournamentController): VNode {
   const data = ctrl.playerInfo.data;
-  const noarg = ctrl.trans.noarg;
   const tag = 'div.tour__player-info.tour__actor-info';
   if (!data || data.player.id !== ctrl.playerInfo.id)
-    return h(tag, [h('div.stats', [playerTitle(ctrl.playerInfo.player!), spinner()])]);
-  const nb = data.player.nb,
-    pairingsLen = data.pairings.length,
-    avgOp = pairingsLen
-      ? Math.round(
-          data.pairings.reduce(function (a, b) {
-            return a + b.op.rating;
-          }, 0) / pairingsLen
-        )
-      : undefined;
-  return h(
-    tag,
-    {
-      hook: {
-        insert: setup,
-        postpatch(_, vnode) {
-          setup(vnode);
-        },
-      },
-    },
-    [
-      h('a.close', {
-        attrs: dataIcon(''),
-        hook: bind('click', () => ctrl.showPlayerInfo(data.player), ctrl.redraw),
-      }),
-      h('div.stats', [
-        playerTitle(data.player),
-        data.player.team
-          ? h(
-              'team',
-              {
-                hook: bind('click', () => ctrl.showTeamInfo(data.player.team!), ctrl.redraw),
-              },
-              [teamName(ctrl.data.teamBattle!, data.player.team)]
-            )
-          : null,
-        h('table', [
-          data.player.performance
-            ? numberRow(noarg('performance'), data.player.performance + (nb.game < 3 ? '?' : ''), 'raw')
-            : null,
-          numberRow(noarg('gamesPlayed'), nb.game),
-          ...(nb.game
-            ? [
-                numberRow(noarg('winRate'), [nb.win, nb.game], 'percent'),
-                numberRow(noarg('berserkRate'), [nb.berserk, nb.game], 'percent'),
-                numberRow(noarg('averageOpponent'), avgOp, 'raw'),
-              ]
-            : []),
+    return hl(tag, [hl('div.stats', [playerTitle(ctrl.playerInfo.player!, ctrl.data.id), spinner()])]);
+  const nb = data.player.nb;
+  const pairingsLen = data.pairings.length;
+  const avgOp = pairingsLen
+    ? Math.round(data.pairings.reduce((a, b) => a + b.op.rating, 0) / pairingsLen)
+    : undefined;
+  return hl(tag, { hook: { insert: setup, postpatch: (_, vnode) => setup(vnode) } }, [
+    hl('button.close', {
+      attrs: dataIcon(licon.X),
+      hook: bind('click', () => ctrl.showPlayerInfo(data.player), ctrl.redraw),
+    }),
+    hl('div.stats', [
+      playerTitle(data.player, ctrl.data.id),
+      data.player.team &&
+        hl('team', { hook: bind('click', () => ctrl.showTeamInfo(data.player.team!), ctrl.redraw) }, [
+          teamName(ctrl.data.teamBattle!, data.player.team),
         ]),
+      hl('table', [
+        ctrl.opts.showRatings &&
+          data.player.performance &&
+          numberRow(i18n.site.performance, data.player.performance + (nb.game < 3 ? '?' : ''), 'raw'),
+        numberRow(i18n.site.gamesPlayed, nb.game),
+        nb.game > 0 && [
+          numberRow(i18n.site.winRate, [nb.win, nb.game], 'percent'),
+          numberRow(i18n.arena.berserkRate, [nb.berserk, nb.game], 'percent'),
+          ctrl.opts.showRatings && numberRow(i18n.site.averageOpponent, avgOp, 'raw'),
+        ],
       ]),
-      h('div', [
-        h(
-          'table.pairings.sublist',
-          {
-            hook: bind('click', e => {
-              const href = ((e.target as HTMLElement).parentNode as HTMLElement).getAttribute('data-href');
-              if (href) window.open(href, '_blank', 'noopener');
-            }),
-          },
-          data.pairings.map(function (p, i) {
-            const res = result(p.win, p.status);
-            return h(
-              'tr.glpt.' + (res === '1' ? ' win' : res === '0' ? ' loss' : ''),
-              {
-                key: p.id,
-                attrs: { 'data-href': '/' + p.id + '/' + p.color },
-                hook: {
-                  destroy: vnode => $.powerTip.destroy(vnode.elm as HTMLElement),
-                },
-              },
-              [
-                h('th', '' + (Math.max(nb.game, pairingsLen) - i)),
-                h('td', playerName(p.op)),
-                h('td', p.op.rating),
-                h('td.is.color-icon.' + p.color),
-                h('td', res),
-              ]
-            );
-          })
-        ),
-      ]),
-    ]
-  );
+    ]),
+    hl('div', [
+      hl(
+        'table.pairings.sublist',
+        {
+          hook: bind('click', e => {
+            const href = ((e.target as HTMLElement).parentNode as HTMLElement).getAttribute('data-href');
+            if (href) window.open(href, '_blank', 'noopener');
+          }),
+        },
+        data.pairings.map((p, i) => {
+          const score = p.status < status.mate ? '*' : p.score;
+          const streak = p.win == null ? p.score === 2 : p.win ? p.score > 3 : false;
+          const cls = p.win == null ? '' : streak ? 'streak' : !p.win ? 'loss' : 'win';
+          return hl(
+            'tr.glpt.' + cls,
+            {
+              key: p.id,
+              attrs: { 'data-href': '/game/' + p.id + '/' + p.color, tabindex: '0', role: 'link' },
+              hook: { destroy: vnode => $.powerTip.destroy(vnode.elm) },
+            },
+            [
+              hl('th', Math.max(nb.game, pairingsLen) - i),
+              hl('td', fullName(p.op)),
+              ctrl.opts.showRatings ? hl('td', `${p.op.rating}`) : null,
+              berserkTd(!!p.op.berserk),
+              hl('td.is.color-icon.' + p.color),
+              hl('td.result', score),
+              berserkTd(p.berserk),
+            ],
+          );
+        }),
+      ),
+    ]),
+  ]);
 }
+
+const berserkTd = (b: boolean) =>
+  b ? hl('td.berserk', { attrs: { ...dataIcon(licon.Berserk), title: 'Berserk' } }) : hl('td.berserk');

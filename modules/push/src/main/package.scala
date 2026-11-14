@@ -1,6 +1,6 @@
-package lila
+package lila.push
 
-package object push extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[push] def logger = lila.log("push")
-}
+private lazy val logger = lila.log("push")

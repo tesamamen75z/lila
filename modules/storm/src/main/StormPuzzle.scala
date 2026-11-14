@@ -1,28 +1,24 @@
 package lila.storm
 
-import cats.data.NonEmptyList
-import chess.format.{ FEN, Forsyth, Uci }
+import chess.IntRating
+import chess.format.{ Fen, Uci }
 
-import lila.puzzle.Puzzle
+import lila.core.id.PuzzleId
 
 case class StormPuzzle(
-    id: Puzzle.Id,
-    fen: FEN,
+    id: PuzzleId,
+    fen: Fen.Full,
     line: NonEmptyList[Uci.Move],
-    rating: Int
-) {
+    rating: IntRating
+):
   // ply after "initial move" when we start solving
-  def initialPly: Int =
-    fen.fullMove ?? { fm =>
-      fm * 2 - color.fold(1, 2)
-    }
+  def initialPly = Fen.readPly(fen) | chess.Ply.initial
 
-  lazy val fenAfterInitialMove: FEN = {
-    for {
-      sit1 <- Forsyth << fen
-      sit2 <- sit1.move(line.head).toOption.map(_.situationAfter)
-    } yield Forsyth >> sit2
-  } err s"Can't apply puzzle $id first move"
+  lazy val fenAfterInitialMove: Fen.Full = {
+    for
+      p1 <- Fen.read(fen)
+      p2 <- p1.move(line.head).toOption.map(_.after)
+    yield Fen.write(p2)
+  }.err(s"Can't apply puzzle $id first move")
 
-  def color = fen.color.fold[chess.Color](chess.White)(!_)
-}
+  def color = !fen.colorOrWhite

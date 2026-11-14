@@ -1,16 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="teams">அணிகள்</string>
+  <string name="team">குழு</string>
+  <string name="teams">குழுக்கள்</string>
   <plurals name="nbMembers">
     <item quantity="one">%s உறுப்பினர்கள்</item>
     <item quantity="other">%s உறுப்பினர்கள்</item>
   </plurals>
-  <string name="allTeams">எல்லா அணிகளும்</string>
-  <string name="newTeam">புது அணி</string>
-  <string name="myTeams">என் அணிகள்</string>
-  <string name="noTeamFound">எந்த அணியும் கிட்டவில்லை</string>
-  <string name="joinTeam">அணியோடு சேர்</string>
-  <string name="quitTeam">அணியை விட்டுவிலகு</string>
-  <string name="teamBestPlayers">அணியின் சிறந்த விளையாடிகள்</string>
-  <string name="teamRecentMembers">அணியின் அண்மை உறுப்பினர்கள்</string>
+  <string name="allTeams">அனைத்து குழுக்களும்</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">தலைவர் குழுக்கள்</string>
+  <string name="newTeam">புது குழு</string>
+  <string name="myTeams">எனது குழுக்கள்</string>
+  <string name="noTeamFound">எந்தக் குழுவும் கிட்டவில்லை</string>
+  <string name="joinTeam">குழுவில் சேர்</string>
+  <string name="quitTeam">குழுவை விட்டுவிலகு</string>
+  <plurals name="teamLeaders">
+    <item quantity="one">குழுத் தலைவர்</item>
+    <item quantity="other">அணி தலைவர்கள்</item>
+  </plurals>
+  <string name="teamRecentMembers">குழுவின் அண்மை உறுப்பினர்கள்</string>
+  <string name="willBeReviewed">உங்கள் சேர்வதற்கான கோரிக்கை குழுத் தலைவரால் மதிப்பாய்வு செய்யப்படும்.</string>
+  <string name="beingReviewed">உங்கள் சேர்வதற்கான கோரிக்கை குழுத் தலைவரால் மதிப்பாய்வு செய்யப்படுகிறது.</string>
+  <string name="requestDeclined">குழுத் தலைவரால் நீங்கள் சேருவதற்கான கோரிக்கை நிராகரிக்கப்பட்டது.</string>
+  <string name="teamBattle">குழுப் போர்</string>
+  <string name="teamBattleOverview">பல குழுக்களின் போர், ஒவ்வொரு வீரரும் தங்கள் குழுவிற்கு புள்ளிகளைப் பெறுகிறார்கள்</string>
+  <string name="teamTournament">குழு போட்டி</string>
+  <string name="teamTournamentOverview">உங்கள் குழு உறுப்பினர்கள் மட்டுமே சேரக்கூடிய ஒரு கோதா போட்டி</string>
+  <string name="swissTournamentOverview">உங்கள் குழு உறுப்பினர்கள் மட்டுமே சேரக்கூடிய சுவிஸ் போட்டி</string>
+  <string name="teamsIlead">நான் வழிநடத்தும் குழுக்கள்</string>
+  <string name="leadersChat">தலைவர்கள் அரட்டை</string>
+  <string name="introduction">அறிமுகம்</string>
+  <string name="entryCode">குழு நுழைவு குறியீடு</string>
+  <string name="entryCodeDescriptionForLeader">(விரும்பினால்) இந்தக் குழுவில் சேர புதிய உறுப்பினர்கள் தெரிந்து கொள்ள வேண்டிய நுழைவுக் குறியீடு.</string>
+  <string name="incorrectEntryCode">தவறான நுழைவு குறியீடு.</string>
+  <string name="teamAlreadyExists">இந்தக் குழு ஏற்கனவே உள்ளது.</string>
+  <string name="upcomingTournaments">வரவிருக்கும் போட்டிகள்</string>
+  <string name="completedTourns">போட்டிகள் நிறைவடைந்தன</string>
+  <string name="joinLichessVariantTeam">செய்திகள் மற்றும் நிகழ்வுகளுக்கு அதிகாரப்பூர்வ %s குழுவில் சேரவும்</string>
+  <string name="innerTeam">உள் அணி</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="one">%s அணிகளின் போர்</item>
+    <item quantity="other">%s அணிகளின் போர்</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="one">ஒரு அணிக்கு ஒரு தலைவர்</item>
+    <item quantity="other">ஒரு அணிக்கு %s தலைவர்கள்</item>
+  </plurals>
 </resources>

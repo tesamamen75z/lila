@@ -1,14 +1,10 @@
-.analyse__acpl {
-  display: none;
-}
-
 .relay-admin {
-  grid-area: acpl;
+  grid-area: round-training;
 
-  @extend %box-neat, %flex-column;
+  @extend %box-neat-force, %flex-column;
 
   background: $c-bg-box;
-  margin-top: $block-gap;
+  margin-top: 1em;
 
   h2 {
     @extend %flex-between;
@@ -20,11 +16,10 @@
 
   .state {
     @extend %flex-center-nowrap;
+    @include transition;
 
     border-bottom: $border;
     min-height: 3.5em;
-
-    @include transition;
 
     &::before {
       @extend %flex-center;
@@ -33,30 +28,31 @@
       margin: 0 0.5em 0 0.8em;
     }
 
-    &.clickable:hover {
-      cursor: pointer;
-      background: $c-primary;
-      color: $c-primary-over;
-    }
-
-    > div {
+    > span {
       @extend %ellipsis;
+
+      overflow-wrap: anywhere;
     }
 
     .fat {
-      font-size: 1.5em;
-      text-transform: uppercase;
+      font-size: 1.4em;
     }
 
     &.off {
-      background: mix($c-primary, $c-bg-box, 80%);
+      background: color-mix(in oklab, $c-primary 80%, $c-bg);
       color: #fff;
     }
 
     &.on {
       background: $c-good;
-      color: $c-good-over;
+      color: $c-over;
     }
+  }
+
+  button.clickable:hover {
+    cursor: pointer;
+    background: $c-primary;
+    color: $c-over;
   }
 
   .time {
@@ -66,8 +62,9 @@
   .log {
     overflow-x: hidden;
     overflow-y: auto;
-    white-space: nowrap;
     padding: 0.3em 0.7em;
+    max-height: 20vh;
+    overflow-wrap: anywhere;
 
     > div {
       @extend %flex-center-nowrap;
@@ -77,18 +74,25 @@
       &::before {
         color: $c-good;
         font-size: 1.3em;
-        margin-right: 0.5em;
+        margin-inline-end: 0.5em;
       }
     }
 
     time {
       @extend %roboto;
 
-      margin-left: 0.3em;
+      margin-inline-start: 0.3em;
     }
 
     .err::before {
       color: $c-bad;
     }
+  }
+}
+
+.relay-admin__container {
+  .study__chapters {
+    max-height: 25vh;
+    overflow-y: auto;
   }
 }

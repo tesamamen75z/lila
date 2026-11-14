@@ -1,130 +1,154 @@
 package lila.team
 
-import org.joda.time.DateTime
-import scala.util.chaining._
+import reactivemongo.api.bson.Macros.Annotations.Key
+import scalalib.ThreadLocalRandom
 
-import lila.user.User
-import org.joda.time.Days
+import java.nio.charset.StandardCharsets.UTF_8
+import java.security.MessageDigest
+
+import lila.core.team.{ Access, LightTeam, TeamData }
 
 case class Team(
-    _id: Team.ID, // also the url slug
+    @Key("_id") id: TeamId, // also the url slug
     name: String,
-    location: Option[String],
     password: Option[String],
-    description: String,
-    descPrivate: Option[String],
+    intro: Option[String],
+    description: Markdown,
+    descPrivate: Option[Markdown],
     nbMembers: Int,
     enabled: Boolean,
     open: Boolean,
-    createdAt: DateTime,
-    createdBy: User.ID,
-    leaders: Set[User.ID],
-    chat: Team.ChatFor,
+    createdAt: Instant,
+    createdBy: UserId,
+    chat: Access,
+    forum: Access,
     hideMembers: Option[Boolean],
-    hideForum: Option[Boolean]
-) {
+    flair: Option[Flair],
+    ofClas: Option[Boolean] = None
+):
 
-  def id = _id
+  inline def slug = id
+  inline def disabled = !enabled
 
-  def slug = id
+  def isChatFor(f: Access.type => Access) =
+    chat == f(Access)
 
-  def disabled = !enabled
-
-  def isChatFor(f: Team.ChatFor.type => Team.ChatFor) =
-    chat == f(Team.ChatFor)
+  def isForumFor(f: Access.type => Access) =
+    forum == f(Access)
 
   def publicMembers: Boolean = !hideMembers.has(true)
 
-  def publicForum: Boolean = !hideForum.has(true)
-
   def passwordMatches(pw: String) =
-    password.forall(teamPw =>
-      teamPw.size == pw.size && teamPw.zip(pw).foldLeft(0) { case (acc, (a, b)) =>
-        acc | (a ^ b) // constant time
-      } == 0
-    )
-}
+    password.forall(teamPw => MessageDigest.isEqual(teamPw.getBytes(UTF_8), pw.getBytes(UTF_8)))
 
-object Team {
+  def light = LightTeam(id, name, flair)
 
-  case class Mini(id: Team.ID, name: String)
+  def data = TeamData(id, name, description, nbMembers, createdBy)
 
-  val maxJoinCeiling = 50
+  def daysOld = daysBetween(createdAt, nowInstant)
 
-  def maxJoin(u: User) =
-    if (u.isVerified) maxJoinCeiling * 2
-    else {
-      15 + Days.daysBetween(u.createdAt, DateTime.now).getDays / 7
-    } atMost maxJoinCeiling
+  def notable = open && (nbMembers > 10 || (nbMembers > 1 && daysOld > 7))
 
-  type ID = String
+  def automodText = s"$name\n${~intro}\n$description"
 
-  type ChatFor = Int
-  object ChatFor {
-    val NONE    = 0
-    val LEADERS = 10
-    val MEMBERS = 20
-    val all     = List(NONE, LEADERS, MEMBERS)
-  }
+  def isClas = ~ofClas
+  def acceptsMembers = !isClas
+  def doesTeamMessages = !isClas
 
-  case class IdsStr(value: String) extends AnyVal {
+object Team:
 
-    import IdsStr.separator
+  case class WithLeaders(team: Team, leaders: List[TeamMember]):
+    export team.*
+    def hasAdminCreator = leaders.exists(l => l.is(team.createdBy) && l.hasPerm(_.Admin))
 
-    def contains(teamId: ID) =
-      value == teamId ||
-        value.startsWith(s"$teamId$separator") ||
-        value.endsWith(s"$separator$teamId") ||
-        value.contains(s"$separator$teamId$separator")
+  case class IdAndLeaderIds(id: TeamId, leaderIds: Set[UserId])
 
-    def toArray: Array[String] = value split IdsStr.separator
-    def toList                 = value.nonEmpty ?? toArray.toList
-  }
+  case class WithMyLeadership(team: Team, amLeader: Boolean):
+    export team.*
 
-  object IdsStr {
+  case class WithPublicLeaderIds(team: Team, publicLeaders: List[UserId])
+
+  case class TeamShow(
+      team: Team,
+      leaders: List[TeamMember],
+      member: Option[TeamMember],
+      myRequest: Option[TeamRequest],
+      requests: List[RequestWithUser],
+      update: Option[TeamUpdate[?, UserId]]
+  ):
+    val mine = member.isDefined
+    val ledByMe = member.exists(_.perms.nonEmpty)
+    val publicLeaders = leaders.filter(_.hasPerm(_.Public))
+    def havePerm(perm: TeamSecurity.Permission.Selector) = member.exists(_.hasPerm(perm))
+
+  import chess.variant.Variant
+  val variants: Map[Variant.LilaKey, LightTeam] = Variant.list.all.view.collect {
+    case v if v.exotic =>
+      val name = s"Lichess ${v.name}"
+      v.key -> LightTeam(nameToId(name), name, none)
+  }.toMap
+
+  val maxLeaders = Max(10)
+  val maxJoin = Max(50)
+  val verifiedMaxJoin = Max(150)
+
+  def maxJoin(u: User): Max =
+    if u.isVerified then verifiedMaxJoin
+    else
+      maxJoin.map:
+        _.atMost(15 + daysBetween(u.createdAt, nowInstant) / 7)
+
+  opaque type IdsStr = String
+  object IdsStr:
 
     private val separator = ' '
 
-    val empty = IdsStr("")
+    val empty: IdsStr = ""
 
-    def apply(ids: Iterable[ID]): IdsStr = IdsStr(ids mkString separator.toString)
-  }
+    def apply(ids: Iterable[TeamId]): IdsStr = ids.mkString(separator.toString)
+
+    extension (idsStr: IdsStr)
+      def contains(teamId: TeamId) =
+        idsStr == teamId.value ||
+          idsStr.startsWith(s"$teamId$separator") ||
+          idsStr.endsWith(s"$separator$teamId") ||
+          idsStr.contains(s"$separator$teamId$separator")
+      def toArray: Array[TeamId] = TeamId.from(idsStr.split(IdsStr.separator))
+      def toList = idsStr.nonEmpty.so(toArray.toList)
+      def toSet = idsStr.nonEmpty.so(toArray.toSet)
+      def size = idsStr.count(_ == separator) + 1
+      def nonEmpty = idsStr.nonEmpty
 
   def make(
-      id: String,
-      name: String,
-      location: Option[String],
+      id: TeamId,
+      name: LightTeam.TeamName,
       password: Option[String],
-      description: String,
-      descPrivate: Option[String],
+      intro: Option[String],
+      description: Markdown,
+      descPrivate: Option[Markdown],
       open: Boolean,
-      createdBy: User,
-      hideMembers: Option[Boolean],
-      hideForum: Option[Boolean]
-  ): Team =
-    new Team(
-      _id = id,
-      name = name,
-      location = location,
-      password = password,
-      description = description,
-      descPrivate = descPrivate,
-      nbMembers = 1,
-      enabled = true,
-      open = open,
-      createdAt = DateTime.now,
-      createdBy = createdBy.id,
-      leaders = Set(createdBy.id),
-      chat = ChatFor.MEMBERS,
-      hideMembers = hideMembers,
-      hideForum = hideForum
-    )
+      createdBy: UserId
+  ): Team = new Team(
+    id = id,
+    name = name,
+    password = password,
+    intro = intro,
+    description = description,
+    descPrivate = descPrivate,
+    nbMembers = 1,
+    enabled = true,
+    open = open,
+    createdAt = nowInstant,
+    createdBy = createdBy,
+    chat = Access.None,
+    forum = Access.None,
+    hideMembers = none,
+    flair = none
+  )
 
   def nameToId(name: String) =
-    (lila.common.String slugify name) pipe { slug =>
-      // if most chars are not latin, go for random slug
-      if (slug.lengthIs > (name.lengthIs / 2)) slug else randomId()
-    }
+    val slug = scalalib.StringOps.slug(name)
+    // if most chars are not latin, go for random slug
+    if slug.lengthIs > (name.length / 2) then TeamId(slug) else randomId()
 
-  private[team] def randomId() = lila.common.ThreadLocalRandom nextString 8
-}
+  private[team] def randomId() = TeamId(ThreadLocalRandom.nextString(8))

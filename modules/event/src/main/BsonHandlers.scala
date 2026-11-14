@@ -1,15 +1,9 @@
 package lila.event
 
-import reactivemongo.api.bson._
-import play.api.i18n.Lang
+import reactivemongo.api.bson.*
 
-import lila.db.dsl._
+import lila.db.dsl.given
 
-private[event] object BsonHandlers {
+private object BsonHandlers:
 
-  implicit private val UserIdBsonHandler = stringAnyValHandler[Event.UserId](_.value, Event.UserId.apply)
-
-  implicit private val LangBsonHandler = stringAnyValHandler[Lang](_.code, Lang.apply)
-
-  implicit val EventBsonHandler = Macros.handler[Event]
-}
+  given BSONDocumentHandler[Event] = Macros.handler

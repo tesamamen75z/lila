@@ -3,10 +3,10 @@
   <string name="activity">Активность</string>
   <string name="hostedALiveStream">Проведён стрим</string>
   <plurals name="supportedNbMonths">
-    <item quantity="one">Поддерживает (%2$s) lichess.org %1$s месяц</item>
-    <item quantity="few">Поддерживает (%2$s) lichess.org %1$s месяца</item>
-    <item quantity="many">Поддерживает (%2$s) lichess.org %1$s месяцев</item>
-    <item quantity="other">Поддерживает (%2$s) lichess.org %1$s месяцев</item>
+    <item quantity="one">Поддерживает lichess.org %1$s месяц (%2$s)</item>
+    <item quantity="few">Поддерживает lichess.org %1$s месяца (%2$s)</item>
+    <item quantity="many">Поддерживает lichess.org %1$s месяцев (%2$s)</item>
+    <item quantity="other">Поддерживает lichess.org %1$s месяцев (%2$s)</item>
   </plurals>
   <plurals name="practicedNbPositions">
     <item quantity="one">Выполнено %1$s упражнение в %2$s</item>
@@ -50,6 +50,12 @@
     <item quantity="many">Завершены %s игр по переписке</item>
     <item quantity="other">Завершены %s игр по переписке</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Завершена %1$s %2$s игра по переписке</item>
+    <item quantity="few">Завершены %1$s %2$s игры по переписке</item>
+    <item quantity="many">Завершены %1$s %2$s игр по переписке</item>
+    <item quantity="other">Завершены %1$s %2$s игр по переписке</item>
+  </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">%s игрок добавлен в подписку</item>
     <item quantity="few">%s игрока добавлены в подписку</item>
@@ -69,10 +75,10 @@
     <item quantity="other">Проведены %s сеансов одновременной игры</item>
   </plurals>
   <plurals name="joinedNbSimuls">
-    <item quantity="one">Принято участие в %s сеансе одновременной игры</item>
-    <item quantity="few">Принято участие в %s сеансах одновременной игры</item>
-    <item quantity="many">Принято участие в %s сеансах одновременной игры</item>
-    <item quantity="other">Принято участие в %s сеансах одновременной игры</item>
+    <item quantity="one">Участие в %s сеансе одновременной игры</item>
+    <item quantity="few">Участие в %s сеансах одновременной игры</item>
+    <item quantity="many">Участие в %s сеансах одновременной игры</item>
+    <item quantity="other">Участие в %s сеансах одновременной игры</item>
   </plurals>
   <plurals name="createdNbStudies">
     <item quantity="one">Создана %s новая студия</item>

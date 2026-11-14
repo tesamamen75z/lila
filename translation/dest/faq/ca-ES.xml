@@ -16,6 +16,8 @@
   <string name="otherWaysToHelp">altres maneres d\'ajudar</string>
   <string name="areThereWebsitesBasedOnLichess">Hi ha pàgines web basades en Lichess?</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">Sí. Lichess ha inspirat altres pàgines de codi obert que utilitzen el nostre %1$s, %2$s, o %3$s.</string>
+  <string name="keyboardShortcuts">Quines dreceres de teclat estan disponibles?</string>
+  <string name="keyboardShortcutsExplanation">Algunes pàgines de Lichess tenen dreceres de teclat que pots utilitzar. Proveu de prémer la tecla \'?\' en una pàgina d\'estudi, anàlisis, problemes o una partida per veure les dreceres disponibles.</string>
   <string name="fairPlay">Joc net</string>
   <string name="whenAmIEligibleRatinRefund">En quins casos se\'m retornen automàticament els punts perduts contra un trampós?</string>
   <string name="ratingRefundExplanation">Un minut després de marcar a un jugador com a trampós, s\'agafen les seves últimes 40 partides puntuables dels tres últims dies. Si tu vas ser el seu oponent en aquestes partides, vas perdre punts en elles (bé perquè vas perdre, bé perquè vas empatar), y la teva puntuació no era provisional, llavors se\'t retornaran els punts. Aquest reemborsament està limitat per la teva màxima puntuació i per com hagi progressat la teva puntuació després d\'aquella partida.
@@ -25,6 +27,8 @@
   <string name="howCanIBecomeModerator">Com em puc convertir en moderador?</string>
   <string name="youCannotApply">No es pot sol·licitar ser moderador. Si veiem a algú que considerem que seria un bon moderador, ens posarem en contacte amb ell directament.</string>
   <string name="isCorrespondenceDifferent">Els escacs per correspondència son diferents dels escacs normals?</string>
+  <string name="pleaseReadFairPlayPage">Per obtenir més informació, llegiu la nostra %s</string>
+  <string name="fairPlayPage">pàgina de joc net</string>
   <string name="youCanUseOpeningBookNoEngine">A Lichess, la principal diferència en les regles dels escacs per correspondència és que es permet un llibre d\'obertures. L\'ús de motors d\'anàlisi segueix estant prohibit i donarà a lloc a que s\'etiqueti l\'usuari com a trampós. Tot i que la ICC permet l\'ús del motor d\'anàlisi en partides per correspondència, Lichess no ho permet.</string>
   <string name="gameplay">Mecànica de joc</string>
   <string name="howBulletBlitzEtcDecided">Com es decideixen els controls de temps a Bullet, Blitz i altres?</string>
@@ -50,6 +54,7 @@ El motor d\'anàlisi a Lichess el proporciona Stockfish.</string>
 En comptades ocasions pot ser difícil de decidir automàticament (línies forçades, fortaleses). Per defecte sempre estem del costat del jugador que encara disposava de temps.
 
 Cal tenir present que és possible fer escac i mat amb només un cavall o un alfil, sempre que l\'oponent tingui una peça que pugui bloquejar el rei.</string>
+  <string name="fideHandbook">Manual de la FIDE</string>
   <string name="fideHandbookX">%s del manual de la FIDE</string>
   <string name="discoveringEnPassant">Per què un peó pot capturar un altre peó quan ja està passat? (al pas)</string>
   <string name="explainingEnPassant">Aquest moviment és legal, i es diu \"captura al pas\". L\'article de Wikipedia dóna una %1$s.
@@ -60,10 +65,10 @@ Es descriu en la secció 3.7 (d) de les %2$s:
 
 Veure el capítol de %3$s sobre aquest moviment per practicar-lo.</string>
   <string name="goodIntroduction">bona introducció</string>
-  <string name="officialRulesPDF">regles oficials (PDF)</string>
   <string name="lichessTraining">Entrenament de Lichess</string>
+  <string name="watchIMRosenCheckmate">Mireu l\'escac i mat &lt;a href=\'%s\' target=\'_blank\'&gt; al pas&lt;/a&gt; del Mestre Internacional Eric Rosen.</string>
   <string name="threefoldRepetition">Triple repetició</string>
-  <string name="threefoldRepetitionExplanation">Si una posició es dóna tres vegades, els jugadors poden reclamar taules per %1$s. Lichess implementa les regles oficials de la FIDE, d\'acord amb l\'article 9.2 (d) del %2$s.</string>
+  <string name="threefoldRepetitionExplanation">Si una posició es dóna tres vegades, els jugadors poden reclamar taules per %1$s. Lichess implementa les regles oficials de la FIDE, d\'acord amb l\'article 9.2 del %2$s.</string>
   <string name="threefoldRepetitionLowerCase">triple repetició</string>
   <string name="notRepeatedMoves">No hem repetit moviments. Per què la partida segueix sent taules per repetició?</string>
   <string name="repeatedPositionsThatMatters">La triple repetició es dóna per la repetició de %1$s, no de moviments. La repetició no té perquè ocórrer consecutivament.</string>
@@ -95,7 +100,6 @@ No sol·licitis el títol de LM.</string>
   <string name="usernamesCannotBeChanged">No, el noms d’usuari no es poden canviar per motius tècnics i pràctics. El nom d’usuari s’usa en masses llocs: bases de dades, exportacions, registres, y a la ment de la gent. Pots ajustar les majúscules una vegada.</string>
   <string name="uniqueTrophies">Trofeus únics</string>
   <string name="ownerUniqueTrophies">Aquest trofeu és únic en la historia de Lichess, ningú altre excepte %1$s el podrà obtenir.</string>
-  <string name="wayOfBerserkExplanation">Per obtenir-lo, hiimgosu es va reptar a fer berserk i guanyar el 100 %% partides de %s.</string>
   <string name="aHourlyBulletTournament">un torneig Bullet per hora</string>
   <string name="goldenZeeExplanation">ZugAddict estava retransmetent i les dues últimes hores havia estat intentant de derrotar a la I.A. nivell 8 en una partida de 1+0, sense èxit. Thibault li va dir que si ho feia amb èxit durant la retransmissió, obtindria un trofeu únic. Una hora després, va guanyar a Stockfish i es va complir la promesa.</string>
   <string name="lichessRatings">Puntuacions de Lichess</string>
@@ -138,4 +142,40 @@ Un altre punt que cal destacar és que, al passar el temps, l\'interval de confi
 Fes clic en la icona de bloqueig al costat de l\'adreça de lichess.org, a la barra URL del teu navegador.
 
 Després selecciona si permetre o bloquejar notificacions de Lichess.</string>
+  <string name="enableAutoplayForSoundsQ">Activar la reproducció automàtica de sons?</string>
+  <string name="mostBrowsersPreventSoundAutoplay">La majoria dels navegadors poden impedir la reproducció de so en una pàgina recentment carregada per a protegir els usuaris. 
+
+La icona vermella de silenci apareix quan el teu navegador impedeix que lichess.org reprodueixi un so. Normalment, aquesta restricció s\'aixeca quan fas clic en alguna cosa. 
+En alguns navegadors mòbils, moure una peça arrossegant-la no compta com un clic. En aquest cas, has de tocar el tauler per a permetre el so al començament de cada partida.
+
+Mostrem la icona vermella per a avisar-te quan això ocorre. Sovint pots permetre que lichess.org reprodueixi sons explícitament. Aqui tens instruccions per a fer-ho en versions recents d\'alguns navegadors populars:</string>
+  <string name="desktop">escriptori</string>
+  <string name="enableAutoplayForSoundsFirefox">1. Entreu a lichess.org
+2. Premeu Ctrl-i en Linux/Windows o cmd-i en MacOS
+3. Cliqueu la pestanya de permisos
+4. Permeteu àudio i vídeo a lichess.org</string>
+  <string name="enableAutoplayForSoundsChromeSiteInformation" comment="Guidance for Google Chrome users on how to enable audio auto-play if they have sound issues.">1. Entreu a lichess.org
+2. Cliqueu la icona d\'informació del lloc a la barra d\'adreces
+3. Cliqueu Configuració del lloc
+4. Permeteu l\'àudio</string>
+  <string name="enableAutoplayForSoundsSafari">1. Entreu a lichess.org
+2. Cliqueu a Safari a la barra de tasques
+3. Aneu a la Configuració per a lichess.org ... 
+4. Permeteu la reproducció automàtica</string>
+  <string name="enableAutoplayForSoundsMicrosoftEdge">1. Cliqueu els tres punts de la cantonada superior dreta
+2. Cliqueu Configuració
+3. Cliqueu Galetes i Permisos del lloc
+4. Desplaceu-se cap avall i cliqueu Reproducció automàtica de contingut multimèdia
+5. Afegiu lichess.org a Permet</string>
+  <string name="makeBotTitle">Crear un bot a Lichess?</string>
+  <string name="makeBotDescription">Per aprendre com crear un &lt;a href=\'%1$s\'&gt;bot d\'escacs personalitzat&lt;/a&gt; per jugar a Lichess, si us plau llegiu &lt;a href=\'%2$s\'&gt;aquesta entrada del blog sobre la creació de bots&lt;/a&gt;.</string>
+  <string name="stopMyselfFromPlaying">Refrenar-me de jugar?</string>
+  <string name="mentalHealthCondition">trastorn de salut mental independent</string>
+  <string name="lichessUserstyles">aparences personalitzades de Lichess</string>
+  <string name="fewerLobbyPools">menys opcions de joc</string>
+  <string name="adviceOnMitigatingAddiction">Sovint rebem missatges d\'usuaris que ens demanen ajuda per no jugar tant.
+
+Encara que Lichess només expulsa o bloqueja jugadors que violen les Condicions del servei, recomanem l\'ús d\'eines externes per limitar conductes addictives. Alguns blocadors de llocs web habituals són %1$s, %2$s i %3$s. Si vols continuar utilitzant la pàgina, però no vols veure\'t temptat per modalitats ràpides, l\'opció d\'%4$s també pot ser interessant, ací tens una amb %5$s.
+
+Alguns jugadors poden tindre la sensació que el seu comportament s\'està tornant addictiu. De fet, l\'OMS classifica els trastorns relatius als jocs com a %6$s, i les seves característiques principals són 1) el control deficient del joc, 2) l\'augment de la prioritat que se li dona al joc i 3) l\'escalada de les hores de joc malgrat les conseqüències negatives. Si creus que el teu comportament relatiu als escacs segueix aquest patró, t\'animem a parlar-ho amb els teus amics, familiars i/o un professional.</string>
 </resources>

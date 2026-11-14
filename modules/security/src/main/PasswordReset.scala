@@ -1,58 +1,81 @@
 package lila.security
 
 import play.api.i18n.Lang
-import scalatags.Text.all._
+import play.api.mvc.{ Cookie, Session }
+import scalatags.Text.all.*
 
-import lila.common.config._
-import lila.common.EmailAddress
-import lila.i18n.I18nKeys.{ emails => trans }
+import lila.core.config.*
+import lila.core.i18n.I18nKey.emails as trans
+import lila.core.net.IpAddress
 import lila.mailer.Mailer
+import lila.memo.RateLimit
 import lila.user.{ User, UserRepo }
 
 final class PasswordReset(
     mailer: Mailer,
     userRepo: UserRepo,
-    baseUrl: BaseUrl,
+    routeUrl: RouteUrl,
     tokenerSecret: Secret
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, lila.core.i18n.Translator, lila.core.config.RateLimit):
 
-  import Mailer.html._
+  import Mailer.html.*
 
-  def send(user: User, email: EmailAddress)(implicit lang: Lang): Funit =
-    tokener make user.id flatMap { token =>
+  def send(user: User, email: EmailAddress)(using lang: Lang): Funit =
+    tokener.make(user.id).flatMap { token =>
       lila.mon.email.send.resetPassword.increment()
-      val url = s"$baseUrl/password/reset/confirm/$token"
-      mailer send Mailer.Message(
-        to = email,
-        subject = trans.passwordReset_subject.txt(user.username),
-        text = Mailer.txt.addServiceNote(s"""
+      val url = routeUrl(routes.Auth.passwordResetConfirm(token))
+      mailer.sendOrFail:
+        Mailer.Message(
+          to = email,
+          subject = trans.passwordReset_subject.txt(user.username),
+          text = Mailer.txt.addServiceNote(s"""
 ${trans.passwordReset_intro.txt()}
 
 ${trans.passwordReset_clickOrIgnore.txt()}
 
 $url
 
-${trans.common_orPaste.txt()}"""),
-        htmlBody = emailMessage(
-          pDesc(trans.passwordReset_intro()),
-          p(trans.passwordReset_clickOrIgnore()),
-          potentialAction(metaName("Reset password"), Mailer.html.url(url)),
-          serviceNote
-        ).some
-      )
+${trans.common_linkNotWorking.txt()}"""),
+          htmlBody = emailMessage(
+            pDesc(trans.passwordReset_intro()),
+            p(trans.passwordReset_clickOrIgnore()),
+            potentialAction(metaName("Reset password"), Mailer.html.url(url)),
+            serviceNote
+          ).some
+        )
     }
 
   def confirm(token: String): Fu[Option[User]] =
-    tokener read token flatMap { _ ?? userRepo.byId } map {
-      _.filter(_.canFullyLogin)
-    }
+    tokener
+      .read(token)
+      .flatMapz(userRepo.notForeverClosedById)
+      .recover:
+        case _: reactivemongo.api.bson.exceptions.BSONValueNotFoundException => none
 
-  private val tokener = new StringToken[User.ID](
-    secret = tokenerSecret,
-    getCurrentValue = id =>
-      for {
-        hash  <- userRepo getPasswordHash id
-        email <- userRepo email id
-      } yield ~hash + email.fold("")(_.value)
+  val limiter: RateLimit.RateLimiter[(EmailAddress, IpAddress)] = RateLimit.combine(
+    RateLimit[EmailAddress](credits = 3, duration = 1.day, limiterKey = "password.reset.email"),
+    RateLimit[IpAddress](credits = 20, duration = 1.day, limiterKey = "password.reset.ip")
   )
-}
+
+  private val tokener = StringToken.withLifetimeAndFutureValue[UserId](
+    secret = tokenerSecret,
+    lifetime = 10.minutes,
+    getCurrentValue = id =>
+      for
+        hash <- userRepo.getPasswordHash(id)
+        email <- userRepo.email(id)
+      yield ~hash + email.so(_.value)
+  )
+
+object PasswordReset:
+
+  object cookie:
+
+    private val name = "email_pw_reset"
+
+    def get(using req: Req): Option[EmailAddress] =
+      EmailAddress.from(req.session.get(name))
+
+    def set(lilaCookie: LilaCookie, email: EmailAddress)(using Req): Cookie =
+      lilaCookie.withSession(remember = false): _ =>
+        Session.emptyCookie + (name -> email.value)

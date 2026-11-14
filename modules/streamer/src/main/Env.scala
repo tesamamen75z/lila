@@ -1,94 +1,112 @@
 package lila.streamer
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import org.apache.pekko.actor.*
+import play.api.{ ConfigLoader, Configuration }
 
-import lila.common.config._
+import lila.common.Bus
+import lila.common.autoconfig.{ *, given }
+import lila.common.config.{ *, given }
+import lila.core.config.*
 
 @Module
 private class StreamerConfig(
     @ConfigName("collection.streamer") val streamerColl: CollName,
     @ConfigName("paginator.max_per_page") val paginatorMaxPerPage: MaxPerPage,
-    @ConfigName("streaming.keyword") val keyword: Stream.Keyword,
-    @ConfigName("streaming.google.api_key") val googleApiKey: Secret,
-    @ConfigName("streaming.twitch") val twitchConfig: TwitchConfig
+    @ConfigName("keyword") val keyword: Stream.Keyword,
+    @ConfigName("youtube") val youtubeConfig: YoutubeConfig,
+    @ConfigName("twitch") val twitchConfig: TwitchConfig
 )
-private class TwitchConfig(@ConfigName("client_id") val clientId: String, val secret: Secret)
 
 @Module
 final class Env(
     appConfig: Configuration,
     ws: play.api.libs.ws.StandaloneWSClient,
     settingStore: lila.memo.SettingStore.Builder,
-    isOnline: lila.socket.IsOnline,
+    isOnline: lila.core.socket.IsOnline,
     cacheApi: lila.memo.CacheApi,
-    notifyApi: lila.notify.NotifyApi,
-    userRepo: lila.user.UserRepo,
-    timeline: lila.hub.actors.Timeline,
+    picfitApi: lila.memo.PicfitApi,
+    notifyApi: lila.core.notify.NotifyApi,
+    userRepo: lila.core.user.UserRepo,
+    userApi: lila.core.user.UserApi,
+    subsRepo: lila.core.relation.SubscriptionRepo,
     db: lila.db.Db,
-    imageRepo: lila.db.ImageRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    net: lila.core.config.NetConfig,
+    langList: lila.core.i18n.LangList
+)(using scheduler: Scheduler)(using Executor, org.apache.pekko.stream.Materializer):
 
-  implicit private val twitchLoader  = AutoConfig.loader[TwitchConfig]
-  implicit private val keywordLoader = strLoader(Stream.Keyword.apply)
-  private val config                 = appConfig.get[StreamerConfig]("streamer")(AutoConfig.loader)
+  private given ConfigLoader[TwitchConfig] = AutoConfig.loader[TwitchConfig]
+  private given ConfigLoader[YoutubeConfig] = AutoConfig.loader[YoutubeConfig]
+  private given ConfigLoader[Stream.Keyword] = strLoader(Stream.Keyword.apply)
+  private val config = appConfig.get[StreamerConfig]("streamer")(using AutoConfig.loader)
 
   private lazy val streamerColl = db(config.streamerColl)
 
-  private lazy val photographer = new lila.db.Photographer(imageRepo, "streamer")
-
-  lazy val alwaysFeaturedSetting = {
-    import lila.memo.SettingStore.UserIds._
-    import lila.common.UserIds
+  lazy val alwaysFeaturedSetting =
+    import lila.memo.SettingStore.UserIds.given
+    import lila.core.data.UserIds
     settingStore[UserIds](
       "streamerAlwaysFeatured",
       default = UserIds(Nil),
-      text =
-        "Twitch streamers who get featured without the keyword - lichess usernames separated by a comma".some
+      text = "Twitch streamers featured without the keyword - lichess usernames separated by a comma".some,
+      perm = _.Streamers
     )
-  }
 
   lazy val homepageMaxSetting =
     settingStore[Int](
       "streamerHomepageMax",
-      default = 6,
+      default = 5,
       text = "Max streamers on homepage".some
     )
 
+  lazy val repo = wire[StreamerRepo]
+  lazy val ytApi: YoutubeApi = wire[YoutubeApi]
   lazy val api: StreamerApi = wire[StreamerApi]
 
   lazy val pager = wire[StreamerPager]
 
-  private lazy val twitchApi: TwitchApi = wire[TwitchApi]
+  lazy val oauth = wire[StreamerOauth]
 
-  private val streamingActor = system.actorOf(
-    Props(
-      new Streaming(
-        ws = ws,
-        api = api,
-        isOnline = isOnline,
-        timeline = timeline,
-        keyword = config.keyword,
-        alwaysFeatured = alwaysFeaturedSetting.get _,
-        googleApiKey = config.googleApiKey,
-        twitchApi = twitchApi
-      )
-    )
+  lazy val twitchApi: TwitchApi = wire[TwitchApi]
+
+  private val publisher = Publisher(
+    api = api,
+    repo = repo,
+    isOnline = isOnline,
+    keyword = config.keyword,
+    alwaysFeatured = () => alwaysFeaturedSetting.get(),
+    twitchApi = twitchApi,
+    ytApi = ytApi,
+    langList = langList
   )
 
-  lazy val liveStreamApi = wire[LiveStreamApi]
+  lazy val liveApi = wire[LiveApi]
 
-  lila.common.Bus.subscribeFun("adjustCheater") { case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
-    api.demote(userId).unit
-  }
+  Bus.sub[lila.core.mod.MarkCheater]:
+    case lila.core.mod.MarkCheater(userId, true) => api.demote(userId)
+  Bus.sub[lila.core.mod.MarkBooster]: m =>
+    if m.value then api.demote(m.userId)
+  Bus.sub[lila.core.mod.Shadowban]: m =>
+    if m.value then api.demote(m.userId) else repo.unignore(m.userId)
 
-  system.scheduler.scheduleWithFixedDelay(1 hour, 1 day) { () =>
-    api.autoDemoteFakes.unit
-  }
-}
+  lila.common.Cli.handle():
+    case "streamer" :: "twitch" :: "resync" :: Nil =>
+      twitchApi.syncAll.inject("done")
+    case "streamer" :: "twitch" :: "resub" :: Nil =>
+      twitchApi.subscribeAll.inject("done")
+    case "streamer" :: "twitch" :: "show" :: Nil =>
+      fuccess(twitchApi.debugLives)
+
+  scheduler.scheduleWithFixedDelay(1.hour, 1.day): () =>
+    repo.autoDemoteFakes
+
+  scheduler.scheduleWithFixedDelay(21.minutes, 8.days): () =>
+    ytApi.subscribeAll
+
+  if config.twitchConfig.clientId.nonEmpty then
+    scheduler.scheduleWithFixedDelay(30.seconds, 1.day): () =>
+      twitchApi.syncAll
+    scheduler.scheduleWithFixedDelay(72.seconds, 1.day): () =>
+      twitchApi.subscribeAll
+    scheduler.scheduleWithFixedDelay(4.minutes, 4.minutes): () =>
+      twitchApi.checkThatLiveStreamersReallyAreLive

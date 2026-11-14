@@ -1,41 +1,46 @@
 package lila.challenge
 
-import com.softwaremill.macwire._
-import play.api.Configuration
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
 
-import lila.common.config._
-import lila.socket.Socket.{ GetVersion, SocketVersion }
+import lila.core.config.*
+import lila.core.socket.{ GetVersion, SocketVersion }
 
 @Module
 final class Env(
-    appConfig: Configuration,
     gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    onStart: lila.round.OnStart,
-    gameCache: lila.game.Cached,
-    lightUser: lila.common.LightUser.GetterSync,
-    lightUserApi: lila.user.LightUserApi,
-    isOnline: lila.socket.IsOnline,
+    userApi: lila.core.user.UserApi,
+    onStart: lila.core.game.OnStart,
+    gameApi: lila.core.game.GameApi,
+    rematches: lila.game.Rematches,
+    lightUser: lila.core.LightUser.GetterSyncFallback,
+    lightUserApi: lila.core.user.LightUserApi,
+    isOnline: lila.core.socket.IsOnline,
     db: lila.db.Db,
     cacheApi: lila.memo.CacheApi,
-    prefApi: lila.pref.PrefApi,
-    relationApi: lila.relation.RelationApi,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    msgApi: lila.msg.MsgApi,
+    prefApi: lila.core.pref.PrefApi,
+    relationApi: lila.core.relation.RelationApi,
+    socketKit: lila.core.socket.SocketKit,
+    getLagRating: lila.core.socket.userLag.GetLagRating,
+    msgApi: lila.core.msg.MsgApi,
+    langPicker: lila.core.i18n.LangPicker,
+    setupForm: lila.core.setup.SetupForm,
+    oauthServer: lila.oauth.OAuthServer,
     baseUrl: BaseUrl
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
-
-  private lazy val maxPlaying = appConfig.get[Max]("setup.max_playing")
+)(using
+    scheduler: Scheduler
+)(using
+    org.apache.pekko.actor.ActorSystem,
+    Executor,
+    org.apache.pekko.stream.Materializer,
+    lila.game.IdGenerator,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+):
 
   private val colls = wire[ChallengeColls]
 
-  def version(challengeId: Challenge.ID): Fu[SocketVersion] =
-    socket.rooms.ask[SocketVersion](challengeId)(GetVersion)
+  def version(challengeId: ChallengeId): Fu[SocketVersion] =
+    socket.rooms.ask[SocketVersion](challengeId.into(RoomId))(GetVersion.apply)
 
   private lazy val joiner = wire[ChallengeJoiner]
 
@@ -43,7 +48,7 @@ final class Env(
 
   lazy val api = wire[ChallengeApi]
 
-  private lazy val socket = wire[ChallengeSocket]
+  private val socket = wire[ChallengeSocket]
 
   lazy val granter = wire[ChallengeGranter]
 
@@ -51,22 +56,27 @@ final class Env(
 
   lazy val jsonView = wire[JsonView]
 
+  lazy val bulkSetup = wire[ChallengeBulkSetup]
+
+  lazy val bulkSetupApi = wire[ChallengeBulkSetupApi]
+
   lazy val bulk = wire[ChallengeBulkApi]
 
   lazy val msg = wire[ChallengeMsg]
 
+  lazy val keepAliveStream = wire[ChallengeKeepAliveStream]
+
   val forms = new ChallengeForm
 
-  system.scheduler.scheduleWithFixedDelay(10 seconds, 3343 millis) { () =>
-    api.sweep.unit
-  }
+  scheduler.scheduleWithFixedDelay(10.seconds, 3343.millis): () =>
+    api.sweep
 
-  system.scheduler.scheduleWithFixedDelay(20 seconds, 2897 millis) { () =>
-    bulk.tick.unit
-  }
-}
+  scheduler.scheduleWithFixedDelay(20.seconds, 2897.millis): () =>
+    bulk.tick
 
-private class ChallengeColls(db: lila.db.Db) {
+  lila.common.Bus.sub[lila.core.round.DeleteUnplayed]: unplayed =>
+    api.removeByGameId(unplayed.gameId)
+
+private class ChallengeColls(db: lila.db.Db):
   val challenge = db(CollName("challenge"))
-  val bulk      = db(CollName("challenge_bulk"))
-}
+  val bulk = db(CollName("challenge_bulk"))

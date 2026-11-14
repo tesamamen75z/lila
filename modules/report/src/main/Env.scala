@@ -1,85 +1,58 @@
 package lila.report
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import org.apache.pekko.actor.*
 
-import lila.common.config._
-
-@Module
-private class ReportConfig(
-    @ConfigName("collection.report") val reportColl: CollName,
-    @ConfigName("score.threshold") val scoreThreshold: Int,
-    @ConfigName("actor.name") val actorName: String
-)
+import lila.core.config.*
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    domain: lila.common.config.NetDomain,
     db: lila.db.Db,
-    isOnline: lila.socket.IsOnline,
-    userRepo: lila.user.UserRepo,
-    lightUserAsync: lila.common.LightUser.Getter,
-    gameRepo: lila.game.GameRepo,
-    securityApi: lila.security.SecurityApi,
-    userLoginsApi: lila.security.UserLoginsApi,
-    playbanApi: lila.playban.PlaybanApi,
-    ircApi: lila.irc.IrcApi,
-    captcher: lila.hub.actors.Captcher,
-    fishnet: lila.hub.actors.Fishnet,
+    isOnline: lila.core.socket.IsOnline,
+    userApi: lila.core.user.UserApi,
+    lightUserAsync: lila.core.LightUser.Getter,
+    gameApi: lila.core.game.GameApi,
+    gameRepo: lila.core.game.GameRepo,
+    securityApi: lila.core.security.SecurityApi,
+    playbansOf: => lila.core.playban.BansOf,
+    ircApi: lila.core.irc.IrcApi,
     settingStore: lila.memo.SettingStore.Builder,
-    cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    cacheApi: lila.memo.CacheApi,
+    appConfig: play.api.Configuration,
+    ws: play.api.libs.ws.StandaloneWSClient,
+    picfitApi: lila.memo.PicfitApi
+)(using Executor, NetDomain)(using scheduler: Scheduler):
 
-  private val config = appConfig.get[ReportConfig]("report")(AutoConfig.loader)
+  private def lazyPlaybansOf = () => playbansOf
 
-  private lazy val reportColl = db(config.reportColl)
+  private lazy val reportColl = db(CollName("report2"))
 
-  lazy val scoreThresholdsSetting = ReportThresholds makeScoreSetting settingStore
+  lazy val scoreThresholdsSetting = ReportThresholds.makeScoreSetting(settingStore)
 
-  lazy val discordScoreThresholdSetting = ReportThresholds makeDiscordSetting settingStore
+  lazy val discordScoreThresholdSetting = ReportThresholds.makeDiscordSetting(settingStore)
 
   private val thresholds = Thresholds(
-    score = scoreThresholdsSetting.get _,
-    discord = discordScoreThresholdSetting.get _
+    score = (() => scoreThresholdsSetting.get()),
+    discord = (() => discordScoreThresholdSetting.get())
   )
 
   lazy val forms = wire[ReportForm]
 
   private lazy val autoAnalysis = wire[AutoAnalysis]
 
-  private lazy val snoozer = new lila.memo.Snoozer[Report.SnoozeKey](cacheApi)
+  private given UserIdOf[Report.SnoozeKey] = _.snoozerId
+  private lazy val snoozer = lila.memo.Snoozer[Report.SnoozeKey]("report.snooze", cacheApi)
 
+  lazy val automod = wire[Automod]
   lazy val api = wire[ReportApi]
 
   lazy val modFilters = new ModReportFilter
 
-  // api actor
-  system.actorOf(
-    Props(new Actor {
-      def receive = {
-        case lila.hub.actorApi.report.Cheater(userId, text) =>
-          api.autoCheatReport(userId, text).unit
-        case lila.hub.actorApi.report.Shutup(userId, text) =>
-          api.autoCommReport(userId, text).unit
-      }
-    }),
-    name = config.actorName
-  )
+  scheduler.scheduleWithFixedDelay(1.minute, 1.minute): () =>
+    api.inquiries.expire
 
-  lila.common.Bus.subscribeFun("playban", "autoFlag") {
-    case lila.hub.actorApi.playban.Playban(userId, mins, _) => api.maybeAutoPlaybanReport(userId, mins).unit
-    case lila.hub.actorApi.report.AutoFlag(suspectId, resource, text) =>
-      api.autoCommFlag(SuspectId(suspectId), resource, text).unit
-  }
+  scheduler.scheduleWithFixedDelay(55.minutes, 1.hour): () =>
+    ReportQueueMonitor.push(reportColl)
 
-  system.scheduler.scheduleWithFixedDelay(1 minute, 1 minute) { () =>
-    api.inquiries.expire.unit
-  }
-}
+  lila.common.Bus.sub[lila.core.playban.Playban]:
+    case lila.core.playban.Playban(userId, mins, _) => api.maybeAutoPlaybanReport(userId, mins)

@@ -1,18 +1,18 @@
-import * as xhr from './xhr';
-import * as hookRepo from './hookRepo';
-import LobbyController from './ctrl';
-import { PoolMember, Hook } from './interfaces';
+import { idleTimer } from 'lib/event';
 
-interface Handlers {
-  [key: string]: (data: any) => void;
-}
+import type LobbyController from './ctrl';
+import * as hookRepo from './hookRepo';
+import type { PoolMember, Hook } from './interfaces';
+
+type Handlers = Record<string, (data: any) => void>;
 
 export default class LobbySocket {
   handlers: Handlers;
 
-  constructor(readonly send: SocketSend, ctrl: LobbyController) {
-    this.send = send;
-
+  constructor(
+    readonly send: SocketSend,
+    ctrl: LobbyController,
+  ) {
     this.handlers = {
       had(hook: Hook) {
         hookRepo.add(ctrl, hook);
@@ -35,17 +35,17 @@ export default class LobbySocket {
         ctrl.redraw();
       },
       reload_seeks() {
-        if (ctrl.tab === 'seeks') xhr.seeks().then(ctrl.setSeeks);
+        if (ctrl.tab === 'seeks') ctrl.fetchSeeks();
       },
     };
 
-    lichess.idleTimer(
+    idleTimer(
       3 * 60 * 1000,
       () => send('idle', true),
       () => {
         send('idle', false);
         ctrl.awake();
-      }
+      },
     );
   }
 

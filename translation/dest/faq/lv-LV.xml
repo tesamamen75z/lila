@@ -16,6 +16,8 @@
   <string name="otherWaysToHelp">citi veidi kā palīdzēt</string>
   <string name="areThereWebsitesBasedOnLichess">Vai eksistē uz Lichess balstītas vietnes?</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">Jā. Vietne Lichess tiešām ir iedvesmojusi citas atvērtā koda lapas, kas izmanto mūsu %1$s, %2$s, vai %3$s.</string>
+  <string name="keyboardShortcuts">Kādas saīsnes ir pieejamas?</string>
+  <string name="keyboardShortcutsExplanation">Dažās Lichess lapās varat izmantot tastatūras saīsnes. Nospiediet \"?\" taustiņu izpētes, analīzes, pužļu vai spēles lapā, lai skatītu pieejamās saīsnes.</string>
   <string name="fairPlay">Godīga spēlēšana</string>
   <string name="whenAmIEligibleRatinRefund">Kad man ir tiesības uz automātisku reitinga atlīdzinājumu no blēžiem?</string>
   <string name="ratingRefundExplanation">Minūti pēc spēlētāja atzīmēšanas viņa 40 pēdējās spēles tiek apskatītas. Ja kādā no tām bijāt pretinieks un zaudējāt punktus (zaudējuma vai neizšķirta dēļ), un jūsu reitings nebija pagaidu reitings, saņemsiet reitinga atlīdzinājumu. Atlīdzinājuma ierobežojums ir atkarīgs no jūsu augstākā reitinga un reitinga progresa pēc spēles.
@@ -25,6 +27,8 @@
   <string name="howCanIBecomeModerator">Kā varu kļūt par moderatoru?</string>
   <string name="youCannotApply">Nav iespējams pieteikties, lai kļūtu par moderatoru. Ja ieraudzīsim kādu, kas mūsuprāt būtu labs moderators, sazināsimies personīgi.</string>
   <string name="isCorrespondenceDifferent">Vai korespondencšahs atšķiras no parastā šaha?</string>
+  <string name="pleaseReadFairPlayPage">Papildus informācijai, lūdzu lasiet mūsu %s</string>
+  <string name="fairPlayPage">godīgas spēlēšanas lapu</string>
   <string name="youCanUseOpeningBookNoEngine">Vietnē Lichess galvenā atšķirība korespondencšaha noteikumos ir atļauja lietot atklātņu grāmatu. Datora palīdzība ir vēl joprojām aizliegta un novedīs pie atzīmes par datora palīdzības lietošanu. Kaut arī ICCF atļauj lietot datora palīdzību korespondencšahā, Lichess to aizliedz.</string>
   <string name="gameplay">Spēles apraksts</string>
   <string name="howBulletBlitzEtcDecided">Kā nosaka bullet, blica un citas laika kontroles?</string>
@@ -60,10 +64,9 @@ Tas ir aprakstīts %2$s sadaļā 3.7 (d).
 
 Skatīt %3$s šim gājienam, lai ar to trenētos.</string>
   <string name="goodIntroduction">labu ievadu</string>
-  <string name="officialRulesPDF">oficiālajos noteikumos (PDF)</string>
   <string name="lichessTraining">Lichess treniņu</string>
   <string name="threefoldRepetition">Trīskārša atkārtošanās</string>
-  <string name="threefoldRepetitionExplanation">Ja pozīcija trīsreiz atkārtojas, spēlētāji var pieprasīt %1$s neizšķirtu. Lichess izmanto oficiālos FIDE noteikumus, kas aprakstīti %2$s sadaļā 9.2 (d).</string>
+  <string name="threefoldRepetitionExplanation">Ja pozīcija trīsreiz atkārtojas, spēlētāji var pieprasīt %1$s neizšķirtu. Lichess izmanto oficiālos FIDE noteikumus, kas aprakstīti %2$s sadaļā 9.2.</string>
   <string name="threefoldRepetitionLowerCase">trīskāršas atkārtošanās</string>
   <string name="notRepeatedMoves">Mēs neatkārtojām gājienus. Kādēļ spēle beidzās ar atkārtošanās neizšķirtu?</string>
   <string name="repeatedPositionsThatMatters">Trīskārša atkārtošanās attiecas uz atkārtotām %1$s, nevis gājieniem. Atkārtojumiem nav jānotiek pēc kārtas.</string>
@@ -95,7 +98,6 @@ Lūdzu, neprasiet LM titulu.</string>
   <string name="usernamesCannotBeChanged">Nē; lietotājvārdus nevar mainīt tehnisku un praktisku iemeslu dēļ. Lietotājvārdi ir iegulti pārāk daudzās vietās: datubāzēs, eksportos, žurnālos un cilvēku prātos. Vienreiz varat mainīt lielo burtu lietojumu.</string>
   <string name="uniqueTrophies">Unikālas trofejas</string>
   <string name="ownerUniqueTrophies">Tā trofeja ir unikāla Lichess vēsturē; tā nepiederēs nevienam citam kā %1$s.</string>
-  <string name="wayOfBerserkExplanation">Lai to dabūtu, hiimgosu izaicināja sevi spēlēt Kurbadu un uzvarēt visas spēlētās spēles %s.</string>
   <string name="aHourlyBulletTournament">ik stundu Bullet turnīrā</string>
   <string name="goldenZeeExplanation">ZugAddict pēdējās divas stundas straumējot centās pārspēt astotā līmeņa A.I. 1+0 spēlē, bet bez panākumiem. Thibault pavēstīja, ka ja viņš straumējot tomēr pārspēs A.I., tad tiks pie unikālas trofejas. Stundu vēlāk viņš pārspēja Stockfish un solījums tika izpildīts.</string>
   <string name="lichessRatings">Lichess reitingi</string>

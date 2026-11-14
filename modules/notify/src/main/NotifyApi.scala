@@ -1,32 +1,79 @@
 package lila.notify
 
-import scala.concurrent.duration._
+import play.api.libs.json.Json
+import scalalib.data.LazyFu
+import scalalib.paginator.Paginator
 
 import lila.common.Bus
-import lila.common.config.MaxPerPage
-import lila.common.paginator.Paginator
-import lila.db.dsl._
+import lila.core.notify.NotificationContent.*
+import lila.core.notify.{ NotificationPref as _, * }
+import lila.core.socket.{ SendToOnlineUser, SendTos }
+import lila.db.dsl.{ *, given }
 import lila.db.paginator.Adapter
-import lila.hub.actorApi.socket.SendTo
-import lila.memo.CacheApi._
-import lila.user.UserRepo
-import lila.i18n.I18nLangPicker
+import lila.memo.CacheApi.*
 
 final class NotifyApi(
     jsonHandlers: JSONHandlers,
     repo: NotificationRepo,
-    userRepo: UserRepo,
+    colls: NotifyColls,
+    userApi: lila.core.user.UserApi,
     cacheApi: lila.memo.CacheApi,
     maxPerPage: MaxPerPage
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor)
+    extends lila.core.notify.NotifyApi(colls.pref):
 
-  import BSONHandlers.{ NotificationBSONHandler, NotifiesHandler }
-  import jsonHandlers._
+  import Notification.*
+  import BSONHandlers.given
 
-  def getNotifications(userId: Notification.Notifies, page: Int): Fu[Paginator[Notification]] =
+  Bus.sub[lila.core.user.UserDelete]: del =>
+    for
+      _ <- colls.pref.delete.one(bid(del.id))
+      _ <- colls.notif.delete.one(bdoc("notifies" -> del.id))
+    yield ()
+
+  object prefs:
+    import NotificationPref.{ *, given }
+
+    def form[U: UserIdOf](me: U) =
+      colls.pref
+        .byId[NotificationPref](me.id)
+        .dmap(_ | default)
+        .map(NotificationPref.form.form.fill)
+
+    def set[U: UserIdOf](me: U, pref: NotificationPref) =
+      colls.pref.update.one(bid(me.id), pref, upsert = true).void
+
+    def allows(userId: UserId, event: PrefEvent): Fu[Allows] =
+      colls.pref.secondary
+        .primitiveOne[Allows](bid(userId), event.key)
+        .dmap(_ | default.allows(event))
+
+    def getAllows(userIds: Iterable[UserId], event: PrefEvent): Fu[List[NotifyAllows]] =
+      userIds.nonEmpty.so:
+        colls.pref.secondary
+          .find(inIds(userIds), bdoc(event.key -> true).some)
+          .cursor[Bdoc]()
+          .listAll()
+          .map: docs =>
+            val customAllows = for
+              doc <- docs
+              userId <- doc.getAsOpt[UserId]("_id")
+              allows <- doc.getAsOpt[Allows](event.key)
+            yield NotifyAllows(userId, allows)
+            val customIds = customAllows.view.map(_.userId).toSet
+            val defaultAllows = userIds
+              .filterNot(customIds.contains)
+              .map:
+                NotifyAllows(_, NotificationPref.default.allows(event))
+            customAllows ::: defaultAllows.toList
+
+  private val unreadCountCache = cacheApi[UserId, UnreadCount](65_536, "notify.unreadCountCache"):
+    _.expireAfterAccess(15.minutes).buildAsyncFuture(repo.expireAndCount)
+
+  def getNotifications(userId: UserId, page: Int): Fu[Paginator[Notification]] =
     Paginator(
       adapter = new Adapter(
-        collection = repo.coll,
+        collection = colls.notif,
         selector = repo.userNotificationsQuery(userId),
         projection = none,
         sort = repo.recentSort
@@ -35,84 +82,110 @@ final class NotifyApi(
       maxPerPage = maxPerPage
     )
 
-  def getNotificationsAndCount(userId: Notification.Notifies, page: Int): Fu[Notification.AndUnread] =
-    getNotifications(userId, page) zip unreadCount(userId) dmap (Notification.AndUnread.apply _).tupled
+  def getNotificationsAndCount(userId: UserId, page: Int): Fu[Notification.AndUnread] =
+    getNotifications(userId, page).zip(unreadCount(userId)).map(AndUnread.apply)
 
-  def markAllRead(userId: Notification.Notifies) =
-    repo.markAllRead(userId) >>- unreadCountCache.put(userId, fuccess(0))
+  def markAllRead(userId: UserId): Funit =
+    for _ <- repo.markAllRead(userId)
+    yield unreadCountCache.put(userId, fuccess(UnreadCount(0)))
 
-  def markAllRead(userIds: Iterable[Notification.Notifies]) =
-    repo.markAllRead(userIds) >>- userIds.foreach {
-      unreadCountCache.put(_, fuccess(0))
-    }
+  def markAllRead(userIds: Iterable[UserId]): Funit =
+    for _ <- repo.markAllRead(userIds)
+    yield userIds.foreach:
+      unreadCountCache.put(_, fuccess(UnreadCount(0)))
 
-  private val unreadCountCache = cacheApi[Notification.Notifies, Int](32768, "notify.unreadCountCache") {
-    _.expireAfterAccess(20 minutes)
-      .buildAsyncFuture(repo.unreadNotificationsCount)
-  }
+  def unreadCount(userId: UserId): Fu[UnreadCount] =
+    unreadCountCache.get(userId)
 
-  def unreadCount(userId: Notification.Notifies): Fu[Notification.UnreadCount] =
-    unreadCountCache get userId dmap Notification.UnreadCount.apply
+  def insertNotification(notification: Notification): Funit =
+    for _ <- repo.insert(notification)
+    yield unreadCountCache.update(notification.to, _ + 1)
 
-  def addNotification(notification: Notification): Funit =
-    // Add to database and then notify any connected clients of the new notification
-    insertOrDiscardNotification(notification) map {
-      _ foreach { notif =>
-        notifyUser(notif.notifies)
-      }
-    }
+  def remove(to: UserId, selector: Bdoc = emptyBdoc): Funit =
+    for _ <- repo.remove(to, selector)
+    yield unreadCountCache.invalidate(to)
 
-  def addNotificationWithoutSkipOrEvent(notification: Notification): Funit =
-    repo.insert(notification) >>- unreadCountCache.update(notification.notifies, _ + 1)
+  def markRead(to: UserId, selector: Bdoc): Funit =
+    repo
+      .markManyRead(selector ++ bdoc("notifies" -> to, "read" -> false))
+      .map: nb =>
+        if nb > 0 then unreadCountCache.invalidate(to)
 
-  def addNotifications(notifications: List[Notification]): Funit =
-    notifications.map(addNotification).sequenceFu.void
-
-  def remove(notifies: Notification.Notifies, selector: Bdoc): Funit =
-    repo.remove(notifies, selector) >>- unreadCountCache.invalidate(notifies)
-
-  def markRead(notifies: Notification.Notifies, selector: Bdoc): Funit =
-    repo.markManyRead(selector ++ $doc("notifies" -> notifies, "read" -> false)) >>-
-      unreadCountCache.invalidate(notifies)
-
-  def exists = repo.exists _
-
-  private def shouldSkip(notification: Notification) =
-    (!notification.isMsg ?? userRepo.isKid(notification.notifies.value)) >>| {
-      notification.content match {
-        case MentionedInThread(_, _, topicId, _, _) =>
-          repo.hasRecentNotificationsInThread(notification.notifies, topicId)
-        case InvitedToStudy(_, _, studyId) => repo.hasRecentStudyInvitation(notification.notifies, studyId)
-        case PrivateMessage(sender, _)     => repo.hasRecentPrivateMessageFrom(notification.notifies, sender)
-        case _                             => fuFalse
-      }
-    }
-
-  /** Inserts notification into the repository.
-    *
-    * If the user already has an unread notification on the topic, discard it.
-    *
-    * If the user does not already have an unread notification on the topic, returns it unmodified.
-    */
-  private def insertOrDiscardNotification(notification: Notification): Fu[Option[Notification]] =
-    shouldSkip(notification) flatMap {
-      case true  => fuccess(none)
-      case false => addNotificationWithoutSkipOrEvent(notification) inject notification.some
-    }
-
-  private def notifyUser(notifies: Notification.Notifies): Funit =
-    getNotificationsAndCount(notifies, 1) map { msg =>
-      Bus.publish(
-        SendTo.async(
-          notifies.value,
-          "notifications",
-          () => {
-            userRepo langOf notifies.value map I18nLangPicker.byStrOrDefault map { implicit lang =>
-              jsonHandlers(msg)
-            }
+  def notifyOne[U: UserIdOf](to: U, content: NotificationContent): Funit =
+    val note = Notification.make(to, content)
+    shouldSkip(note).not.flatMapz:
+      NotificationPref.events.get(content.key) match
+        case None => bellOne(note)
+        case Some(event) =>
+          prefs.allows(note.to, event).map { allows =>
+            if allows.bell then bellOne(note)
+            if allows.push then pushOne(NotifyAllows(note.to, allows), note.content)
           }
-        ),
-        "socketUsers"
-      )
-    }
-}
+
+  // notifyMany tells clients that an update is available to bump their bell. there's no need
+  // to assemble full notification pages for all clients at once, let them initiate
+  def notifyMany(userIds: Iterable[UserId], content: NotificationContent): Funit = userIds.nonEmpty.so:
+    NotificationPref.events
+      .get(content.key)
+      .so: event =>
+        prefs
+          .getAllows(userIds, event)
+          .flatMap: recips =>
+            pushMany(recips.filter(_.allows.push), content)
+            bellMany(recips, content)
+
+  def notifyManyUnlessUnread(userIds: Iterable[UserId], content: NotificationContent): Funit = for
+    unreadUsers <- repo.usersWithRecentUnread(content, 3.days)
+    _ <- notifyMany(userIds.filterNot(unreadUsers), content)
+  yield ()
+
+  private[notify] def notifyManyIgnoringPrefs(userIds: Seq[UserId], content: NotificationContent): Funit =
+    val recips = userIds.map(NotifyAllows(_, lila.notify.Allows.all))
+    pushMany(recips, content)
+    bellMany(recips, content)
+
+  private def bellOne(note: Notification): Funit =
+    shouldSkipBell(note).not.flatMapz:
+      for _ <- insertNotification(note)
+      yield Bus.pub:
+        SendToOnlineUser(
+          note.to,
+          LazyFu: () =>
+            for notifications <- getNotifications(note.to, 1).zip(unreadCount(note.to)).dmap(AndUnread.apply)
+            yield Json.obj(
+              "t" -> "notifications",
+              "d" -> jsonHandlers(notifications)
+            )
+        )
+
+  private def bellMany(recips: Iterable[NotifyAllows], content: NotificationContent): Funit =
+    val expiresIn = content match
+      case _: StreamStart => 6.hours.some
+      case _: BroadcastRound => 6.hours.some
+      case _ => none
+    val bells = recips.collect { case r if r.allows.bell => r.userId }
+    bells.foreach(unreadCountCache.invalidate) // or maybe update only if getIfPresent?
+    for _ <- repo.insertMany(bells.map(to => Notification.make(to, content, expiresIn)))
+    yield Bus.pub(SendTos(bells.toSet, "notifications", Json.obj("incrementUnread" -> true)))
+
+  private def pushOne(to: NotifyAllows, content: NotificationContent) =
+    pushMany(Seq(to), content)
+
+  private def pushMany(recips: Iterable[NotifyAllows], content: NotificationContent) =
+    Bus.pub(PushNotification(recips, content))
+
+  private def shouldSkip(note: Notification): Fu[Boolean] = note.content match
+    case MentionedInThread(_, _, topicId, _, _) =>
+      userApi.isKid(note.to).dmap(_.yes) >>|
+        repo.hasRecent(note, "content.topicId" -> topicId, 3.days)
+    case InvitedToStudy(_, _, studyId) =>
+      userApi.isKid(note.to).dmap(_.yes) >>|
+        repo.hasRecent(note, "content.studyId" -> studyId, 3.days)
+    case _: PrivateMessage => fuFalse
+    case _: CorresAlarm => fuFalse
+    case _ => userApi.isKid(note.to).dmap(_.yes)
+
+  private def shouldSkipBell(note: Notification): Fu[Boolean] = note.content match
+    case PrivateMessage(sender, _) =>
+      repo.hasRecentPrivateMessageFrom(note.to, sender)
+    case _ => fuFalse

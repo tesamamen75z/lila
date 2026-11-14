@@ -1,5 +1,7 @@
-import { StoredJsonProp, storedJsonProp } from 'common/storage';
-import { PuzzleData, Puzzle, PuzzleId, PuzzleGame } from './interfaces';
+import { myUserId, type Prop } from 'lib';
+import { storedJsonProp } from 'lib/storage';
+
+import type { PuzzleData, Puzzle, PuzzleId, PuzzleGame } from './interfaces';
 
 interface Current {
   puzzle: Puzzle;
@@ -16,10 +18,10 @@ interface StreakData {
 export default class PuzzleStreak {
   data: StreakData;
   fail = false;
-  store: StoredJsonProp<StreakData | null>;
+  store: Prop<StreakData | null>;
 
   constructor(data: PuzzleData) {
-    this.store = storedJsonProp<StreakData | null>(`puzzle.streak.${data.user?.id || 'anon'}`, () => null);
+    this.store = storedJsonProp<StreakData | null>(`puzzle.streak.${myUserId() || 'anon'}`, () => null);
     this.data = this.store() || {
       ids: data.streak!.split(' '),
       index: 0,
@@ -43,7 +45,7 @@ export default class PuzzleStreak {
         this.store(this.data);
       } else {
         this.store(null);
-        lichess.reload();
+        site.reload();
       }
     } else {
       this.fail = true;

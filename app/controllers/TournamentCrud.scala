@@ -1,68 +1,60 @@
 package controllers
 
-import lila.app._
-import views._
+import scalalib.Json.given
 
-final class TournamentCrud(env: Env) extends LilaController(env) {
+import lila.app.*
 
-  private def crud = env.tournament.crudApi
+final class TournamentCrud(env: Env) extends LilaController(env):
 
-  def index(page: Int) =
-    Secure(_.ManageTournament) { implicit ctx => _ =>
-      crud.paginator(page) map { paginator =>
-        html.tournament.crud.index(paginator)
-      }
-    }
+  import env.tournament.crudApi as crud
+  import views.tournament.form.crud as crudView
 
-  def edit(id: String) =
-    Secure(_.ManageTournament) { implicit ctx => _ =>
-      OptionOk(crud one id) { tour =>
-        html.tournament.crud.edit(tour, crud editForm tour)
-      }
-    }
+  def index(page: Int) = Secure(_.ManageTournament) { _ ?=> _ ?=>
+    Ok.async:
+      crud
+        .paginator(page)
+        .map(crudView.index)
+  }
 
-  def update(id: String) =
-    SecureBody(_.ManageTournament) { implicit ctx => _ =>
-      OptionFuResult(crud one id) { tour =>
-        implicit val req = ctx.body
-        crud
-          .editForm(tour)
-          .bindFromRequest()
-          .fold(
-            err => BadRequest(html.tournament.crud.edit(tour, err)).fuccess,
-            data => crud.update(tour, data) inject Redirect(routes.TournamentCrud.edit(id)).flashSuccess
-          )
-      }
-    }
+  def edit(id: TourId) = Secure(_.ManageTournament) { ctx ?=> _ ?=>
+    FoundPage(crud.one(id)): tour =>
+      crudView.edit(tour, crud.editForm(tour))
+  }
 
-  def form =
-    Secure(_.ManageTournament) { implicit ctx => _ =>
-      Ok(html.tournament.crud.create(crud.createForm)).fuccess
-    }
+  def update(id: TourId) = SecureBody(_.ManageTournament) { ctx ?=> _ ?=>
+    Found(crud.one(id)): tour =>
+      bindForm(crud.editForm(tour))(
+        err => BadRequest.page(crudView.edit(tour, err)),
+        data => crud.update(tour, data).inject(Redirect(routes.TournamentCrud.edit(id)).flashSuccess)
+      )
+  }
 
-  def create =
-    SecureBody(_.ManageTournament) { implicit ctx => me =>
-      implicit val req = ctx.body
-      crud.createForm
-        .bindFromRequest()
-        .fold(
-          err => BadRequest(html.tournament.crud.create(err)).fuccess,
-          data =>
-            crud.create(data, me.user) map { tour =>
-              Redirect {
-                if (tour.isTeamBattle) routes.Tournament.teamBattleEdit(tour.id)
-                else routes.TournamentCrud.edit(tour.id)
-              }.flashSuccess
-            }
-        )
-    }
+  def form = Secure(_.ManageTournament) { ctx ?=> _ ?=>
+    Ok.page(crudView.create(crud.createForm))
+  }
 
-  def cloneT(id: String) =
-    Secure(_.ManageTournament) { implicit ctx => _ =>
-      OptionFuResult(crud one id) { old =>
-        val tour = crud clone old
-        Ok(html.tournament.crud.create(crud editForm tour)).fuccess
-      }
-    }
+  def create = SecureBody(_.ManageTournament) { ctx ?=> me ?=>
+    bindForm(crud.createForm)(
+      err => BadRequest.page(crudView.create(err)),
+      data =>
+        crud.create(data).map { tour =>
+          Redirect {
+            if tour.isTeamBattle then routes.Tournament.teamBattleEdit(tour.id)
+            else routes.TournamentCrud.edit(tour.id)
+          }.flashSuccess
+        }
+    )
+  }
 
-}
+  def cloneT(id: TourId) = Secure(_.ManageTournament) { ctx ?=> _ ?=>
+    FoundPage(crud.one(id)): old =>
+      crudView.create(crud.editForm(crud.clone(old)))
+  }
+
+  def apiCalendar(page: Int) = SecuredScoped(_.ManageTournament) { ctx ?=> _ ?=>
+    Reasonable(page, Max(20)):
+      val since = getTimestamp("since").getOrElse(nowInstant)
+      val until = getTimestamp("until").getOrElse(nowInstant.plusDays(7))
+      for pager <- crud.between(since, until, page)
+      yield JsonOk(pager.mapResults(env.tournament.apiJsonView.crudCalendar))
+  }

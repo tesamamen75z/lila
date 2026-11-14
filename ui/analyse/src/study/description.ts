@@ -1,13 +1,19 @@
-import { h, VNode } from 'snabbdom';
-import { StudyCtrl } from './interfaces';
-import { bind, richHTML, onInsert } from '../util';
+import { licon } from 'lib/licon';
+import { richHTML } from 'lib/richText';
+import { type VNode, bind, onInsert, hl, confirm } from 'lib/view';
+
+import type StudyCtrl from './studyCtrl';
 
 export type Save = (t: string) => void;
 
 export class DescriptionCtrl {
   edit = false;
 
-  constructor(public text: string | undefined, readonly doSave: Save, readonly redraw: () => void) {}
+  constructor(
+    public text: string | undefined,
+    readonly doSave: Save,
+    readonly redraw: () => void,
+  ) {}
 
   save(t: string) {
     this.text = t;
@@ -15,93 +21,64 @@ export class DescriptionCtrl {
     this.redraw();
   }
 
-  set(t: string | undefined) {
+  set(t?: string) {
     this.text = t ? t : undefined;
   }
 }
 
-export function descTitle(chapter: boolean) {
-  return `${chapter ? 'Chapter' : 'Study'} pinned comment`;
-}
+export const descTitle = (chapter: boolean) => `Pinned ${chapter ? 'chapter' : 'study'} comment`;
 
 export function view(study: StudyCtrl, chapter: boolean): VNode | undefined {
-  const desc = chapter ? study.chapterDesc : study.studyDesc,
-    contrib = study.members.canContribute() && !study.gamebookPlay();
+  const desc = chapter ? study.chapterDesc : study.studyDesc;
+  const contrib = study.members.canContribute() && !study.gamebookPlay;
   if (desc.edit) return edit(desc, chapter ? study.data.chapter.id : study.data.id, chapter);
   const isEmpty = desc.text === '-';
-  if (!desc.text || (isEmpty && !contrib)) return;
-  return h(`div.study-desc${chapter ? '.chapter-desc' : ''}${isEmpty ? '.empty' : ''}`, [
-    contrib && !isEmpty
-      ? h('div.contrib', [
-          h('span', descTitle(chapter)),
-          isEmpty
-            ? null
-            : h('a', {
-                attrs: {
-                  'data-icon': '',
-                  title: 'Edit',
-                },
-                hook: bind(
-                  'click',
-                  _ => {
-                    desc.edit = true;
-                  },
-                  desc.redraw
-                ),
-              }),
-          h('a', {
-            attrs: {
-              'data-icon': '',
-              title: 'Delete',
-            },
-            hook: bind('click', () => {
-              if (confirm('Delete permanent description?')) desc.save('');
-            }),
+  if (!desc.text || (isEmpty && !contrib)) return undefined;
+  return hl(`div.study-desc${chapter ? '.chapter-desc' : ''}${isEmpty ? '.empty' : ''}`, [
+    contrib &&
+      !isEmpty &&
+      hl('div.contrib', [
+        hl('span', descTitle(chapter)),
+        !isEmpty &&
+          hl('a', {
+            attrs: { 'data-icon': licon.Pencil, title: 'Edit' },
+            hook: bind('click', () => (desc.edit = true), desc.redraw),
           }),
-        ])
-      : null,
+        hl('a', {
+          attrs: { 'data-icon': licon.Trash, title: 'Delete' },
+          hook: bind('click', async () => {
+            if (await confirm('Delete permanent description?')) desc.save('');
+          }),
+        }),
+      ]),
     isEmpty
-      ? h(
+      ? hl(
           'a.text.button',
-          {
-            hook: bind(
-              'click',
-              _ => {
-                desc.edit = true;
-              },
-              desc.redraw
-            ),
-          },
-          descTitle(chapter)
+          { hook: bind('click', () => (desc.edit = true), desc.redraw) },
+          descTitle(chapter),
         )
-      : h('div.text', { hook: richHTML(desc.text) }),
+      : hl('div.text', { hook: richHTML(desc.text) }),
   ]);
 }
 
-function edit(ctrl: DescriptionCtrl, id: string, chapter: boolean): VNode {
-  return h('div.study-desc-form', [
-    h('div.title', [
+const edit = (ctrl: DescriptionCtrl, id: string, chapter: boolean): VNode =>
+  hl('div.study-desc-form', [
+    hl('div.title', [
       descTitle(chapter),
-      h('button.button.button-empty.button-red', {
-        attrs: {
-          'data-icon': '',
-          title: 'Close',
-        },
+      hl('button.button.button-empty.button-green', {
+        attrs: { 'data-icon': licon.Checkmark, title: 'Save and close' },
         hook: bind('click', () => (ctrl.edit = false), ctrl.redraw),
       }),
     ]),
-    h('form.form3', [
-      h('div.form-group', [
-        h('textarea#form-control.desc-text.' + id, {
+    hl('form.form3', [
+      hl('div.form-group', [
+        hl('textarea#form-control.desc-text.' + id, {
           hook: onInsert<HTMLInputElement>(el => {
             el.value = ctrl.text === '-' ? '' : ctrl.text || '';
-            el.onkeyup = el.onpaste = () => {
-              ctrl.save(el.value.trim());
-            };
+            el.oninput = () => ctrl.save(el.value.trim());
             el.focus();
           }),
         }),
       ]),
     ]),
   ]);
-}

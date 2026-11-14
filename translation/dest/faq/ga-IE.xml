@@ -25,6 +25,8 @@
   <string name="howCanIBecomeModerator">Conas is féidir liom a bheith i mo mhodhnóir?</string>
   <string name="youCannotApply">Ní féidir iarratas a dhéanamh chun bheith i do mhodhnóir. Má fheicimid duine a cheapfaimis a bheadh go maith mar mhodhnóir, rachaimid i dteagmháil leo go díreach.</string>
   <string name="isCorrespondenceDifferent">An bhfuil ficheall comhfhreagrais difriúil ó ghnáth-fhicheall?</string>
+  <string name="pleaseReadFairPlayPage">Le haghaidh tuilleadh eolais, léigh ár %s</string>
+  <string name="fairPlayPage">leathanach cothrom na Féinne</string>
   <string name="youCanUseOpeningBookNoEngine">Maidir le Lichess, is é an príomhdhifríocht sna rialacha maidir le fichille comhfhreagrais ná go gceadaítear leabhar oscailte. Tá cosc fós ar innill a úsáid agus beidh bratach ar chúnamh innill dá bharr. Cé go gceadaíonn ICCF úsáid innill i gcomhfhreagras, ní cheadaíonn Lichess.</string>
   <string name="gameplay">Imirt chomhoibritheach</string>
   <string name="howBulletBlitzEtcDecided">Conas a chinntear Bullet, Blitz agus rialuithe ama eile?</string>
@@ -76,10 +78,9 @@ suite. I nodaireacht fichille scríobhtar “ep”.
 
 Féach ar %3$s ar an mbeart seo le haghaidh cleachtadh leis.</string>
   <string name="goodIntroduction">réamhrá maith</string>
-  <string name="officialRulesPDF">rialacha oifigiúla (PDF)</string>
   <string name="lichessTraining">Traenáil Lichess</string>
   <string name="threefoldRepetition">Athshuíomh faoi thrí</string>
-  <string name="threefoldRepetitionExplanation">Má tharlaíonn an suíomh céanna trí huaire, is féidir le himreoirí cluiche cothrom a éileamh faoi %1$s. Úsáideann Lichess rialacha oifigiúla FIDE, mar atá curtha síos in Airteagal 9.2 (d) de %2$s.</string>
+  <string name="threefoldRepetitionExplanation">Má tharlaíonn an suíomh céanna trí huaire, is féidir le himreoirí cluiche cothrom a éileamh faoi %1$s. Úsáideann Lichess rialacha oifigiúla FIDE, mar atá curtha síos in Airteagal 9.2 de %2$s.</string>
   <string name="threefoldRepetitionLowerCase">athshuíomh faoi thrí</string>
   <string name="notRepeatedMoves">Ní dhearna muid bearta athshuíomh. Cén fáth go raibh an cluiche fós réitithe mar cluiche cothrom trí athshuíomh?</string>
   <string name="repeatedPositionsThatMatters">Baineann athshuíomh trí athshuíomh %1$s, agus ní bearta. Ní gá go dtarlódh athshuíomh i ndiaidh a chéile.</string>
@@ -111,7 +112,6 @@ Ná iarr ar an teideal LM.</string>
   <string name="usernamesCannotBeChanged">Ní féidir ainmneacha úsáideora a athrú ar chúiseanna teicniúla agus praiticiúla. Cuirtear ainmneacha úsáideoirí i bhfeidhm san iomarca áiteanna: bunachair sonraí, onnmhairí, logaí agus intinn daoine. Is féidir leat an ceannlitriú a athrú uair amháin.</string>
   <string name="uniqueTrophies">Trófaithe uathúla</string>
   <string name="ownerUniqueTrophies">Tá an trófaí sin ar leithligh i stair Lichess, ní bheidh sé ag éinne riamh seachas %1$s.</string>
-  <string name="wayOfBerserkExplanation">Chun é a fháil, thug hiimgosu dúshlán dó féin Báiní a dhéanamh agus cluichí 100 %% de %s a bhuachan.</string>
   <string name="aHourlyBulletTournament">comórtas Bullet gach uair an chloig</string>
   <string name="goldenZeeExplanation">Bhí ZugAddict ag sruthú agus le 2 uair an chloig anuas bhí sé ag iarraidh an ruaig a chur ar A.I. leibhéal 8 i gcluiche 1+0, gan rath. Dúirt Thibault leis, dá n-éireodh leis é a dhéanamh, go bhfaigheadh sé trófaí uathúil. Uair an chloig ina dhiaidh sin, bhris sé Stockfish, agus tugadh onóir don gheallúint.</string>
   <string name="lichessRatings">Rátálacha Lichess</string>

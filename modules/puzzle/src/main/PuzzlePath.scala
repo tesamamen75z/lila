@@ -1,76 +1,79 @@
 package lila.puzzle
 
-import scala.concurrent.ExecutionContext
+import scalalib.Iso
 
-import lila.db.dsl._
-import lila.user.User
-import org.joda.time.DateTime
+import lila.db.dsl.{ *, given }
+import lila.mon.extensions.*
 
-private object PuzzlePath {
+object PuzzlePath:
 
-  case class Id(value: String) {
+  val sep = '|'
 
-    val parts = value split '_'
+  case class Id(value: String):
+
+    val parts = value.split(sep)
 
     private[puzzle] def tier = PuzzleTier.from(~parts.lift(1))
 
-    def theme = PuzzleTheme.findOrAny(~parts.headOption).key
-  }
+    def angle = PuzzleAngle.findOrMix(~parts.headOption)
 
-  implicit val pathIdIso = lila.common.Iso.string[Id](Id.apply, _.value)
-}
+  given Iso.StringIso[Id] = Iso.string(Id.apply, _.value)
 
-final private class PuzzlePathApi(
-    colls: PuzzleColls
-)(implicit ec: ExecutionContext) {
+final private class PuzzlePathApi(colls: PuzzleColls)(using Executor):
 
-  import BsonHandlers._
+  import BsonHandlers.given
+  import PuzzlePath.*
 
-  def nextFor(
-      user: User,
-      theme: PuzzleTheme.Key,
+  /* What stresses out the puzzle db
+   *
+{"t":{"$date":"2025-05-30T07:11:05.938+00:00"},"s":"I",  "c":"COMMAND",  "id":51803,   "ctx":"conn156","msg":"Slow query","attr":{"type":"command","ns":"puzzler.puzzle2_path","command":{"aggregate":"puzzle2_path","pipeline":[{"$match":{"min":{"$lte":"mix|top|1214"},"max":{"$gte":"mix|top|1214"}}},{"$sample":{"size":1}},{"$project":{"_id":true}}],"
+explain":false,"allowDiskUse":false,"cursor":{"batchSize":101},"bypassDocumentValidation":false,"readConcern":{"level":"local"},"$db":"puzzler","$readPreference":{"mode":"primary"}},"planSummary":"IXSCAN { min: 1, max: -1 }","planningTimeMicros":81,"keysExamined":18388,"docsExamined":30,"cursorExhausted":true,"numYields":18,"nreturned":1,"queryHas
+h":"5B7ADA38","planCacheKey":"7FF0C349","queryFramework":"classic","reslen":286,"locks":{"FeatureCompatibilityVersion":{"acquireCount":{"r":20}},"Global":{"acquireCount":{"r":20}}},"readConcern":{"level":"local","provenance":"clientSupplied"},"writeConcern":{"w":"majority","wtimeout":0,"provenance":"implicitDefault"},"storage":{},"cpuNanos":445997
+50,"remote":"172.16.0.45:39998","protocol":"op_msg","durationMillis":44}}
+   */
+  def nextFor(requester: String)(
+      angle: PuzzleAngle,
       tier: PuzzleTier,
       difficulty: PuzzleDifficulty,
-      previousPaths: Set[PuzzlePath.Id],
+      previousPaths: Set[Id],
       compromise: Int = 0
-  ): Fu[Option[PuzzlePath.Id]] = {
+  )(using perf: Perf): Fu[Option[Id]] = {
     val actualTier =
-      if (tier == PuzzleTier.Top && PuzzleDifficulty.isExtreme(difficulty)) PuzzleTier.Good
+      if tier == PuzzleTier.top && PuzzleDifficulty.isExtreme(difficulty)
+      then PuzzleTier.good
       else tier
     colls
-      .path {
-        _.aggregateOne() { framework =>
-          import framework._
-          val rating     = user.perfs.puzzle.glicko.intRating + difficulty.ratingDelta
-          val ratingFlex = (100 + math.abs(1500 - rating) / 4) * compromise.atMost(4)
+      .path:
+        _.aggregateOne(_.pri): framework =>
+          import framework.*
+          val rating = perf.glicko.intRating.map(_ + difficulty.ratingDelta)
+          val ratingFlex = (100 + math.abs(1500 - rating.value) / 4) * compromise.atMost(4)
           Match(
-            select(theme, actualTier, (rating - ratingFlex) to (rating + ratingFlex)) ++
-              ((compromise != 5 && previousPaths.nonEmpty) ?? $doc("_id" $nin previousPaths))
+            select(angle, actualTier, (rating.value - ratingFlex) to (rating.value + ratingFlex)) ++
+              ((compromise != 5 && previousPaths.nonEmpty).so(bdoc("_id".nin(previousPaths))))
           ) -> List(
             Sample(1),
-            Project($id(true))
+            Project(bid(true))
           )
-        }.dmap(_.flatMap(_.getAsOpt[PuzzlePath.Id]("_id")))
-      }
-      .flatMap {
+        .dmap(_.flatMap(_.getAsOpt[Id]("_id")))
+      .flatMap:
         case Some(path) => fuccess(path.some)
-        case _ if actualTier == PuzzleTier.Top =>
-          nextFor(user, theme, PuzzleTier.Good, difficulty, previousPaths)
-        case _ if actualTier == PuzzleTier.Good && compromise == 2 =>
-          nextFor(user, theme, PuzzleTier.All, difficulty, previousPaths, compromise = 1)
+        case _ if actualTier == PuzzleTier.top =>
+          nextFor(requester)(angle, PuzzleTier.good, difficulty, previousPaths)
+        case _ if actualTier == PuzzleTier.good && compromise == 2 =>
+          nextFor(requester)(angle, PuzzleTier.all, difficulty, previousPaths, compromise = 1)
         case _ if compromise < 5 =>
-          nextFor(user, theme, actualTier, difficulty, previousPaths, compromise + 1)
+          nextFor(requester)(angle, actualTier, difficulty, previousPaths, compromise + 1)
         case _ => fuccess(none)
-      }
-  }.mon(_.puzzle.path.nextFor(theme.value, tier.key, difficulty.key, previousPaths.size, compromise))
+  }.mon:
+    lila.mon.puzzle.nextPathFor(angle.categ, requester)
 
-  def select(theme: PuzzleTheme.Key, tier: PuzzleTier, rating: Range) = $doc(
-    "min" $lte f"${theme}_${tier}_${rating.max}%04d",
-    "max" $gte f"${theme}_${tier}_${rating.min}%04d"
+  def select(angle: PuzzleAngle, tier: PuzzleTier, rating: Range) = bdoc(
+    "min".lte(f"${angle.key}${sep}${tier}${sep}${rating.max}%04d"),
+    "max".gte(f"${angle.key}${sep}${tier}${sep}${rating.min}%04d")
   )
 
-  def isStale = colls.path(_.primitiveOne[Long]($empty, "gen")).map {
-    _.fold(true)(_ < DateTime.now.minusDays(1).getMillis)
-  }
-
-}
+  def isStale = colls
+    .path(_.primitiveOne[Long](emptyBdoc, "gen"))
+    .map:
+      _.forall(_ < nowInstant.minusDays(1).toMillis)

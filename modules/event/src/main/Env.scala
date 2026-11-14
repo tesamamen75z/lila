@@ -1,18 +1,27 @@
 package lila.event
 
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import com.softwaremill.macwire._
 
-import lila.common.config.CollName
-import lila.common.config._
+import lila.common.autoconfig.given
+import lila.core.config.{ CollName, RouteUrl }
 
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    cacheApi: lila.memo.CacheApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    cacheApi: lila.memo.CacheApi,
+    markdownCache: lila.memo.MarkdownCache,
+    langList: lila.core.i18n.LangList,
+    ircApi: lila.core.irc.IrcApi,
+    routeUrl: RouteUrl
+)(using Executor, Scheduler):
 
   private lazy val eventColl = db(appConfig.get[CollName]("event.collection.event"))
 
+  val form = wire[EventForm]
+
   lazy val api = wire[EventApi]
-}
+
+  lazy val markdown = wire[EventMarkdown]
+
+  lazy val jsonView = wire[JsonView]

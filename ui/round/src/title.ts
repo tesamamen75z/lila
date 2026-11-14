@@ -1,17 +1,19 @@
-import RoundController from './ctrl';
-import { aborted, finished } from 'game/status';
-import { isPlayerTurn } from 'game';
+import { aborted, finished, isPlayerTurn } from 'lib/game';
+
+import type RoundController from './ctrl';
 
 const initialTitle = document.title;
 
 let curFaviconIdx = 0;
 
-const F = ['/assets/logo/lichess-favicon-32.png', '/assets/logo/lichess-favicon-32-invert.png'].map((path, i) => () => {
-  if (curFaviconIdx !== i) {
-    (document.getElementById('favicon') as HTMLAnchorElement).href = path;
-    curFaviconIdx = i;
-  }
-});
+const F = ['/assets/logo/lichess-favicon.svg', '/assets/logo/lichess-favicon-invert.svg'].map(
+  (path, i) => () => {
+    if (curFaviconIdx !== i) {
+      (document.getElementById('favicon') as HTMLAnchorElement).href = path;
+      curFaviconIdx = i;
+    }
+  },
+);
 
 let tickerTimer: Timeout | undefined;
 function resetTicker() {
@@ -30,22 +32,19 @@ function startTicker() {
   if (!tickerTimer) tickerTimer = setTimeout(tick, 200);
 }
 
-export function init() {
-  window.addEventListener('focus', resetTicker);
-}
+export const init = (): void => window.addEventListener('focus', resetTicker);
 
-export function set(ctrl: RoundController, text?: string) {
+export function set(ctrl: RoundController): void {
   if (ctrl.data.player.spectator) return;
-  if (!text) {
-    if (aborted(ctrl.data) || finished(ctrl.data)) {
-      text = ctrl.noarg('gameOver');
-    } else if (isPlayerTurn(ctrl.data)) {
-      text = ctrl.noarg('yourTurn');
-      if (!document.hasFocus()) startTicker();
-    } else {
-      text = ctrl.noarg('waitingForOpponent');
-      resetTicker();
-    }
+  let text = '';
+  if (aborted(ctrl.data) || finished(ctrl.data)) {
+    text = i18n.site.gameOver;
+  } else if (isPlayerTurn(ctrl.data)) {
+    text = i18n.site.yourTurn;
+    if (!document.hasFocus()) startTicker();
+  } else {
+    text = i18n.site.waitingForOpponent;
+    resetTicker();
   }
   document.title = `${text} - ${initialTitle}`;
 }

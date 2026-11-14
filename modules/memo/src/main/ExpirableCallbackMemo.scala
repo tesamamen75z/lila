@@ -1,26 +1,26 @@
 package lila.memo
 
-import com.github.blemale.scaffeine.Cache
-import scala.concurrent.duration.FiniteDuration
+import org.apache.pekko.actor.{ Cancellable, Scheduler }
 
 // calls a function when a key expires
-final class ExpireCallbackMemo(ttl: FiniteDuration, callback: String => Unit)(implicit mode: play.api.Mode) {
+final class ExpireCallbackMemo[K](
+    scheduler: Scheduler,
+    ttl: FiniteDuration,
+    callback: K => Unit,
+    initialCapacity: Int = 4096
+)(using Executor):
 
-  private val cache: Cache[String, Boolean] = lila.memo.CacheApi
-    .scaffeine(mode)
-    .expireAfterWrite(ttl)
-    .removalListener((key: String, _: Boolean, _) => callback(key))
-    .build[String, Boolean]()
+  private val timeouts = scalalib.ConcurrentMap[K, Cancellable](initialCapacity)
 
-  @inline private def isNotNull[A](a: A) = a != null
+  export timeouts.{ contains as get, size as count, keySet }
 
-  def get(key: String): Boolean = isNotNull(cache.underlying getIfPresent key)
+  def put(key: K): Unit = timeouts.compute(key): canc =>
+    canc.foreach(_.cancel())
+    scheduler
+      .scheduleOnce(ttl):
+        remove(key)
+        callback(key)
+      .some
 
-  def put(key: String) = cache.put(key, true)
-
-  def remove(key: String) = cache invalidate key
-
-  def count = cache.estimatedSize().toInt
-
-  def keySet: Set[String] = cache.asMap().keys.toSet
-}
+  // does not call the expiration callback
+  def remove(key: K): Unit = timeouts.remove(key).foreach(_.cancel())

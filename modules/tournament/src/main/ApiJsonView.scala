@@ -1,101 +1,112 @@
 package lila.tournament
 
-import play.api.i18n.Lang
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.common.Json.jodaWrites
+import lila.common.Json.given
+import lila.core.config.RouteUrl
+import lila.core.i18n.Translate
+import lila.gathering.Condition
+import lila.gathering.ConditionHandlers.JSONHandlers.given
+import lila.gathering.GatheringJson.*
 import lila.rating.PerfType
-import lila.user.LightUserApi
 
-final class ApiJsonView(lightUserApi: LightUserApi)(implicit ec: scala.concurrent.ExecutionContext) {
+final class ApiJsonView(lightUserApi: lila.core.user.LightUserApi, routeUrl: RouteUrl)(using Executor):
 
-  import JsonView._
-  import Condition.JSONHandlers._
+  import JsonView.{ *, given }
 
-  def apply(tournaments: VisibleTournaments)(implicit lang: Lang): Fu[JsObject] =
-    for {
-      created  <- tournaments.created.map(fullJson).sequenceFu
-      started  <- tournaments.started.map(fullJson).sequenceFu
-      finished <- tournaments.finished.map(fullJson).sequenceFu
-    } yield Json.obj(
-      "created"  -> created,
-      "started"  -> started,
-      "finished" -> finished
-    )
+  def apply(tournaments: VisibleTournaments)(using Translate): Fu[JsObject] = for
+    created <- tournaments.created.map(fullJson).parallel
+    started <- tournaments.started.map(fullJson).parallel
+    finished <- tournaments.finished.map(fullJson).parallel
+  yield Json.obj(
+    "created" -> created,
+    "started" -> started,
+    "finished" -> finished
+  )
 
-  def featured(tournaments: List[Tournament])(implicit lang: Lang): Fu[JsObject] =
-    tournaments.map(fullJson).sequenceFu map { objs =>
-      Json.obj("featured" -> objs)
-    }
-
-  def calendar(tournaments: List[Tournament])(implicit lang: Lang): JsObject =
+  private[tournament] def calendar(tournaments: List[Tournament])(using Translate): JsObject =
     Json.obj(
-      "since"       -> tournaments.headOption.map(_.startsAt.withTimeAtStartOfDay),
-      "to"          -> tournaments.lastOption.map(_.finishesAt.withTimeAtStartOfDay plusDays 1),
+      "since" -> tournaments.headOption.map(_.startsAt.withTimeAtStartOfDay),
+      "to" -> tournaments.lastOption.map(_.finishesAt.withTimeAtStartOfDay.plusDays(1)),
       "tournaments" -> JsArray(tournaments.map(baseJson))
     )
 
-  private def baseJson(tour: Tournament)(implicit lang: Lang): JsObject =
+  def crudCalendar(tour: Tournament)(using Translate): JsObject =
+    baseJson(tour) + ("spotlight" -> Json.obj(
+      "headline" -> tour.spotlight.map(_.headline),
+      "homepageHours" -> tour.spotlight.flatMap(_.homepageHours),
+      "manage" -> routeUrl(routes.TournamentCrud.edit(tour.id))
+    ))
+
+  private def baseJson(tour: Tournament)(using Translate): JsObject =
     Json
       .obj(
-        "id"        -> tour.id,
+        "id" -> tour.id,
         "createdBy" -> tour.createdBy,
-        "system"    -> "arena", // BC
-        "minutes"   -> tour.minutes,
-        "clock"     -> tour.clock,
-        "rated"     -> tour.mode.rated,
-        "fullName"  -> tour.name(),
+        "system" -> "arena", // BC
+        "minutes" -> tour.minutes,
+        "clock" -> tour.clock,
+        "rated" -> tour.rated,
+        "fullName" -> tour.name(),
         "nbPlayers" -> tour.nbPlayers,
         "variant" -> Json.obj(
-          "key"   -> tour.variant.key,
+          "key" -> tour.variant.key,
           "short" -> tour.variant.shortName,
-          "name"  -> tour.variant.name
+          "name" -> tour.variant.name
         ),
-        "startsAt"   -> tour.startsAt,
+        "startsAt" -> tour.startsAt,
         "finishesAt" -> tour.finishesAt,
-        "status"     -> tour.status.id,
-        "perf"       -> perfJson(tour.perfType)
+        "status" -> tour.status.id,
+        "perf" -> perfJson(tour.perfType)
       )
-      .add("secondsToStart", tour.secondsToStart.some.filter(0 <))
+      .add("secondsToStart", tour.secondsToStart.some.filter(_.nonZero))
       .add("hasMaxRating", tour.conditions.maxRating.isDefined) // BC
       .add[Condition.RatingCondition]("maxRating", tour.conditions.maxRating)
       .add[Condition.RatingCondition]("minRating", tour.conditions.minRating)
+      .add("minRatedGames", tour.conditions.nbRatedGame)
+      .add("onlyTitled", tour.conditions.titled.isDefined)
+      .add("teamMember", tour.singleTeamId)
       .add("private", tour.isPrivate)
-      .add("position", tour.position.map(positionJson))
-      .add("schedule", tour.schedule map scheduleJson)
+      .add("position", tour.position.map(position))
+      .add("payouts", tour.payouts)
+      .add("schedule", tour.scheduleData.map(scheduleJson))
       .add(
         "teamBattle",
         tour.teamBattle.map { battle =>
           Json.obj(
-            "teams"     -> battle.teams,
+            "teams" -> battle.teams,
             "nbLeaders" -> battle.nbLeaders
           )
         }
       )
 
-  def fullJson(tour: Tournament)(implicit lang: Lang): Fu[JsObject] =
-    (tour.winnerId ?? lightUserApi.async) map { winner =>
-      baseJson(tour).add("winner" -> winner.map(userJson))
+  def fullJson(tour: Tournament)(using Translate): Fu[JsObject] =
+    tour.winnerId.so(lightUserApi.async).map { winner =>
+      baseJson(tour).add("winner" -> winner)
     }
 
-  private def userJson(u: lila.common.LightUser) =
+  def byPlayer(e: LeaderboardApi.TourEntry)(using Translate): JsObject =
     Json.obj(
-      "id"    -> u.id,
-      "name"  -> u.name,
-      "title" -> u.title
+      "tournament" -> baseJson(e.tour),
+      "player" -> Json
+        .obj(
+          "games" -> e.entry.nbGames,
+          "score" -> e.entry.score,
+          "rank" -> e.entry.rank
+        )
+        .add("performance" -> e.performance)
     )
 
-  private val perfPositions: Map[PerfType, Int] = {
-    import PerfType._
-    List(Bullet, Blitz, Rapid, Classical, UltraBullet) ::: variants
+  private val perfPositions: Map[PerfKey, Int] = {
+    import PerfKey.*
+    List(bullet, blitz, rapid, classical, ultraBullet) ::: lila.rating.PerfType.variants
   }.zipWithIndex.toMap
 
-  private def perfJson(p: PerfType)(implicit lang: Lang) =
+  private def perfJson(p: PerfType)(using Translate) =
     Json
       .obj(
-        "key"      -> p.key,
-        "name"     -> p.trans,
-        "position" -> ~perfPositions.get(p)
+        "key" -> p.key,
+        "name" -> p.trans,
+        "position" -> { ~perfPositions.get(p): Int }
       )
       .add("icon" -> mobileBcIcons.get(p)) // mobile BC only
-}

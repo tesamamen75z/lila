@@ -1,37 +1,29 @@
 package lila.round
 
-import reactivemongo.api.bson._
-import reactivemongo.api.ReadPreference
+import reactivemongo.api.bson.*
 
-import lila.db.dsl._
-import lila.game.Game
+import lila.db.dsl.*
 
-final class NoteApi(coll: Coll)(implicit ec: scala.concurrent.ExecutionContext) {
+final class NoteApi(coll: Coll)(using Executor):
 
-  def collName  = coll.name
+  def collName = coll.name
   val noteField = "t"
 
-  def get(gameId: Game.ID, userId: String): Fu[String] =
-    coll.primitiveOne[String]($id(makeId(gameId, userId)), noteField) dmap (~_)
+  def get(gameId: GameId, userId: UserId): Fu[String] =
+    coll.secondary.primitiveOne[String](bid(makeId(gameId, userId)), noteField).dmap(~_)
 
-  def set(gameId: Game.ID, userId: String, text: String) = {
-    if (text.isEmpty) coll.delete.one($id(makeId(gameId, userId)))
+  def set(gameId: GameId, userId: UserId, text: String) = {
+    if text.isEmpty then coll.delete.one(bid(makeId(gameId, userId)))
     else
       coll.update.one(
-        $id(makeId(gameId, userId)),
-        $set(noteField -> text),
+        bid(makeId(gameId, userId)),
+        bset(noteField -> text),
         upsert = true
       )
   }.void
 
-  def byGameIds(gameIds: Seq[Game.ID], userId: String): Fu[Map[Game.ID, String]] =
-    coll.byIds(gameIds.map(makeId(_, userId)), ReadPreference.secondaryPreferred) map { docs =>
-      (for {
-        doc    <- docs
-        noteId <- doc.getAsOpt[String]("_id")
-        note   <- doc.getAsOpt[String](noteField)
-      } yield (noteId take Game.gameIdSize, note)).toMap
-    }
+  val form =
+    import play.api.data.Forms.*
+    play.api.data.Form(single("text" -> text))
 
-  private def makeId(gameId: String, userId: String) = s"$gameId$userId"
-}
+  private def makeId(gameId: GameId, userId: UserId) = s"$gameId$userId"

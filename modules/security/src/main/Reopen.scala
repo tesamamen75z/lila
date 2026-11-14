@@ -1,83 +1,80 @@
 package lila.security
 
 import play.api.i18n.Lang
-import scala.concurrent.duration._
-import scalatags.Text.all._
+import scalatags.Text.all.*
 
-import lila.common.config._
-import lila.common.EmailAddress
-import lila.i18n.I18nKeys.{ emails => trans }
+import lila.core.config.*
+import lila.core.i18n.I18nKey.emails as trans
 import lila.mailer.Mailer
 import lila.user.{ User, UserRepo }
 
 final class Reopen(
     mailer: lila.mailer.Mailer,
     userRepo: UserRepo,
-    baseUrl: BaseUrl,
+    routeUrl: RouteUrl,
     tokenerSecret: Secret
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, lila.core.i18n.Translator):
 
-  import Mailer.html._
+  import Mailer.html.*
 
   def prepare(
-      username: String,
+      u: UserStr,
       email: EmailAddress,
       closedByMod: User => Fu[Boolean]
-  ): Fu[Either[(String, String), User]] =
-    userRepo.enabledWithEmail(email.normalize) flatMap {
-      case Some(_) =>
-        fuccess(Left("emailUsed" -> "This email address is already in use by an active account."))
-      case _ =>
-        val userId = User normalize username
-        userRepo.byIdNotErased(userId) flatMap {
-          case None =>
-            fuccess(Left("noUser" -> "No account found with this username."))
-          case Some(user) if user.enabled =>
-            fuccess(Left("alreadyActive" -> "This account is already active."))
-          case Some(user) =>
-            userRepo.currentOrPrevEmail(user.id) flatMap {
-              case None =>
-                fuccess(
-                  Left("noEmail" -> "That account doesn't have any associated email, and cannot be reopened.")
-                )
-              case Some(prevEmail) if !email.similarTo(prevEmail) =>
-                fuccess(Left("differentEmail" -> "That account has a different email address."))
-              case _ =>
-                closedByMod(user) map {
-                  case true => Left("nope" -> "Sorry, that account can no longer be reopened.")
-                  case _    => Right(user)
-                }
-            }
-        }
-    }
+  ): FuRaise[(String, String), User] = for
+    existing <- userRepo.byEmail(email.normalize)
+    _ <- raiseIf(existing.exists(_.enabled.yes)):
+      "emailUsed" -> "This email address is already in use by an active account."
+    user <- userRepo.byId(u)
+    user <- user.raiseIfNone("noUser" -> "No account found with this username.")
+    _ <- raiseIf(user.enabled.yes):
+      "alreadyActive" -> "This account is already active."
+    userEmail <- userRepo.currentOrPrevEmail(user.id)
+    userEmail <- userEmail.raiseIfNone:
+      "noEmail" -> "That account doesn't have any associated email, and cannot be reopened."
+    _ <- raiseIf(!email.similarTo(userEmail)):
+      "differentEmail" -> "That account has a different email address."
+    modClosed <- closedByMod(user)
+    _ <- raiseIf(modClosed):
+      "nope" -> "Sorry, that account can no longer be reopened."
+    flags <- userRepo.closedFlags(user)
+    _ <- raiseIf(flags.exists(_.forever)):
+      "nope" -> "Sorry, but you explicitly requested that your account could never be reopened."
+  yield user
 
-  def send(user: User, email: EmailAddress)(implicit lang: Lang): Funit =
-    tokener make user.id flatMap { token =>
+  def send(user: User, email: EmailAddress)(using lang: Lang): Funit =
+    tokener.make(user.id).flatMap { token =>
       lila.mon.email.send.reopen.increment()
-      val url = s"$baseUrl/account/reopen/login/$token"
-      mailer send Mailer.Message(
-        to = email,
-        subject = s"Reopen your lichess.org account: ${user.username}",
-        text = Mailer.txt.addServiceNote(s"""
+      val url = routeUrl(routes.Account.reopenLogin(token))
+      mailer.sendOrFail:
+        Mailer.Message(
+          to = email,
+          subject = s"Reopen your lichess.org account: ${user.username}",
+          text = Mailer.txt.addServiceNote(s"""
 ${trans.passwordReset_clickOrIgnore.txt()}
 
 $url
 
-${trans.common_orPaste.txt()}"""),
-        htmlBody = emailMessage(
-          p(trans.passwordReset_clickOrIgnore()),
-          potentialAction(metaName("Log in"), Mailer.html.url(url)),
-          serviceNote
-        ).some
-      )
+${trans.common_linkNotWorking.txt()}"""),
+          htmlBody = emailMessage(
+            p(trans.passwordReset_clickOrIgnore()),
+            potentialAction(metaName("Log in"), Mailer.html.url(url)),
+            serviceNote
+          ).some
+        )
     }
 
   def confirm(token: String): Fu[Option[User]] =
-    tokener read token flatMap { _ ?? userRepo.disabledById } flatMap {
-      _ ?? { user =>
-        userRepo reopen user.id inject user.some
-      }
+    tokener.read(token).flatMapz(userRepo.disabledById).flatMapz { user =>
+      for
+        flags <- userRepo.closedFlags(user)
+        canReopen = flags.exists(_.forever).not
+        _ <- canReopen.so(userRepo.reopen(user.id))
+        reopened = canReopen.option(user)
+      yield
+        if reopened.isDefined
+        then lila.common.Bus.pub(lila.core.security.ReopenAccount(user))
+        reopened
     }
 
-  private val tokener = LoginToken.makeTokener(tokenerSecret, 20 minutes)
-}
+  private val tokener = StringToken.withLifetime[UserId](tokenerSecret, 20.minutes)

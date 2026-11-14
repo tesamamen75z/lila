@@ -1,4 +1,4 @@
-var coll = db.user4;
+const coll = db.user4;
 
 print('Migrating ' + coll.count() + ' users');
 
@@ -7,7 +7,7 @@ coll
     {},
     {
       _id: 1,
-    }
+    },
   )
   .forEach(function (u) {
     coll.update(
@@ -18,6 +18,6 @@ coll
         $set: {
           len: NumberInt(u._id.length),
         },
-      }
+      },
     );
   });

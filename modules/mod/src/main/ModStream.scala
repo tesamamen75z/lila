@@ -1,41 +1,69 @@
 package lila.mod
 
-import akka.stream.scaladsl._
-import play.api.libs.json._
+import org.apache.pekko.stream.scaladsl.*
+import play.api.libs.json.*
+import reactivemongo.pekkostream.cursorProducer
 
+import lila.common.Json.given
 import lila.common.{ Bus, HTTPRequest }
-import lila.security.UserSignup
+import lila.core.security.UserSignup
+import lila.core.team.TeamCreate
+import lila.db.dsl.{ *, given }
+import lila.user.UserRepo
 
-final class ModStream {
+final class ModStream(logRepo: ModlogRepo, userRepo: UserRepo)(using org.apache.pekko.stream.Materializer):
 
-  private val classifier = "userSignup"
+  def markedSince(since: Instant): Source[UserId, ?] =
+    logRepo.coll
+      .find(
+        bdoc("action".in(List("engine", "booster", "cheatDetected")), "date" -> bdoc("$gt" -> since)),
+        bdoc("user" -> true).some
+      )
+      .sort(bdoc("date" -> 1))
+      .batchSize(100)
+      .cursor[Bdoc]()
+      .documentSource()
+      .grouped(100)
+      .throttle(10, 1.second)
+      .map(_.flatMap(_.getAsOpt[UserId]("user")))
+      .mapAsync(1)(userRepo.filterLame)
+      .mapConcat(_.toList)
 
-  private val blueprint =
-    Source
-      .queue[UserSignup](32, akka.stream.OverflowStrategy.dropHead)
-      .map { case UserSignup(user, email, req, fp, suspIp) =>
-        Json.obj(
-          "t"           -> "signup",
-          "username"    -> user.username,
-          "email"       -> email.value,
-          "ip"          -> HTTPRequest.ipAddress(req).value,
-          "suspIp"      -> suspIp,
-          "userAgent"   -> HTTPRequest.userAgent(req),
-          "fingerPrint" -> fp.map(_.value)
-        )
-      }
-      .map { js =>
+  object events:
+
+    private val blueprint = Source
+      .queue[UserSignup | TeamCreate](32, org.apache.pekko.stream.OverflowStrategy.dropHead)
+      .map:
+        case UserSignup(user, email, req, fp, suspIp) =>
+          Json
+            .obj(
+              "t" -> "signup",
+              "username" -> user.username,
+              "email" -> email.value,
+              "ip" -> HTTPRequest.ipAddress(req).value,
+              "suspIp" -> suspIp,
+              "userAgent" -> HTTPRequest.userAgent(req),
+              "fingerPrint" -> fp
+            )
+        case TeamCreate(team) =>
+          Json.obj(
+            "t" -> "teamCreate",
+            "teamId" -> team.id,
+            "name" -> team.name,
+            "description" -> team.description,
+            "creator" -> team.userId
+          )
+      .map: js =>
         s"${Json.stringify(js)}\n"
-      }
 
-  def apply(): Source[String, _] =
-    blueprint mapMaterializedValue { queue =>
-      val sub = Bus.subscribeFun(classifier) { case signup: UserSignup =>
-        queue.offer(signup).unit
-      }
-
-      queue.watchCompletion() dforeach { _ =>
-        Bus.unsubscribe(sub, classifier)
-      }
-    }
-}
+    def apply()(using Executor): Source[String, ?] =
+      blueprint.mapMaterializedValue: queue =>
+        val userDedup = scalalib.cache.OnceEvery[UserId](15.minutes)
+        val subUser = Bus.sub[UserSignup]: s =>
+          if userDedup(s.user.id) then queue.offer(s)
+        val subTeam = Bus.sub[TeamCreate](queue.offer(_))
+        queue
+          .watchCompletion()
+          .addEffectAnyway:
+            Bus.unsub[UserSignup](subUser)
+            Bus.unsub[TeamCreate](subTeam)

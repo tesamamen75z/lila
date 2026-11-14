@@ -1,24 +1,67 @@
 .tour__side {
   @extend %flex-column;
 
+  .disclosure {
+    position: absolute;
+    right: 1em;
+    bottom: 1em;
+    color: $c-font-dim;
+    cursor: pointer;
+
+    &::before {
+      content: $licon-UpTriangle;
+      font-family: lichess;
+      font-size: 1em;
+    }
+
+    &:hover {
+      color: $c-primary;
+    }
+  }
+
+  &.collapsed {
+    .disclosure::before {
+      content: $licon-DownTriangle;
+    }
+
+    .tour__meta > * {
+      display: none;
+    }
+
+    .tour__meta__head,
+    .disclosure {
+      display: flex;
+      bottom: 15%;
+    }
+  }
+
   .mchat {
     flex: 1 1 7em;
     margin-top: $block-gap;
 
-    @include breakpoint($mq-col2) {
+    @include mq-at-least-col2 {
       min-height: inherit;
     }
   }
 }
 
 .tour__meta {
-  @extend %box-neat-force;
+  @extend %flex-column, %box-neat-force;
 
+  gap: $block-gap;
+  position: relative;
   background: $c-bg-box;
-  padding: #{$block-gap * 0.6} $block-gap;
+  padding: $block-gap 0;
+
+  .scrollable-content {
+    @extend %flex-column;
+
+    gap: $block-gap;
+    overflow-y: auto;
+  }
 
   section {
-    margin-bottom: $block-gap;
+    padding: 0 $block-gap;
 
     &[data-icon] {
       @extend %flex-center-nowrap;
@@ -26,7 +69,7 @@
 
     &::before {
       font-size: 3rem;
-      margin-right: 4%;
+      margin-inline-end: 4%;
     }
 
     p {
@@ -78,17 +121,32 @@
   .description {
     @extend %break-word;
 
-    max-height: 20vh;
-    overflow-y: auto;
+    height: fit-content;
   }
 
   .tour__prize {
-    @extend %box-radius;
-
-    padding: 1em 2vmin;
+    padding: $block-gap 2vmin;
     background: $c-bg-zebra;
-    margin-bottom: 1em;
     font-size: 0.9em;
+    margin-bottom: calc($block-gap * -1);
+  }
+}
+
+.tour__bots-warning {
+  @extend %box-neat, %flex-center-nowrap;
+
+  gap: 1em;
+  margin-top: 1em;
+  background: color-mix(in oklab, $c-accent 10%, $c-bg);
+  padding: 1em;
+
+  h2 {
+    margin: 0 0 0.5em 0;
+  }
+
+  img {
+    aspect-ratio: 1 / 1;
+    width: 5em;
   }
 }
 
@@ -96,7 +154,7 @@
   overflow: visible;
 
   /* fixes invisible spectators on firefox, col2 */
-  @include breakpoint($mq-col1) {
+  @include mq-is-col1 {
     margin: 0 $block-gap;
   }
 }

@@ -1,61 +1,51 @@
 package lila.practice
 
-import org.joda.time.DateTime
+import reactivemongo.api.bson.Macros.Annotations.Key
 
-import lila.user.User
-import lila.study.{ Chapter, Study }
+import lila.study.ChapterPreview
 
 case class PracticeProgress(
-    _id: PracticeProgress.Id,
+    @Key("_id") id: UserId,
     chapters: PracticeProgress.ChapterNbMoves,
-    createdAt: DateTime,
-    updatedAt: DateTime
-) {
+    createdAt: Instant,
+    updatedAt: Instant
+):
 
   import PracticeProgress.NbMoves
 
-  def id = _id
+  def apply(chapterId: StudyChapterId): Option[NbMoves] =
+    chapters.get(chapterId)
 
-  def apply(chapterId: Chapter.Id): Option[NbMoves] =
-    chapters get chapterId
-
-  def withNbMoves(chapterId: Chapter.Id, nbMoves: PracticeProgress.NbMoves) =
+  def withNbMoves(chapterId: StudyChapterId, nbMoves: PracticeProgress.NbMoves) =
     copy(
       chapters = chapters - chapterId + {
         chapterId -> NbMoves(math.min(chapters.get(chapterId).fold(999)(_.value), nbMoves.value))
       },
-      updatedAt = DateTime.now
+      updatedAt = nowInstant
     )
 
-  def countDone(chapterIds: List[Chapter.Id]): Int =
-    chapterIds count chapters.contains
+  def countDone(chapterIds: List[StudyChapterId]): Int =
+    chapterIds.count(chapters.contains)
 
-  def firstOngoingIn(metas: List[Chapter.Metadata]): Option[Chapter.Metadata] =
-    metas.find { c =>
-      !chapters.contains(c.id) && !PracticeStructure.isChapterNameCommented(c.name)
-    } orElse metas.find { c =>
-      !PracticeStructure.isChapterNameCommented(c.name)
-    }
-}
+  def firstOngoingIn(metas: List[ChapterPreview]): Option[ChapterPreview] =
+    metas
+      .find: c =>
+        !chapters.contains(c.id)
+      .orElse:
+        metas.headOption
 
-object PracticeProgress {
+object PracticeProgress:
 
-  case class Id(value: String) extends AnyVal
+  opaque type NbMoves = Int
+  object NbMoves extends OpaqueInt[NbMoves]
 
-  case class NbMoves(value: Int) extends AnyVal
-  implicit val nbMovesIso = lila.common.Iso.int[NbMoves](NbMoves.apply, _.value)
+  type ChapterNbMoves = Map[StudyChapterId, NbMoves]
 
-  case class OnComplete(userId: User.ID, studyId: Study.Id, chapterId: Chapter.Id)
+  def empty(id: UserId) = PracticeProgress(
+    id = id,
+    chapters = Map.empty,
+    createdAt = nowInstant,
+    updatedAt = nowInstant
+  )
 
-  type ChapterNbMoves = Map[Chapter.Id, NbMoves]
-
-  def empty(id: Id) =
-    PracticeProgress(
-      _id = id,
-      chapters = Map.empty,
-      createdAt = DateTime.now,
-      updatedAt = DateTime.now
-    )
-
-  def anon = empty(Id("anon"))
-}
+  def anon = empty(UserId("anon"))

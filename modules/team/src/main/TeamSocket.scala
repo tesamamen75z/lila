@@ -1,36 +1,31 @@
 package lila.team
 
-import lila.room.RoomSocket.{ Protocol => RP, _ }
-import lila.socket.RemoteSocket.{ Protocol => P, _ }
+import lila.core.socket.{ protocol as P, * }
+import lila.room.RoomSocket.{ Protocol as RP, * }
 
 final private class TeamSocket(
-    remoteSocketApi: lila.socket.RemoteSocket,
-    chat: lila.chat.ChatApi,
-    cached: Cached
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    mode: play.api.Mode
-) {
+    socketKit: SocketKit,
+    chat: lila.core.chat.ChatApi,
+    api: TeamApi
+)(using Executor):
 
   lazy val rooms = makeRoomMap(send)
 
-  subscribeChat(rooms, _.Team)
+  subscribeChat(rooms, _.team)
 
-  private lazy val handler: Handler =
-    roomHandler(
-      rooms,
-      chat,
-      logger,
-      roomId => _.Team(roomId.value).some,
-      localTimeout = Some { (roomId, modId, suspectId) =>
-        cached.isLeader(roomId.value, modId) >>& !cached.isLeader(roomId.value, suspectId)
-      },
-      chatBusChan = _.Team
-    )
+  private lazy val handler: SocketHandler = roomHandler(
+    rooms,
+    chat,
+    logger,
+    roomId => _.Team(roomId.into(TeamId)).some,
+    localTimeout = Some: (roomId, modId, suspectId) =>
+      api.hasCommPerm(roomId.into(TeamId))(using modId.into(MyId)) >>&
+        api.hasCommPerm(roomId.into(TeamId))(using suspectId.into(MyId)).not,
+    chatBusChan = _.team
+  )
 
-  private lazy val send: String => Unit = remoteSocketApi.makeSender("team-out").apply _
+  private lazy val send = socketKit.send("team-out")
 
-  remoteSocketApi.subscribe("team-in", RP.In.reader)(
-    handler orElse remoteSocketApi.baseHandler
-  ) >>- send(P.Out.boot)
-}
+  socketKit
+    .subscribe("team-in", RP.In.reader)(handler.orElse(socketKit.baseHandler))
+    .andDo(send.exec(P.Out.boot))

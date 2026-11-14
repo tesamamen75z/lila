@@ -1,9 +1,22 @@
 .rcontrols {
   text-align: center;
   width: 100%;
+  z-index: 1;
 
   p {
     margin: 0;
+  }
+
+  button,
+  a.fbt {
+    @extend %box-radius;
+
+    &.resign,
+    &.abort {
+      &:not(.disabled):hover {
+        background: $c-bad;
+      }
+    }
   }
 
   .disabled {
@@ -17,7 +30,7 @@
 
   .suggestion,
   .pending,
-  .negotiation {
+  .question {
     padding: 0.5em 3%;
     background: $c-bg-zebra;
     border: $border;
@@ -43,7 +56,7 @@
 
     p {
       flex: 3 1;
-      margin-right: 7px;
+      margin-inline-end: 7px;
     }
 
     .button {
@@ -54,7 +67,7 @@
   @keyframes flash-once {
     from {
       background: $c-accent;
-      color: $c-accent-over;
+      color: $c-over;
     }
 
     to {
@@ -63,14 +76,16 @@
     }
   }
 
-  .negotiation {
+  .question {
     @extend %flex-center-nowrap;
-    animation: flash-once 1s ease-in;
 
+    animation: flash-once 1s ease-in;
+    border: none;
     padding: 1px;
 
     p {
       flex: 3 1 auto;
+      padding: 0.5em 0;
     }
 
     a {
@@ -80,12 +95,11 @@
       background: $c-bg-box;
     }
 
-    .accept {
+    .yes {
       color: $c-good;
-      margin-right: 1px;
     }
 
-    .decline {
+    .no {
       color: $c-bad;
     }
 
@@ -94,11 +108,11 @@
       background: $c-good;
     }
 
-    a.decline:hover {
+    a.no:hover {
       background: $c-bad;
     }
 
-    @include breakpoint($mq-col1) {
+    @include mq-is-col1 {
       a {
         line-height: 1.6em;
         flex: 0 0 2.5rem;
@@ -118,6 +132,8 @@
 
     border-bottom: $border;
     position: relative;
+    padding: 0 8px 8px;
+    gap: 4px;
 
     /* for rematch-decline */
     .fbt {
@@ -152,36 +168,40 @@
       height: 40px;
     }
 
-    @include breakpoint($mq-col1) {
+    @include mq-is-col1 {
       margin-top: $block-gap;
     }
   }
 
-  .analysis {
+  .analysis,
+  .board-menu-toggle-btn {
     display: none;
 
-    @include breakpoint($mq-col1) {
+    @include mq-is-col1 {
       display: block;
-      margin-left: 2em;
+      margin-inline-start: 2em;
+    }
+
+    @media (max-width: $xxx-small) {
+      margin-inline-start: 0;
     }
   }
 
   .rematch {
     &.fbt {
       @extend %metal;
+      @include transition;
 
       font-size: 1.2em;
       height: 6rem;
-
-      @include transition;
     }
 
     &.me {
-      background: mix($c-primary, $c-bg-box, 80%);
+      background: color-mix(in oklab, $c-primary 80%, $c-bg);
     }
 
     @keyframes rubber-band {
-      from {
+      0% {
         transform: scale3d(1, 1, 1);
       }
 
@@ -214,9 +234,11 @@
       0% {
         opacity: 0;
       }
+
       60% {
         opacity: 0.2;
       }
+
       85% {
         opacity: 0;
       }
@@ -226,13 +248,11 @@
       position: relative;
       animation: none;
       color: $c-font-clear;
+
       &::before {
         content: '';
         position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        inset: 0;
         pointer-events: none;
         background: $c-primary;
         opacity: 0;
@@ -241,43 +261,54 @@
 
       span {
         display: block;
-        animation: rubber-band 5s infinite;
+
+        // this animation somewhat changes the element width,
+        // and can cause overflow on narrow screens, where it already
+        // is at 100% width
+        @include mq-at-least-col2 {
+          animation: rubber-band 5s infinite;
+        }
       }
     }
 
     &.fbt:not(.disabled):hover {
-      background: mix($c-link, $c-bg-box, 70%);
+      @include with-button-shadow(
+        hsl(from $c-primary h s calc(l + 32)),
+        hsl(from $c-primary h s calc(l - 18)),
+        hsl(from $c-primary h s calc(l + 44)),
+        hsl(from $c-primary h s calc(l - 14))
+      );
+
+      background: $c-primary;
       color: #fff;
       animation: none;
     }
 
     &-decline {
       @extend %flex-center-nowrap, %box-radius-right, %box-shadow;
+      @include inline-end(-25px);
+      @include transition;
 
-      background: $c-bg-zebra;
       justify-content: center;
       position: absolute;
       top: 0;
-      right: -25px;
       width: 25px;
       height: 6rem;
       border: 0;
       opacity: 0.7;
-      background: mix($c-bad, $c-bg-box, 50%);
-
-      @include transition;
-
+      background: color-mix(in oklab, $c-bad 50%, $c-bg);
       display: none;
 
-      @include breakpoint($mq-col2) {
+      @include mq-at-least-col2 {
         display: block;
       }
 
       &:hover {
         background: $c-bad;
-        color: $c-bad-over;
-        right: -36px;
+        color: $c-over;
         width: 35px;
+
+        @include inline-end(-36px);
       }
     }
   }

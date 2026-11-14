@@ -128,6 +128,7 @@
 Сделайте любой ход, чтобы продолжить.</string>
   <string name="boardSetupComplete">Поздравляем! Теперь вы знаете, как расставить фигуры на шахматной доске.</string>
   <string name="castling">Рокировка</string>
+  <string name="enPassant">Взятие на проходе</string>
   <string name="theSpecialKingMove">Особый ход короля</string>
   <string name="castlingIntro">Поместите своего короля в надёжное место, и выведите в бой ладью!</string>
   <string name="castleKingSide">Передвиньте своего короля на две клетки
@@ -151,7 +152,6 @@
   <string name="findAWayToCastleKingSide">Найдите способ сделать короткую рокировку!</string>
   <string name="findAWayToCastleQueenSide">Найдите способ сделать длинную рокировку!</string>
   <string name="castlingComplete">Поздравляем! Практически во всех партиях вы должны рокироваться.</string>
-  <string name="enPassant">Взятие на проходе</string>
   <string name="theSpecialPawnMove">Особый ход пешки</string>
   <string name="enPassantIntro">Когда пешка соперника делает ход на две клетки, вы можете взять её, как если бы она сделала ход на одну.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Чёрные только что сходили пешкой на два поля!
@@ -226,8 +226,8 @@
   <string name="nailedIt">Получилось!</string>
   <string name="rightOn">Именно так!</string>
   <string name="stageXComplete">Урок %s усвоен</string>
-  <string name="yourScore">Ваш результат</string>
   <string name="next">Далее</string>
+  <string name="nextX">Далее: %s</string>
   <string name="backToMenu">Вернуться в меню</string>
   <string name="puzzleFailed">Задание провалено!</string>
   <string name="retry">Ещё раз</string>

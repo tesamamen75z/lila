@@ -1,138 +1,173 @@
 package lila.api
 
-import akka.actor._
-import akka.stream.scaladsl._
-import org.joda.time.DateTime
-import play.api.libs.json._
-import scala.concurrent.duration._
+import org.apache.pekko.actor.*
+import org.apache.pekko.stream.scaladsl.*
+import play.api.i18n.Lang
+import play.api.libs.json.*
+import scalalib.net.Bearer
 
-import lila.challenge.Challenge
+import lila.bot.OnlineApiUsers.*
+import lila.challenge.{ Challenge, NegativeEvent }
 import lila.common.Bus
-import lila.game.actorApi.{ FinishGame, StartGame }
-import lila.game.Game
-import lila.user.{ User, UserRepo }
+import lila.common.Json.given
+import lila.common.actorBus.*
+import lila.core.challenge.PositiveEvent
+import lila.core.game.{ FinishGame, StartGame }
+import lila.game.Rematches
+import lila.user.{ LightUserApi, Me, UserRepo }
 
 final class EventStream(
     challengeJsonView: lila.challenge.JsonView,
     challengeMaker: lila.challenge.ChallengeMaker,
+    challengeApi: lila.challenge.ChallengeApi,
     onlineApiUsers: lila.bot.OnlineApiUsers,
-    userRepo: UserRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
-
-  private case object SetOnline
+    userRepo: UserRepo,
+    gameJsonView: lila.game.JsonView,
+    rematches: Rematches,
+    lightUserApi: LightUserApi
+)(using system: ActorSystem, scheduler: Scheduler)(using Executor, lila.core.i18n.Translator):
 
   private val blueprint =
-    Source.queue[Option[JsObject]](32, akka.stream.OverflowStrategy.dropHead)
+    Source.queue[Option[JsObject]](32, org.apache.pekko.stream.OverflowStrategy.dropHead)
 
   def apply(
-      me: User,
       gamesInProgress: List[Game],
-      challenges: List[Challenge]
-  ): Source[Option[JsObject], _] = {
+      challenges: List[Challenge],
+      bearer: Bearer,
+      fromWebsite: Boolean
+  )(using me: Me): Source[Option[JsObject], ?] =
+
+    given Lang = me.realLang | lila.core.i18n.defaultLang
 
     // kill previous one if any
-    Bus.publish(PoisonPill, s"eventStreamFor:${me.id}")
+    val killChannel = s"eventStreamForBearer:$bearer"
+    Bus.publishDyn(PoisonPill, killChannel)
 
-    blueprint mapMaterializedValue { queue =>
-      gamesInProgress map gameJson("gameStart") map some foreach queue.offer
-      challenges map challengeJson("challenge") map some foreach queue.offer
+    blueprint.mapMaterializedValue: queue =>
+      gamesInProgress.map(gameJson(_, "gameStart")).foreach(queue.offer)
+      challenges.map(challengeJson("challenge")).map(some).foreach(queue.offer)
 
-      val actor = system.actorOf(Props(mkActor(me, queue)))
+      val actor = system.actorOf(Props(mkActor(queue, killChannel, fromWebsite)))
 
-      queue.watchCompletion().foreach { _ =>
-        actor ! PoisonPill
-      }
-    }
-  }
+      queue.watchCompletion().addEffectAnyway(actor ! PoisonPill)
 
-  private def mkActor(me: User, queue: SourceQueueWithComplete[Option[JsObject]]) =
-    new Actor {
+  private def mkActor(
+      queue: SourceQueueWithComplete[Option[JsObject]],
+      killChannel: String,
+      fromWebsite: Boolean
+  )(using me: Me)(using Lang): Actor =
+    new:
 
-      val classifiers = List(
-        s"userStartGame:${me.id}",
-        s"userFinishGame:${me.id}",
-        s"rematchFor:${me.id}",
-        s"eventStreamFor:${me.id}",
-        "challenge"
+      val channels = List(
+        s"userStartGame:${me.userId}",
+        s"userFinishGame:${me.userId}",
+        s"rematchFor:${me.userId}",
+        killChannel
       )
 
       var lastSetSeenAt = me.seenAt | me.createdAt
-      var online        = true
 
-      override def preStart(): Unit = {
+      override def preStart(): Unit =
         super.preStart()
-        Bus.subscribe(self, classifiers)
-      }
+        Bus.subscribeActorRefDyn(self, channels)
+        Bus.subscribeActorRef[PositiveEvent](self)
+        Bus.subscribeActorRef[NegativeEvent](self)
 
-      override def postStop() = {
+      override def postStop() =
         super.postStop()
-        Bus.unsubscribe(self, classifiers)
+        channels.foreach(Bus.unsubscribeActorRefDyn(self, _))
+        Bus.unsubscribeActorRef[PositiveEvent](self)
+        Bus.unsubscribeActorRef[NegativeEvent](self)
         queue.complete()
-        online = false
-      }
 
       self ! SetOnline
 
-      def receive = {
+      def receive =
 
         case SetOnline =>
-          onlineApiUsers.setOnline(me.id)
+          if !fromWebsite then
+            onlineApiUsers.setOnline(me)
+            if lastSetSeenAt.isBefore(nowInstant.minusMinutes(10)) then
+              userRepo.setSeenAt(me)
+              lastSetSeenAt = nowInstant
 
-          if (lastSetSeenAt isBefore DateTime.now.minusMinutes(10)) {
-            userRepo setSeenAt me.id
-            lastSetSeenAt = DateTime.now
-          }
+          scheduler.scheduleOnce(7.second, self, CheckOnline)
 
-          context.system.scheduler
-            .scheduleOnce(6 second) {
-              if (online) {
-                // gotta send a message to check if the client has disconnected
-                queue offer None
-                self ! SetOnline
-              }
-            }
-            .unit
+        case CheckOnline =>
+          queue.offer(None) // prevents the client and intermediate proxies from closing the idle stream
+          self ! SetOnline
 
-        case StartGame(game) => queue.offer(gameJson("gameStart")(game).some).unit
+        case StartGame(game, _) => queue.offer(gameJson(game, "gameStart"))
 
-        case FinishGame(game, _, _) => queue.offer(gameJson("gameFinish")(game).some).unit
+        case FinishGame(game, _) => queue.offer(gameJson(game, "gameFinish"))
 
-        case lila.challenge.Event.Create(c) if isMyChallenge(c) =>
-          queue.offer(challengeJson("challenge")(c).some).unit
+        case PositiveEvent.Create(c) if isMyChallenge(c) =>
+          challengeApi
+            .byId(c.id)
+            .foreach:
+              _.foreach: c =>
+                val json = challengeJson("challenge")(c) ++ challengeCompat(c)
+                lila.common.LilaFuture // give time for anon challenger to load the challenge page
+                  .delay(if c.challengerIsAnon then 2.seconds else 0.seconds):
+                    queue.offer(json.some).void
 
-        case lila.challenge.Event.Decline(c) if isMyChallenge(c) =>
-          queue.offer(challengeJson("challengeDeclined")(c).some).unit
+        case NegativeEvent.Decline(c) if isMyChallenge(c) =>
+          queue.offer(challengeJson("challengeDeclined")(c).some)
 
-        case lila.challenge.Event.Cancel(c) if isMyChallenge(c) =>
-          queue.offer(challengeJson("challengeCanceled")(c).some).unit
+        case NegativeEvent.Cancel(c) if isMyChallenge(c) =>
+          queue.offer(challengeJson("challengeCanceled")(c).some)
 
         // pretend like the rematch is a challenge
-        case lila.hub.actorApi.round.RematchOffer(gameId) =>
-          challengeMaker.makeRematchFor(gameId, me) foreach {
-            _ foreach { c =>
-              queue offer challengeJson("challenge")(c.copy(_id = gameId)).some
-            }
-          }
-      }
+        case lila.core.round.RematchOffer(gameId) =>
+          challengeMaker
+            .makeRematchFor(gameId, me)
+            .foreach:
+              _.foreach: c =>
+                val json = challengeJson("challenge")(c) ++ challengeCompat(c)
+                queue.offer(json.some)
 
-      private def isMyChallenge(c: Challenge) =
-        c.destUserId.has(me.id) || c.challengerUserId.has(me.id)
-    }
+        // pretend like the rematch cancel is a challenge cancel
+        case lila.core.round.RematchCancel(gameId) =>
+          rematches
+            .getOffered(gameId)
+            .map(_.nextId)
+            .foreach: nextId =>
+              challengeMaker
+                .showCanceledRematchFor(gameId, me, nextId)
+                .foreach:
+                  _.foreach: c =>
+                    val json = challengeJson("challengeCanceled")(c) ++ challengeCompat(c)
+                    queue.offer(json.some)
 
-  private def gameJson(tpe: String)(game: Game) =
+      private def isMyChallenge(c: lila.core.challenge.Challenge) =
+        me.is(c.destUserId) || me.is(c.challengerUser.map(_.id))
+
+  private def gameJson(game: Game, tpe: String)(using me: Me) =
+    Pov(game, me).map: pov =>
+      Json.obj(
+        "type" -> tpe,
+        "game" -> {
+          gameJsonView
+            .ownerPreview(pov)(using lightUserApi.sync)
+            .add("source" -> game.source.map(_.name)) ++ compatJson(
+            bot = me.isBot && lila.game.Game.isBotCompatible(game).|(true),
+            board = lila.game.Game.isBoardCompatible(game)
+          ) ++ Json.obj(
+            "id" -> game.id // API BC
+          )
+        }
+      )
+
+  private def challengeJson(tpe: String)(c: Challenge)(using Lang) =
     Json.obj(
       "type" -> tpe,
-      "game" -> Json
-        .obj("id" -> game.id)
-        .add("source" -> game.source.map(_.name))
+      "challenge" -> challengeJsonView(none)(c)
     )
 
-  private def challengeJson(tpe: String)(c: Challenge) =
-    Json.obj(
-      "type"      -> tpe,
-      "challenge" -> challengeJsonView(none)(c)(lila.i18n.defaultLang)
-    )
-}
+  private def challengeCompat(c: Challenge)(using me: Me) = compatJson(
+    bot = me.isBot && c.isBotCompatible,
+    board = c.isBoardCompatible
+  )
+
+  private def compatJson(bot: Boolean, board: Boolean) =
+    Json.obj("compat" -> Json.obj("bot" -> bot, "board" -> board))

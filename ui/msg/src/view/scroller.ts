@@ -1,4 +1,4 @@
-import throttle from 'common/throttle';
+import { throttle } from 'lib/async';
 
 class Scroller {
   enabled = false;
@@ -14,9 +14,8 @@ class Scroller {
         const el = this.element;
         this.enable(!!el && el.offsetHeight + el.scrollTop > el.scrollHeight - 20);
       }),
-      { passive: true }
+      { passive: true },
     );
-    window.el = this.element;
   };
   auto = () => {
     if (this.element && this.enabled) requestAnimationFrame(() => (this.element!.scrollTop = 9999999));
@@ -25,7 +24,7 @@ class Scroller {
     this.enabled = v;
   };
   setMarker = () => {
-    this.marker = this.element && (this.element.querySelector('mine,their') as HTMLElement);
+    this.marker = this.element?.querySelector('mine,their') as HTMLElement;
   };
   toMarker = (): boolean => {
     if (this.marker && this.to(this.marker)) {

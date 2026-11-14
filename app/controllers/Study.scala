@@ -1,669 +1,654 @@
 package controllers
 
-import play.api.libs.json._
-import play.api.mvc._
-import scala.concurrent.duration._
-import scala.util.chaining._
+import chess.json.Json.given
+import play.api.libs.json.*
+import play.api.mvc.*
+import scalalib.Json.given
+import scalalib.paginator.Paginator
 
-import lila.api.Context
-import lila.app._
-import lila.chat.Chat
-import lila.common.paginator.{ Paginator, PaginatorJson }
-import lila.common.{ HTTPRequest, IpAddress }
-import lila.study.actorApi.Who
+import lila.analyse.Analysis
+import lila.app.{ *, given }
+import lila.common.HTTPRequest
+import lila.core.data.ErrorMsg
+import lila.core.id.RelayRoundId
+import lila.core.misc.lpv.LpvEmbed
+import lila.core.socket.Sri
+import lila.core.study.StudyOrder
+import lila.mon.extensions.*
 import lila.study.JsonView.JsData
+import lila.study.PgnDump.WithFlags
 import lila.study.Study.WithChapter
-import lila.study.{ Chapter, Order, Study => StudyModel }
-import lila.tree.Node.partitionTreeJsonWriter
-import views._
+import lila.study.ui.StudyFormat
+import lila.study.ui.StudyFormatStore.given
+import lila.study.{ Chapter, Orders, Settings, Study as StudyModel, StudyForm, Who }
+import lila.tree.Node.partitionTreeWriter
+import lila.ui.Page
 
 final class Study(
     env: Env,
+    editorC: => Editor,
     userAnalysisC: => UserAnalysis,
     apiC: => Api
-) extends LilaController(env) {
+) extends LilaController(env):
 
-  def search(text: String, page: Int) =
-    OpenBody { implicit ctx =>
-      Reasonable(page) {
-        if (text.trim.isEmpty)
-          env.study.pager.all(ctx.me, Order.default, page) flatMap { pag =>
-            negotiate(
-              html = Ok(html.study.list.all(pag, Order.default)).fuccess,
-              api = _ => apiStudies(pag)
+  private def pgnDump = env.study.pgnDump
+
+  def search(text: String, page: Int, order: Option[StudyOrder]) =
+    OpenOrScopedBody(parse.anyContent)(_.Study.Read, _.Web.Mobile):
+      Reasonable(page):
+        WithProxy: proxy ?=>
+          val maxLen =
+            if proxy.isFloodish then 50
+            else if ctx.req.client.isCrawler then 80
+            else if ctx.isAnon then 100
+            else 200
+          text.trim.nonEmptyOption.filter(_.sizeIs > 2).filter(_.sizeIs < maxLen) match
+            case None =>
+              for
+                pag <- env.study.pager.all(Orders.default, page)
+                _ <- preloadMembers(pag)
+                res <- negotiate(
+                  Ok.page(views.study.list.all(pag, Orders.default)),
+                  apiStudies(pag)
+                )
+              yield res
+            case Some(clean) =>
+              limit.enumeration.search(rateLimited):
+                env
+                  .studySearch(clean.take(100), order | StudyOrder.relevant, page)
+                  .flatMap: pag =>
+                    negotiate(
+                      Ok.page(views.study.list.search(pag, order | StudyOrder.relevant, text)),
+                      apiStudies(pag)
+                    )
+
+  def homeLang = LangPage(routes.Study.allDefault())(allResults(StudyOrder.hot, 1))
+
+  def allDefault(page: Int) = all(StudyOrder.hot, page)
+
+  def all(order: StudyOrder, page: Int) =
+    OpenOrScoped(_.Study.Read, _.Web.Mobile):
+      allResults(order, page)
+
+  private def allResults(order: StudyOrder, page: Int)(using ctx: Context) =
+    Reasonable(page):
+      order match
+        case order if !Orders.withoutSelector.contains(order) =>
+          Redirect(routes.Study.allDefault(page))
+        case order =>
+          for
+            pag <- env.study.pager.all(order, page)
+            _ <- preloadMembers(pag)
+            res <- negotiate(
+              Ok.page(views.study.list.all(pag, order)),
+              apiStudies(pag)
             )
-          }
-        else
-          env.studySearch(ctx.me)(text, page) flatMap { pag =>
-            negotiate(
-              html = Ok(html.study.list.search(pag, text)).fuccess,
-              api = _ => apiStudies(pag)
-            )
-          }
-      }
+          yield res
+
+  def byOwnerDefault(username: UserStr, page: Int) =
+    byOwner(username, Orders.default, page)
+
+  def byOwner(username: UserStr, order: StudyOrder, page: Int) = Open:
+    Found(meOrFetch(username)): owner =>
+      for
+        pag <- env.study.pager.byOwner(owner, order, page)
+        _ <- preloadMembers(pag)
+        res <- negotiate(Ok.page(views.study.list.byOwner(pag, order, owner)), apiStudies(pag))
+      yield res
+
+  def mine = MyStudyPager(
+    env.study.pager.mine,
+    (pag, order) => env.study.topicApi.userTopics(summon[Me]).map(views.study.list.mine(pag, order, _))
+  )
+
+  def minePublic = MyStudyPager(env.study.pager.minePublic, views.study.list.minePublic)
+
+  def minePrivate = MyStudyPager(env.study.pager.minePrivate, views.study.list.minePrivate)
+
+  def mineMember = MyStudyPager(
+    env.study.pager.mineMember,
+    (pag, order) => env.study.topicApi.userTopics(summon[Me]).map(views.study.list.mineMember(pag, order, _))
+  )
+
+  def mineLikes = MyStudyPager(env.study.pager.mineLikes, views.study.list.mineLikes)
+
+  def listFormat = Open(env.study.formatStore.toggle)
+
+  private type StudyPager = Paginator[StudyModel.WithChaptersAndLiked]
+
+  private def MyStudyPager(
+      makePager: (StudyOrder, Int) => Me ?=> StudyFormat ?=> Fu[StudyPager],
+      render: (StudyPager, StudyOrder) => Context ?=> Me ?=> Fu[Page]
+  ) = (order: StudyOrder, page: Int) =>
+    AuthOrScoped(_.Web.Mobile) { ctx ?=> me ?=>
+      for
+        pager <- makePager(order, page)
+        _ <- preloadMembers(pager)
+        res <- negotiate(Ok.async(render(pager, order)), apiStudies(pager))
+      yield res
     }
 
-  def allDefault(page: Int) = all(Order.Hot.key, page)
-
-  def all(o: String, page: Int) =
-    Open { implicit ctx =>
-      Reasonable(page) {
-        Order(o) match {
-          case order if !Order.withoutSelector.contains(order) =>
-            Redirect(routes.Study.allDefault(page)).fuccess
-          case order =>
-            env.study.pager.all(ctx.me, order, page) flatMap { pag =>
-              negotiate(
-                html = Ok(html.study.list.all(pag, order)).fuccess,
-                api = _ => apiStudies(pag)
-              )
-            }
-        }
-      }
-    }
-
-  def byOwnerDefault(username: String, page: Int) = byOwner(username, Order.default.key, page)
-
-  def byOwner(username: String, order: String, page: Int) =
-    Open { implicit ctx =>
-      env.user.repo.named(username).flatMap {
-        _.fold(notFound(ctx)) { owner =>
-          env.study.pager.byOwner(owner, ctx.me, Order(order), page) flatMap { pag =>
-            negotiate(
-              html = Ok(html.study.list.byOwner(pag, Order(order), owner)).fuccess,
-              api = _ => apiStudies(pag)
-            )
-          }
-        }
-      }
-    }
-
-  def mine(order: String, page: Int) =
-    Auth { implicit ctx => me =>
-      env.study.pager.mine(me, Order(order), page) flatMap { pag =>
-        negotiate(
-          html = env.study.topicApi.userTopics(me.id) map { topics =>
-            Ok(html.study.list.mine(pag, Order(order), me, topics))
-          },
-          api = _ => apiStudies(pag)
+  def byTopic(name: String, order: StudyOrder, page: Int) = Open:
+    Found(lila.study.StudyTopic.fromStr(name)): topic =>
+      for
+        pag <- env.study.pager.byTopic(topic, order, page)
+        _ <- preloadMembers(pag)
+        res <- negotiate(
+          Ok.async:
+            ctx.userId
+              .traverse(env.study.topicApi.userTopics)
+              .map(views.study.list.topic.show(topic, pag, order, _))
+          ,
+          apiStudies(pag)
         )
-      }
-    }
+      yield res
 
-  def minePublic(order: String, page: Int) =
-    Auth { implicit ctx => me =>
-      env.study.pager.minePublic(me, Order(order), page) flatMap { pag =>
-        negotiate(
-          html = Ok(html.study.list.minePublic(pag, Order(order), me)).fuccess,
-          api = _ => apiStudies(pag)
-        )
-      }
-    }
+  private def preloadMembers(pag: Paginator[StudyModel.WithChaptersAndLiked]) =
+    env.user.lightUserApi.preloadMany(
+      pag.currentPageResults.view
+        .flatMap(_.study.members.members.values.take(StudyModel.previewNbMembers))
+        .map(_.id)
+        .toSeq
+    )
 
-  def minePrivate(order: String, page: Int) =
-    Auth { implicit ctx => me =>
-      env.study.pager.minePrivate(me, Order(order), page) flatMap { pag =>
-        negotiate(
-          html = Ok(html.study.list.minePrivate(pag, Order(order), me)).fuccess,
-          api = _ => apiStudies(pag)
-        )
-      }
-    }
+  private def apiStudies(pager: Paginator[StudyModel.WithChaptersAndLiked]) =
+    given Writes[StudyModel.WithChaptersAndLiked] = Writes(env.study.jsonView.pagerData)
+    Ok(Json.obj("paginator" -> pager))
 
-  def mineMember(order: String, page: Int) =
-    Auth { implicit ctx => me =>
-      env.study.pager.mineMember(me, Order(order), page) flatMap { pag =>
-        negotiate(
-          html = env.study.topicApi.userTopics(me.id) map { topics =>
-            Ok(html.study.list.mineMember(pag, Order(order), me, topics))
-          },
-          api = _ => apiStudies(pag)
-        )
-      }
-    }
-
-  def mineLikes(order: String, page: Int) =
-    Auth { implicit ctx => me =>
-      env.study.pager.mineLikes(me, Order(order), page) flatMap { pag =>
-        negotiate(
-          html = Ok(html.study.list.mineLikes(pag, Order(order))).fuccess,
-          api = _ => apiStudies(pag)
-        )
-      }
-    }
-
-  def byTopic(name: String, order: String, page: Int) =
-    Open { implicit ctx =>
-      lila.study.StudyTopic fromStr name match {
-        case None => notFound
-        case Some(topic) =>
-          env.study.pager.byTopic(topic, ctx.me, Order(order), page) zip
-            ctx.me.??(u => env.study.topicApi.userTopics(u.id) dmap some) map { case (pag, topics) =>
-              Ok(html.study.topic.show(topic, pag, Order(order), topics))
-            }
-      }
-    }
-
-  private def apiStudies(pager: Paginator[StudyModel.WithChaptersAndLiked]) = {
-    implicit val pagerWriter = Writes[StudyModel.WithChaptersAndLiked] { s =>
-      env.study.jsonView.pagerData(s)
-    }
-    Ok(
-      Json.obj(
-        "paginator" -> PaginatorJson(pager)
-      )
-    ).fuccess
-  }
-
-  private def orRelay(id: String, chapterId: Option[String] = None)(
+  private def orRelayRedirect(id: StudyId, chapterId: Option[StudyChapterId] = None)(
       f: => Fu[Result]
-  )(implicit ctx: Context): Fu[Result] =
-    if (HTTPRequest isRedirectable ctx.req) env.relay.api.getOngoing(lila.relay.RelayRound.Id(id)) flatMap {
-      _.fold(f) { rt =>
-        Redirect(chapterId.map(Chapter.Id).fold(rt.path)(rt.path)).fuccess
-      }
-    }
+  )(using req: Req): Fu[Result] =
+    if HTTPRequest.isRedirectable
+    then env.relay.defaults.studyRedirect.get(id -> chapterId).flatMap(_.fold(f)(url => Redirect(url.value)))
     else f
 
-  private def showQuery(query: Fu[Option[WithChapter]])(implicit ctx: Context): Fu[Result] =
-    OptionFuResult(query) { oldSc =>
-      CanView(oldSc.study, ctx.me) {
-        for {
-          (sc, data) <- getJsonData(oldSc)
-          res <- negotiate(
-            html = for {
-              chat      <- chatOf(sc.study)
-              sVersion  <- env.study.version(sc.study.id)
-              streamers <- streamersOf(sc.study)
-            } yield EnableSharedArrayBuffer(Ok(html.study.show(sc.study, data, chat, sVersion, streamers))),
-            api = _ =>
-              chatOf(sc.study).map { chatOpt =>
-                Ok(
-                  Json.obj(
-                    "study" -> data.study.add("chat" -> chatOpt.map { c =>
-                      lila.chat.JsonView.mobile(
-                        chat = c.chat,
-                        writeable = ctx.userId.??(sc.study.canChat)
-                      )
-                    }),
-                    "analysis" -> data.analysis
-                  )
-                )
-              }
+  private def showQuery(query: Option[WithChapter])(using ctx: Context): Fu[Result] =
+    Found(query): oldSc =>
+      CanView(oldSc.study):
+        if !oldSc.study.notable && ctx.req.client.isCrawler
+        then notFound
+        else
+          negotiate(
+            html =
+              val human = ctx.req.client.isHuman
+              for
+                (sc, data) <- getJsonData(oldSc, withChapters = true)
+                chat <- human.so(chatOf(sc.study))
+                sVersion <- human.so(env.study.version(sc.study.id))
+                streamers <- human.so(streamerCache.get(sc.study.id))
+                page <- renderPage(views.study.show(sc.study, sc.chapter, data, chat, sVersion, streamers))
+              yield Ok(page)
+                .withCanonical(routes.Study.chapter(sc.study.id, sc.chapter.id))
+                .enforceCrossSiteIsolation
+            ,
+            json = for
+              (sc, data) <- getJsonData(
+                oldSc,
+                withChapters = getBool("chapters") || ctx.req.client.isLichobile
+              )
+              chatOpt <- ctx.req.client.isXhr.not.so(chatOf(sc.study))
+              sVersion <- ctx.req.client.isMobile.option(env.study.version(sc.study.id)).sequence
+              jsChat = chatOpt.map: c =>
+                env.chat.json.mobile(c, writeable = ctx.userId.so(sc.study.canChat))
+            yield Ok:
+              Json.obj(
+                "study" -> data.study.add("chat" -> jsChat).add("socketVersion" -> sVersion),
+                "analysis" -> data.analysis
+              )
           )
-        } yield res
-      }(privateUnauthorizedFu(oldSc.study), privateForbiddenFu(oldSc.study))
-    } map NoCache
+    .dmap(_.noCache)
 
-  private[controllers] def getJsonData(sc: WithChapter)(implicit ctx: Context): Fu[(WithChapter, JsData)] =
-    for {
-      chapters                <- env.study.chapterRepo.orderedMetadataByStudy(sc.study.id)
-      (study, resetToChapter) <- env.study.api.resetIfOld(sc.study, chapters)
-      chapter = resetToChapter | sc.chapter
-      _ <- env.user.lightUserApi preloadMany study.members.ids.toList
+  private[controllers] def getJsonData(sc: WithChapter, withChapters: Boolean)(using
+      ctx: Context
+  ): Fu[(WithChapter, JsData)] =
+    for
+      (studyFromDb, chapterPre) <- env.study.api.maybeResetAndGetChapter(sc.study, sc.chapter)
+      chapter = getColor("pov").foldLeft(chapterPre)(_.withOrientation(_))
+      study <- env.relay.api.reconfigureStudy(studyFromDb, chapter)
+      previews <- withChapters.optionFu(env.study.preview.jsonList(study.id))
+      _ <- env.user.lightUserApi.preloadMany(study.members.ids.toList)
       pov = userAnalysisC.makePov(chapter.root.fen.some, chapter.setup.variant)
-      analysis <- chapter.serverEval.exists(_.done) ?? env.analyse.analyser.byId(chapter.id.value)
-      division = analysis.isDefined option env.study.serverEvalMerger.divisionOf(chapter)
-      baseData = env.round.jsonView.userAnalysisJson(
-        pov,
-        ctx.pref,
-        chapter.root.fen.some,
-        chapter.setup.orientation,
-        owner = false,
-        me = ctx.me,
-        division = division
+      analysis <- chapterAnalysis(sc)
+      division = analysis.isDefined.option(env.study.serverEvalMerger.divisionOf(chapter))
+      baseData <- env.analyse.externalEngine.withExternalEngines(
+        env.round.jsonView.userAnalysisJson(
+          pov,
+          ctx.pref,
+          chapter.root.fen.some,
+          chapter.setup.orientation,
+          owner = false,
+          opening = none,
+          division = division
+        )
       )
-      studyJson <- env.study.jsonView(study, chapters, chapter, ctx.me)
-    } yield WithChapter(study, chapter) -> JsData(
+      withMembers = !study.isRelay || isGrantedOpt(_.StudyAdmin) || ctx.me.exists(study.isMember)
+      studyJson <- env.study.jsonView.full(study, chapter, previews, withMembers = withMembers)
+      lichobile = HTTPRequest.isLichobile
+    yield WithChapter(study, chapter) -> JsData(
       study = studyJson,
       analysis = baseData
-        .add(
-          "treeParts" -> partitionTreeJsonWriter.writes {
-            lila.study.TreeBuilder(chapter.root, chapter.setup.variant)
-          }.some
-        )
-        .add("analysis" -> analysis.map { lila.study.ServerEval.toJson(chapter, _) })
+        .add("treeParts" -> partitionTreeWriter(chapter.root, lichobile = lichobile).some)
+        .add("analysis" -> analysis.map:
+          env.analyse.jsonView
+            .bothPlayers(chapter.root.ply, _, division = division.getOrElse(chess.Division.empty)))
     )
 
-  def show(id: String) =
-    Open { implicit ctx =>
-      orRelay(id) {
-        showQuery(env.study.api byIdWithChapter id)
-      }
-    }
-
-  def chapter(id: String, chapterId: String) =
-    Open { implicit ctx =>
-      orRelay(id, chapterId.some) {
-        showQuery(env.study.api.byIdWithChapter(id, chapterId))
-      }
-    }
-
-  def chapterMeta(id: String, chapterId: String) =
-    Open { _ =>
-      env.study.chapterRepo.byId(chapterId).map {
-        _.filter(_.studyId.value == id) ?? { chapter =>
-          Ok(env.study.jsonView.chapterConfig(chapter))
-        }
-      }
-    }
-
-  private[controllers] def chatOf(study: lila.study.Study)(implicit ctx: Context) = {
-    !ctx.kid &&         // no public chats for kids
-    ctx.me.fold(true) { // anon can see public chats
-      env.chat.panic.allowed
-    }
-  } ?? env.chat.api.userChat
-    .findMine(Chat.Id(study.id.value), ctx.me)
-    .dmap(some)
-    .mon(_.chat.fetch("study"))
-
-  def createAs =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      lila.study.StudyForm.importGame.form
-        .bindFromRequest()
-        .fold(
-          _ => Redirect(routes.Study.byOwnerDefault(me.username)).fuccess,
-          data =>
-            for {
-              owner   <- env.study.studyRepo.recentByOwner(me.id, 50)
-              contrib <- env.study.studyRepo.recentByContributor(me.id, 50)
-              res <-
-                if (owner.isEmpty && contrib.isEmpty) createStudy(data, me)
-                else Ok(html.study.create(data, owner, contrib)).fuccess
-            } yield res
+  private def chapterAnalysis(sc: WithChapter) =
+    sc.chapter.serverEval
+      .filter(_.done)
+      .so: eval =>
+        env.analyse.repo.byId(
+          eval.fromGameId.fold(Analysis.Id(sc.study.id, sc.chapter.id))(Analysis.Id(_))
         )
-    }
 
-  def create =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      lila.study.StudyForm.importGame.form
-        .bindFromRequest()
-        .fold(
-          _ => Redirect(routes.Study.byOwnerDefault(me.username)).fuccess,
-          data => createStudy(data, me)
-        )
-    }
+  private def WithStudyContributor(id: Analysis.Id)(
+      f: => Fu[Result]
+  )(using ctx: Context, me: Me): Fu[Result] = id match
+    case Analysis.Id.Study(studyId, _) =>
+      Found(env.study.api.byId(studyId)): study =>
+        if study.canContribute(me) then f else forbiddenJson()
+    case Analysis.Id.Game(_) => BadRequest("Study analysis required")
 
-  private def createStudy(data: lila.study.StudyForm.importGame.Data, me: lila.user.User)(implicit
-      ctx: Context
-  ) =
-    env.study.api.importGame(lila.study.StudyMaker.ImportGame(data), me) flatMap {
-      _.fold(notFound) { sc =>
-        Redirect(routes.Study.chapter(sc.study.id.value, sc.chapter.id.value)).fuccess
-      }
-    }
+  def postAnalysisXhr = AuthBody(parse.json) { ctx ?=> me ?=>
+    import lila.analyse.JsonView.given
+    ctx.body.body.validate[Analysis] match
+      case JsError(errs) => fuccess(BadRequest(errs.mkString("\n")))
+      case JsSuccess(uploaded, _) =>
+        WithStudyContributor(uploaded.id):
+          for
+            requested <- env.fishnet.api.userAnalysisExists(uploaded.id)
+            result <-
+              if requested then fuccess(Locked)
+              else env.analyse.analyser.save(uploaded).inject(Ok)
+          yield result
+  }
 
-  def delete(id: String) =
-    Auth { _ => me =>
-      env.study.api.byIdAndOwner(id, me) flatMap {
-        _ ?? { study =>
-          env.study.api.delete(study) >> env.relay.api.deleteRound(lila.relay.RelayRound.Id(id)).map {
-            case None       => Redirect(routes.Study.mine("hot"))
-            case Some(tour) => Redirect(routes.RelayTour.redirectOrApiTour(tour.slug, tour.id.value))
-          }
-        }
-      }
-    }
+  def deleteAnalysisXhr(studyId: StudyId, chapterId: StudyChapterId) = Auth { _ ?=> me ?=>
+    WithStudyContributor(Analysis.Id(studyId, chapterId)):
+      env.study.serverEvalMerger.remove(studyId, chapterId).inject(NoContent)
+  }
 
-  def clearChat(id: String) =
-    Auth { _ => me =>
-      env.study.api.isOwner(id, me) flatMap {
-        _ ?? env.chat.api.userChat.clear(Chat.Id(id))
-      } inject Redirect(routes.Study.show(id))
-    }
+  def show(id: StudyId) = OpenOrScoped(_.Study.Read, _.Web.Mobile):
+    orRelayRedirect(id):
+      env.study.api.byIdWithChapter(id).flatMap(showQuery)
 
-  def importPgn(id: String) =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      get("sri") ?? { sri =>
-        lila.study.StudyForm.importPgn.form
-          .bindFromRequest()
-          .fold(
-            jsonFormError,
-            data =>
-              env.study.api.importPgns(
-                StudyModel.Id(id),
-                data.toChapterDatas,
-                sticky = data.sticky
-              )(Who(me.id, lila.socket.Socket.Sri(sri)))
-          )
-      }
-    }
+  def chapter(id: StudyId, chapterId: StudyChapterId) = OpenOrScoped(_.Study.Read, _.Web.Mobile):
+    orRelayRedirect(id, chapterId.some):
+      env.study.api
+        .byIdWithChapter(id, chapterId)
+        .flatMap:
+          case None =>
+            env.study.studyRepo
+              .exists(id)
+              .flatMap:
+                if _ then negotiate(Redirect(routes.Study.show(id)), notFoundJson())
+                else showQuery(none)
+          case sc => showQuery(sc)
 
-  def admin(id: String) =
-    Secure(_.StudyAdmin) { _ => me =>
-      env.study.api.adminInvite(id, me) inject Redirect(routes.Study.show(id))
-    }
+  def chapterConfig(id: StudyId, chapterId: StudyChapterId) = Open:
+    Found(env.study.api.byIdWithChapter(id, chapterId)): sc =>
+      CanView(sc.study):
+        if getBool("divisionOnly") then JsonOk(env.study.serverEvalMerger.divisionOf(sc.chapter))
+        else Ok(env.study.jsonView.chapterConfig(sc.chapter))
 
-  def embed(id: String, chapterId: String) =
-    Action.async { implicit req =>
-      env.study.api.byIdWithChapter(id, chapterId).map(_.filterNot(_.study.isPrivate)) flatMap {
-        _.fold(embedNotFound) { case WithChapter(study, chapter) =>
-          for {
-            chapters <- env.study.chapterRepo.idNames(study.id)
-            studyJson <- env.study.jsonView(
-              study.copy(
-                members = lila.study.StudyMembers(Map.empty) // don't need no members
-              ),
-              List(chapter.metadata),
-              chapter,
-              none
-            )
-            setup      = chapter.setup
-            initialFen = chapter.root.fen.some
-            pov        = userAnalysisC.makePov(initialFen, setup.variant)
-            baseData = env.round.jsonView.userAnalysisJson(
-              pov,
-              lila.pref.Pref.default,
-              initialFen,
-              setup.orientation,
-              owner = false,
-              me = none
-            )
-            analysis = baseData ++ Json.obj(
-              "treeParts" -> partitionTreeJsonWriter.writes {
-                lila.study.TreeBuilder.makeRoot(chapter.root, setup.variant)
-              }
-            )
-            data = lila.study.JsonView.JsData(study = studyJson, analysis = analysis)
-            result <- negotiate(
-              html = Ok(html.study.embed(study, chapter, chapters, data)).fuccess,
-              api = _ => Ok(Json.obj("study" -> data.study, "analysis" -> data.analysis)).fuccess
-            )
-          } yield result
-        }
-      } map NoCache
-    }
+  private[controllers] def chatOf(study: lila.study.Study)(using ctx: Context) = {
+    ctx.kid.no && ctx.noBot // no public chats for kids and bots
+  }.optionFu:
+    env.chat.api.userChat
+      .findMine(study.id.into(ChatId))
+      .mon(lila.mon.chat.fetch("study"))
 
-  private def embedNotFound(implicit req: RequestHeader): Fu[Result] =
-    fuccess(NotFound(html.study.embed.notFound))
-
-  def cloneStudy(id: String) =
-    Auth { implicit ctx => _ =>
-      OptionFuResult(env.study.api.byId(id)) { study =>
-        CanView(study, ctx.me) {
-          Ok(html.study.clone(study)).fuccess
-        }(privateUnauthorizedFu(study), privateForbiddenFu(study))
-      }
-    }
-
-  private val CloneLimitPerUser = new lila.memo.RateLimit[lila.user.User.ID](
-    credits = 10 * 3,
-    duration = 24.hour,
-    key = "study.clone.user"
-  )
-
-  private val CloneLimitPerIP = new lila.memo.RateLimit[IpAddress](
-    credits = 20 * 3,
-    duration = 24.hour,
-    key = "study.clone.ip"
-  )
-
-  def cloneApply(id: String) =
-    Auth { implicit ctx => me =>
-      val cost = if (isGranted(_.Coach) || me.hasTitle) 1 else 3
-      CloneLimitPerUser(me.id, cost = cost) {
-        CloneLimitPerIP(HTTPRequest ipAddress ctx.req, cost = cost) {
-          OptionFuResult(env.study.api.byId(id)) { prev =>
-            CanView(prev, me.some) {
-              env.study.api.clone(me, prev) map { study =>
-                Redirect(routes.Study.show((study | prev).id.value))
-              }
-            }(privateUnauthorizedFu(prev), privateForbiddenFu(prev))
-          }
-        }(rateLimitedFu)
-      }(rateLimitedFu)
-    }
-
-  private val PgnRateLimitPerIp = new lila.memo.RateLimit[IpAddress](
-    credits = 30,
-    duration = 1.minute,
-    key = "export.study.pgn.ip"
-  )
-
-  def pgn(id: String) =
-    Open { implicit ctx =>
-      PgnRateLimitPerIp(HTTPRequest ipAddress ctx.req) {
-        OptionFuResult(env.study.api byId id) { study =>
-          CanView(study, ctx.me) {
-            doPgn(study, ctx.req).fuccess
-          }(privateUnauthorizedFu(study), privateForbiddenFu(study))
-        }
-      }(rateLimitedFu)
-    }
-
-  def apiPgn(id: String) = {
-    def handle(me: Option[lila.user.User], req: RequestHeader): Fu[Result] =
-      env.study.api.byId(id).map {
-        _.fold(NotFound(jsonError("Study not found"))) { study =>
-          PgnRateLimitPerIp(HTTPRequest ipAddress req) {
-            CanView(study, me) {
-              doPgn(study, req)
-            }(privateUnauthorizedJson, privateForbiddenJson)
-          }(rateLimitedJson)
-        }
-      }
-    AnonOrScoped(_.Study.Read)(
-      anon = req => handle(none, req),
-      scoped = req => me => handle(me.some, req)
+  def createAs = AuthBody { ctx ?=> me ?=>
+    bindForm(StudyForm.importGame.form)(
+      _ => Redirect(routes.Study.byOwnerDefault(me.username)),
+      data =>
+        for
+          owner <- env.study.api.recentByOwnerWithChapterCount(me, 50)
+          contrib <- env.study.api.recentByContributorWithChapterCount(me, 50)
+          res <-
+            if owner.isEmpty && contrib.isEmpty then createStudy(data)
+            else
+              val back = HTTPRequest.referer.orElse:
+                data.fen.map(fen => editorC.editorUrl(fen, data.variant | chess.variant.Variant.default))
+              Ok.page(views.study.create(data, owner, contrib, back))
+        yield res
     )
   }
 
-  private def doPgn(study: StudyModel, req: RequestHeader) = {
-    lila.mon.export.pgn.study.increment()
-    Ok.chunked(env.study.pgnDump(study, requestPgnFlags(req)))
-      .pipe(asAttachmentStream(s"${env.study.pgnDump filename study}.pgn"))
-      .as(pgnContentType)
+  def create = AuthBody { ctx ?=> me ?=>
+    bindForm(StudyForm.importGame.form)(
+      _ => Redirect(routes.Study.byOwnerDefault(me.username)),
+      createStudy
+    )
   }
 
-  def chapterPgn(id: String, chapterId: String) =
-    Open { implicit ctx =>
-      env.study.api.byIdWithChapter(id, chapterId) flatMap {
-        _.fold(notFound) { case WithChapter(study, chapter) =>
-          CanView(study, ctx.me) {
-            lila.mon.export.pgn.studyChapter.increment()
-            Ok(env.study.pgnDump.ofChapter(study, requestPgnFlags(ctx.req))(chapter).toString)
-              .pipe(asAttachment(s"${env.study.pgnDump.filename(study, chapter)}.pgn"))
-              .as(pgnContentType)
-              .fuccess
-          }(privateUnauthorizedFu(study), privateForbiddenFu(study))
+  private def createStudy(data: StudyForm.importGame.Data)(using ctx: Context, me: Me) =
+    val cost = if !data.isNewStudy then 0 else if coachOrTitled then 1 else 2
+    limit.studyCreate(me.userId, rateLimited, cost):
+      Found(env.study.api.importGame(lila.study.StudyMaker.ImportGame(data), me, ctx.pref.showRatings)): sc =>
+        Redirect(routes.Study.chapter(sc.study.id, sc.chapter.id))
+
+  def apiCreate = ScopedBody(_.Study.Write, _.Web.Mobile) { _ ?=> me ?=>
+    bindForm(StudyForm.form)(
+      jsonFormError,
+      data =>
+        limit.studyCreate(me.userId, rateLimited, if coachOrTitled then 1 else 2):
+          for sc <- env.study.api.create(data)
+          yield JsonOk(Json.obj("id" -> sc.study.id))
+    )
+  }
+
+  private def coachOrTitled(using me: Me) = isGranted(_.Coach) || me.hasTitle
+
+  def delete(id: StudyId) = Auth { _ ?=> me ?=>
+    Found(env.study.api.byIdAndOwnerOrAdmin(id, me)): study =>
+      for
+        tour <- env.relay.api.deleteRound(id.into(RelayRoundId))
+        _ <- env.study.api.delete(study)
+      yield Redirect(tour.fold(routes.Study.mine(StudyOrder.hot))(_.call))
+  }
+
+  def apiChapterDelete(id: StudyId, chapterId: StudyChapterId) = ScopedBody(_.Study.Write, _.Web.Mobile) {
+    _ ?=> me ?=>
+      Found(env.study.api.byIdAndOwnerOrAdmin(id, me)): study =>
+        env.study.api.deleteChapter(study.id, chapterId)(Who(me.userId, Sri("api"))).inject(NoContent)
+  }
+
+  def clearChat(id: StudyId) = Auth { _ ?=> me ?=>
+    env.study.api
+      .isOwnerOrAdmin(id, me)
+      .flatMapz:
+        env.chat.api.userChat.clear(id.into(ChatId))
+      .inject(Redirect(routes.Study.show(id)))
+  }
+
+  private def doImportPgn(id: StudyId, data: StudyForm.importPgn.Data, sri: Sri)(
+      f: (List[Chapter], Option[ErrorMsg]) => Result
+  )(using ctx: Context, me: Me): Future[Result] =
+    val chapterDatas = data.toChapterDatas
+    limit.studyPgnImport(me, rateLimited, cost = chapterDatas.size):
+      env.study.api
+        .importPgns(id, chapterDatas, sticky = data.sticky, ctx.pref.showRatings)(Who(me, sri))
+        .map(f.tupled)
+
+  def importPgn(id: StudyId) = AuthBody { ctx ?=> me ?=>
+    get("sri").so: sri =>
+      bindForm(StudyForm.importPgn.form)(
+        doubleJsonFormError,
+        data =>
+          doImportPgn(id, data, Sri(sri)): (_, errors) =>
+            errors.fold(NoContent)(BadRequest(_))
+      )
+  }
+
+  def apiImportPgn(id: StudyId) = ScopedBody(_.Study.Write, _.Web.Mobile) { ctx ?=> me ?=>
+    bindForm(StudyForm.importPgn.form)(
+      jsonFormError,
+      data =>
+        doImportPgn(id, data, Sri("api")): (chapters, errors) =>
+          import lila.study.ChapterPreview.json.given
+          import lila.fide.Federation.find
+          val previews = chapters.map(env.study.preview.fromChapter(_))
+          JsonOk(Json.obj("chapters" -> previews, "error" -> errors))
+    )
+  }
+
+  def admin(id: StudyId) = Auth { ctx ?=> me ?=>
+    Found(env.study.api.byId(id)): study =>
+      getBoolOpt("unfeature") match
+        case Some(true) if lila.study.canUnfeature =>
+          for
+            _ <- env.study.studyRepo.unfeature(id, true)
+            _ <- env.mod.logApi.studyUnfeature(study)
+          yield Redirect(HTTPRequest.referer | routes.Study.allDefault().url)
+        case None if isGranted(_.StudyAdmin) =>
+          for
+            _ <- env.study.api.becomeAdmin(id)
+            _ <- env.relay.api.becomeStudyAdmin(id)
+          yield if HTTPRequest.isXhr(ctx.req) then NoContent else Redirect(routes.Study.show(id))
+        case _ => authorizationFailed
+  }
+
+  def embed(studyId: StudyId, chapterId: StudyChapterId) = Anon:
+    InEmbedContext:
+      def notFound = NotFound.snip(views.study.embed.notFound)
+      env.study.api
+        .byId(studyId)
+        .flatMap:
+          _.fold(notFound.toFuccess): study =>
+            val finalChapterId = if chapterId.value == "autochap" then study.position.chapterId else chapterId
+            env.api.textLpvExpand
+              .getChapterPgn(finalChapterId)
+              .map:
+                case Some(LpvEmbed.PublicPgn(pgn)) => Ok.snip(views.study.embed(study, finalChapterId, pgn))
+                case _ => notFound
+
+  def cloneStudy(id: StudyId) = Auth { ctx ?=> _ ?=>
+    Found(env.study.api.byId(id)): study =>
+      CanView(study, study.settings.cloneable.some):
+        Ok.page(views.study.clone(study))
+  }
+
+  def cloneApply(id: StudyId) = Auth { ctx ?=> me ?=>
+    limit.studyClone(me.userId -> ctx.ip, rateLimited, if coachOrTitled then 1 else 3):
+      Found(env.study.api.byId(id)) { prev =>
+        CanView(prev, prev.settings.cloneable.some):
+          for study <- env.study.api.cloneWithChat(me, prev)
+          yield Redirect(routes.Study.show((study | prev).id))
+      }
+  }
+
+  def pgn(id: StudyId) = Open:
+    pgnWithFlags(id, identity)
+
+  def apiPgn(id: StudyId) = AnonOrScoped(_.Study.Read, _.Web.Mobile): ctx ?=>
+    pgnWithFlags(id, identity)
+
+  def pgnWithFlags(id: StudyId, flags: Update[WithFlags])(using Context) =
+    Found(env.study.api.byId(id)): study =>
+      LastModified(study.updatedAt):
+        CanView(study, study.settings.shareable.some)(doPgn(study, flags))
+
+  private def doPgn(study: StudyModel, flags: Update[WithFlags])(using ctx: Context) =
+    def makeStudySource = pgnDump.chaptersOf(study, _ => flags(pgnDump.requestPgnFlags()))
+    limit.studyDownload()(
+      org.apache.pekko.stream.scaladsl.Source.futureSource:
+        if study.isRelay
+        then env.relay.pgnStream.ofStudy(study).map(_ | makeStudySource)
+        else fuccess(makeStudySource)
+    ): pgnSource =>
+      Ok.chunked(pgnSource.throttle(limit.studyDownload.perSecond, 1.second))
+        .asAttachmentStream(s"${pgnDump.filename(study)}.pgn")
+        .as(PGN)
+        .publicCache(pgnResultCache(study))
+
+  def chapterPgn(id: StudyId, chapterId: StudyChapterId) = Open:
+    doChapterPgn(id, chapterId, notFound, privateUnauthorizedFu, privateForbiddenFu)
+
+  def apiChapterPgn(id: StudyId, chapterId: StudyChapterId) =
+    AnonOrScoped(_.Study.Read, _.Web.Mobile): ctx ?=>
+      doChapterPgn(
+        id,
+        chapterId,
+        fuccess(NotFound("Study or chapter not found")),
+        _ => fuccess(Unauthorized("This study is now private")),
+        _ => fuccess(Forbidden("This study is now private"))
+      )
+
+  private def doChapterPgn(
+      id: StudyId,
+      chapterId: StudyChapterId,
+      studyNotFound: => Fu[Result],
+      studyUnauthorized: StudyModel => Fu[Result],
+      studyForbidden: StudyModel => Fu[Result]
+  )(using Context) =
+    env.study.api
+      .byIdWithChapter(id, chapterId)
+      .flatMap:
+        _.fold(studyNotFound) { case sc @ WithChapter(study, chapter) =>
+          CanViewOr(study) {
+            for
+              flags = pgnDump.requestPgnFlags()
+              pgn <- study.isRelay
+                .so(env.relay.pgnStream.ofChapter(sc, flags))
+                .getOrElse(pgnDump.ofChapter(study, flags)(chapter))
+              analysisJson <- getBool("analysisHeader").so:
+                chapterAnalysis(sc).map2: analysis =>
+                  val division = env.study.serverEvalMerger.divisionOf(chapter)
+                  env.analyse.jsonView.analysisHeader(sc.chapter.root, division, analysis)
+              filename = s"${pgnDump.filename(study, chapter)}.pgn"
+              res = Ok(pgn).asAttachment(filename)
+              resWithAnalysis = analysisJson.fold(res): a =>
+                res.withHeaders("X-Lichess-Analysis" -> Json.stringify(a))
+            yield resWithAnalysis.publicCache(pgnResultCache(study))
+          }(studyUnauthorized(study), studyForbidden(study))
         }
-      }
-    }
 
-  def export(username: String) =
-    OpenOrScoped()(
-      open = ctx => handleExport(username, ctx.me, ctx.req),
-      scoped = req => me => handleExport(username, me.some, req)
-    )
+  private def pgnResultCache(study: StudyModel) = Option.unless(study.isPrivate)(10.seconds)
 
-  private def handleExport(
-      username: String,
-      me: Option[lila.user.User],
-      req: RequestHeader
-  ) = {
-    val userId = lila.user.User normalize username
-    val flags  = requestPgnFlags(req)
-    val isMe   = me.exists(_.id == userId)
-    apiC
-      .GlobalConcurrencyLimitPerIpAndUserOption(req, me) {
-        env.study.studyRepo
-          .sourceByOwner(userId, isMe)
-          .flatMapConcat(env.study.pgnDump(_, flags))
-          .withAttributes(
-            akka.stream.ActorAttributes.supervisionStrategy(akka.stream.Supervision.resumingDecider)
-          )
-          .throttle(30, 1 second)
-      } { source =>
-        Ok.chunked(source)
-          .pipe(asAttachmentStream(s"${username}-${if (isMe) "all" else "public"}-studies.pgn"))
-          .as(pgnContentType)
-      }
-      .fuccess
-  }
+  def apiExportPgn(username: UserStr) = OpenOrScoped(_.Study.Read, _.Web.Mobile): ctx ?=>
+    val name =
+      if username.value == "me"
+      then ctx.me.fold(UserName("me"))(_.username)
+      else username.into(UserName)
+    val userId = name.id
+    val isMe = ctx.me.exists(_.is(userId))
+    val makeStream = env.study.studyRepo
+      .sourceByOwner(userId, isMe)
+      .flatMapConcat(pgnDump.chaptersOf(_, _ => pgnDump.requestPgnFlags()))
+      .throttle(if isMe then 20 else 10, 1.second)
+    apiC.GlobalConcurrencyLimitPerIpAndUserOption(userId.some)(makeStream): source =>
+      Ok.chunked(source)
+        .asAttachmentStream(s"${name}-${if isMe then "all" else "public"}-studies.pgn")
+        .as(PGN)
 
-  private def requestPgnFlags(req: RequestHeader) =
-    lila.study.PgnDump.WithFlags(
-      comments = getBoolOpt("comments", req) | true,
-      variations = getBoolOpt("variations", req) | true,
-      clocks = getBoolOpt("clocks", req) | true
-    )
+  def apiListByOwner(username: UserStr) = OpenOrScoped(_.Study.Read, _.Web.Mobile): ctx ?=>
+    val isMe = ctx.is(username)
+    apiC.jsonDownload:
+      env.study.studyRepo
+        .sourceByOwner(username.id, isMe)
+        .throttle(if isMe then 50 else 20, 1.second)
+        .map(lila.study.JsonView.metadata)
 
-  def chapterGif(id: String, chapterId: String) =
-    Open { implicit ctx =>
-      env.study.api.byIdWithChapter(id, chapterId) flatMap {
-        _.fold(notFound) { case WithChapter(study, chapter) =>
-          CanView(study, ctx.me) {
-            env.study.gifExport.ofChapter(chapter) map { stream =>
+  def chapterGif(
+      id: StudyId,
+      chapterId: StudyChapterId,
+      theme: Option[String],
+      piece: Option[String],
+      showGlyphs: Boolean
+  ) = Open:
+    Found(env.study.api.byIdWithChapter(id, chapterId)):
+      case WithChapter(study, chapter) =>
+        CanView(study):
+          env.study.gifExport
+            .ofChapter(chapter, theme, piece, showGlyphs)
+            .map: stream =>
               Ok.chunked(stream)
-                .pipe(asAttachmentStream(s"${env.study.pgnDump.filename(study, chapter)}.gif"))
+                .asAttachmentStream(s"${pgnDump.filename(study, chapter)}.gif")
                 .as("image/gif")
+                .publicCache(Option.unless(study.isPrivate)(1.day))
+            .recover { case lila.core.lilaism.LilaInvalid(msg) =>
+              BadRequest(msg)
             }
-          }(privateUnauthorizedFu(study), privateForbiddenFu(study))
-        }
-      }
+
+  def apiChapterTagsUpdate(studyId: StudyId, chapterId: StudyChapterId) =
+    AuthOrScopedBody(_.Study.Write, _.Web.Mobile) { _ ?=> _ ?=>
+      bindForm(StudyForm.chapterTagsForm)(
+        jsonFormError,
+        pgn => env.study.api.updateChapterTagsFromApi(studyId, chapterId, pgn).inject(NoContent)
+      )
     }
 
-  def multiBoard(id: String, page: Int) =
-    Open { implicit ctx =>
-      OptionFuResult(env.study.api byId id) { study =>
-        CanView(study, ctx.me) {
-          env.study.multiBoard.json(study.id, page, getBool("playing")) map JsonOk
-        }(privateUnauthorizedJson.fuccess, privateForbiddenJson.fuccess)
-      }
+  def apiChapterPgnMovesUpdate(studyId: StudyId, chapterId: StudyChapterId) =
+    AuthOrScopedBody(_.Study.Write, _.Web.Mobile) { _ ?=> me ?=>
+      bindForm(StudyForm.replaceChapterPgnMoves)(
+        jsonFormError,
+        pgnStr =>
+          env.study.api
+            .replaceChapterPgnMoves(studyId, chapterId, pgnStr)
+            .map:
+              if _ then NoContent
+              else JsonBadRequest(s"Invalid or forbidden chapter $studyId/$chapterId")
+            .recover:
+              case lila.study.StudyValidationException(error) => JsonBadRequest(error)
+      )
     }
 
-  def topicAutocomplete =
-    Action.async { req =>
-      get("term", req).filter(_.nonEmpty) match {
-        case None => BadRequest("No search term provided").fuccess
-        case Some(term) =>
-          import lila.study.JsonView._
-          env.study.topicApi.findLike(term, get("user", req)) map { JsonOk(_) }
-      }
-    }
+  def topicAutocomplete = Anon:
+    get("term").filter(_.nonEmpty) match
+      case None => BadRequest("No search term provided")
+      case Some(term) =>
+        import lila.common.Json.given
+        env.study.topicApi.findLike(term, getUserStr("user").map(_.id)).map(JsonOk(_))
 
-  def topics =
-    Open { implicit ctx =>
-      env.study.topicApi.popular(50) zip
-        ctx.me.??(u => env.study.topicApi.userTopics(u.id) dmap some) map { case (popular, mine) =>
-          val form = mine map lila.study.StudyForm.topicsForm
-          Ok(html.study.topic.index(popular, mine, form))
-        }
-    }
+  def topics = OpenOrScoped():
+    for
+      popular <- env.study.topicApi.popular(50)
+      ofUser = ctx.userId.ifTrue(ctx.isWebAuth || ctx.oauth.exists(_.has(_.Study.Read)))
+      mine <- ofUser.traverse(env.study.topicApi.userTopics)
+      result <- negotiate(
+        Ok.page(views.study.list.topic.index(popular, mine, mine.map(StudyForm.topicsForm))),
+        Ok(Json.obj("popular" -> popular).add("mine" -> mine))
+      )
+    yield result
 
-  def setTopics =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      lila.study.StudyForm.topicsForm
-        .bindFromRequest()
-        .fold(
-          _ => Redirect(routes.Study.topics).fuccess,
-          topics =>
-            env.study.topicApi.userTopics(me, topics) inject
-              Redirect(routes.Study.topics)
-        )
-    }
+  def setTopics = AuthBody { ctx ?=> me ?=>
+    bindForm(StudyForm.topicsForm)(
+      _ => Redirect(routes.Study.topics),
+      topics => env.study.topicApi.userTopics(me, topics).inject(Redirect(routes.Study.topics))
+    )
+  }
+
+  def staffPicks = Open:
+    pageHit
+    FoundPage(env.cms.renderKey("studies-staff-picks")): page =>
+      val featured = isGrantedOpt(_.StudyAdmin).option(env.study.pager.featured.setting.form)
+      views.study.staffPicks(page, featured)
+
+  def staffPicksPost = SecureBody(_.StudyAdmin) { _ ?=> _ ?=>
+    bindForm(env.study.pager.featured.setting.form)(
+      _ => Redirect(routes.Study.staffPicks),
+      v => env.study.pager.featured.setting.setString(v.toString).inject(Redirect(routes.Study.staffPicks))
+    )
+  }
 
   def privateUnauthorizedJson = Unauthorized(jsonError("This study is now private"))
-  def privateUnauthorizedFu(study: StudyModel)(implicit ctx: lila.api.Context) =
-    negotiate(
-      html = fuccess(Unauthorized(html.site.message.privateStudy(study))),
-      api = _ => fuccess(privateUnauthorizedJson)
-    )
+  def privateUnauthorizedFu(study: StudyModel)(using Context) = negotiate(
+    Unauthorized.page(views.study.privateStudy(study)),
+    privateUnauthorizedJson
+  )
 
-  def privateForbiddenJson = Forbidden(jsonError("This study is now private"))
-  def privateForbiddenFu(study: StudyModel)(implicit ctx: lila.api.Context) =
-    negotiate(
-      html = fuccess(Forbidden(html.site.message.privateStudy(study))),
-      api = _ => fuccess(privateForbiddenJson)
-    )
+  def privateForbiddenJson = forbiddenJson("This study is now private")
+  def privateForbiddenFu(study: StudyModel)(using Context) = negotiate(
+    Forbidden.page(views.study.privateStudy(study)),
+    privateForbiddenJson
+  )
 
-  def CanView[A](study: StudyModel, me: Option[lila.user.User])(
-      f: => A
-  )(unauthorized: => A, forbidden: => A): A =
-    me match {
-      case _ if !study.isPrivate                     => f
-      case None                                      => unauthorized
-      case Some(me) if study.members.contains(me.id) => f
-      case _                                         => forbidden
-    }
+  def CanViewOr(study: StudyModel, userSelection: Option[Settings.UserSelection] = none)(
+      f: => Fu[Result]
+  )(unauthorized: => Fu[Result], forbidden: => Fu[Result])(using ctx: Context): Fu[Result] =
+    val authorizedMe = ctx.fullAuthOrScope(_.Study.Read).so(ctx.me)
+    def withUserSelection =
+      if userSelection.forall(Settings.UserSelection.allows(_, study, authorizedMe)) then f
+      else forbidden
+    authorizedMe match
+      case _ if !study.isPrivate => withUserSelection
+      case None => unauthorized
+      case Some(me) if study.members.contains(me.value) => withUserSelection
+      case _ => forbidden
 
-  implicit private def makeStudyId(id: String): StudyModel.Id = StudyModel.Id(id)
-  implicit private def makeChapterId(id: String): Chapter.Id  = Chapter.Id(id)
-
-  private[controllers] def streamersOf(study: StudyModel) = streamerCache get study.id
+  def CanView(study: StudyModel, userSelection: Option[Settings.UserSelection] = none)(
+      f: => Fu[Result]
+  )(using ctx: Context): Fu[Result] =
+    CanViewOr(study, userSelection)(f)(privateUnauthorizedFu(study), privateForbiddenFu(study))
 
   private val streamerCache =
-    env.memo.cacheApi[StudyModel.Id, List[lila.user.User.ID]](64, "study.streamers") {
-      _.refreshAfterWrite(15.seconds)
-        .maximumSize(512)
-        .buildAsyncFuture { studyId =>
-          env.study.studyRepo.membersById(studyId) flatMap {
-            _.map(_.members).filter(_.nonEmpty) ?? { members =>
-              env.streamer.liveStreamApi.all.flatMap {
-                _.streams
-                  .filter { s =>
-                    members.exists(m => s is m._2.id)
-                  }
-                  .map { stream =>
-                    env.study.isConnected(studyId, stream.streamer.userId) map {
-                      _ option stream.streamer.userId
-                    }
-                  }
-                  .sequenceFu
-                  .dmap(_.flatten)
-              }
-            }
-          }
-        }
-    }
+    env.memo.cacheApi[StudyId, List[UserId]](64, "study.streamers"):
+      _.expireAfterWrite(10.seconds).buildAsyncFuture: studyId =>
+        env.study.findConnectedUsersIn(studyId)(env.streamer.liveApi.streamerUserIds)
 
-  def glyphs(lang: String) = Action {
-    import chess.format.pgn.Glyph
-    import lila.tree.Node.glyphWriter
-    import lila.i18n.{ I18nKeys => trans }
-
-    play.api.i18n.Lang.get(lang) ?? { implicit lang =>
-      JsonOk(
-        Json.obj(
-          "move" -> List(
-            Glyph.MoveAssessment.good.copy(name = trans.study.goodMove.txt()),
-            Glyph.MoveAssessment.mistake.copy(name = trans.study.mistake.txt()),
-            Glyph.MoveAssessment.brillant.copy(name = trans.study.brilliantMove.txt()),
-            Glyph.MoveAssessment.blunder.copy(name = trans.study.blunder.txt()),
-            Glyph.MoveAssessment.interesting.copy(name = trans.study.interestingMove.txt()),
-            Glyph.MoveAssessment.dubious.copy(name = trans.study.dubiousMove.txt()),
-            Glyph.MoveAssessment.only.copy(name = trans.study.onlyMove.txt()),
-            Glyph.MoveAssessment.zugzwang.copy(name = trans.study.zugzwang.txt())
-          ),
-          "position" -> List(
-            Glyph.PositionAssessment.equal.copy(name = trans.study.equalPosition.txt()),
-            Glyph.PositionAssessment.unclear.copy(name = trans.study.unclearPosition.txt()),
-            Glyph.PositionAssessment.whiteSlightlyBetter
-              .copy(name = trans.study.whiteIsSlightlyBetter.txt()),
-            Glyph.PositionAssessment.blackSlightlyBetter
-              .copy(name = trans.study.blackIsSlightlyBetter.txt()),
-            Glyph.PositionAssessment.whiteQuiteBetter.copy(name = trans.study.whiteIsBetter.txt()),
-            Glyph.PositionAssessment.blackQuiteBetter.copy(name = trans.study.blackIsBetter.txt()),
-            Glyph.PositionAssessment.whiteMuchBetter.copy(name = trans.study.whiteIsWinning.txt()),
-            Glyph.PositionAssessment.blackMuchBetter.copy(name = trans.study.blackIsWinning.txt())
-          ),
-          "observation" -> List(
-            Glyph.Observation.novelty.copy(name = trans.study.novelty.txt()),
-            Glyph.Observation.development.copy(name = trans.study.development.txt()),
-            Glyph.Observation.initiative.copy(name = trans.study.initiative.txt()),
-            Glyph.Observation.attack.copy(name = trans.study.attack.txt()),
-            Glyph.Observation.counterplay.copy(name = trans.study.counterplay.txt()),
-            Glyph.Observation.timeTrouble.copy(name = trans.study.timeTrouble.txt()),
-            Glyph.Observation.compensation.copy(name = trans.study.withCompensation.txt()),
-            Glyph.Observation.withIdea.copy(name = trans.study.withTheIdea.txt())
-          )
-        )
-      ).withHeaders(CACHE_CONTROL -> "max-age=3600")
-    }
-  }
-}
+  def glyphs(lang: String) = Anon:
+    Found(play.api.i18n.Lang.get(lang)): lang =>
+      JsonOk:
+        lila.study.JsonView.glyphs(using env.translator.to(lang))
+      .publicCache(1.hour)

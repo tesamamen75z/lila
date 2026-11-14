@@ -4,12 +4,12 @@
   .mini-game__player {
     @extend %flex-center-nowrap;
 
-    & i {
+    & icon.berserk {
       flex: 0 0 auto;
 
       &::before {
         color: $c-accent;
-        margin-right: 5px;
+        margin-inline-end: 5px;
       }
     }
   }
@@ -19,14 +19,14 @@
 
     strong {
       text-align: center;
-      margin-right: 1ch;
+      margin-inline-end: 1ch;
     }
 
     .user-link {
       @extend %flex-between;
 
       flex: 1 1 100%;
-      margin-right: 1em;
+      margin-inline-end: 1em;
     }
   }
 }

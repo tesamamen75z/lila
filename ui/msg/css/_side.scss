@@ -1,14 +1,15 @@
 .msg-app {
   &__side {
     @extend %flex-column;
+    @include prevent-select;
 
     flex: 0 0 50ch;
 
-    @include breakpoint($mq-not-medium) {
+    @media (max-width: at-most($medium)) {
       flex: 0 0 40ch;
     }
 
-    @include breakpoint($mq-not-small) {
+    @media (max-width: at-most($small)) {
       flex: 1 0 100%;
       display: none;
 
@@ -19,8 +20,7 @@
 
     background: $c-bg-zebra;
     overflow: hidden;
-    user-select: none;
-    border-right: $border;
+    border-inline-end: $border;
 
     ::-webkit-scrollbar,
     ::-webkit-scrollbar-corner {
@@ -40,7 +40,7 @@
 
         width: 100%;
         margin: auto 2em;
-        border-radius: 99px;
+        border-radius: calc($box-radius-size * 2);
         background: $c-bg-box;
         padding: 0.6em 1.2em;
       }
@@ -56,24 +56,24 @@
       cursor: pointer;
 
       &:hover {
-        background: mix($c-msg, $c-bg-box, 15%);
+        background: color-mix(in oklab, $c-secondary 15%, $c-bg);
       }
 
       &:active,
       &.active {
-        background: mix($c-msg, $c-bg-box, 30%);
+        background: color-mix(in oklab, $c-secondary 30%, $c-bg);
       }
 
-      &__icon {
+      .user-link {
         flex: 0 0 auto;
         font-size: 2.3em;
       }
 
       &__user {
         @extend %nowrap-ellipsis;
+        @include padding-direction(0.8em, 1.5em, 0.8em, 0);
 
         flex: 1 1 auto;
-        padding: 0.8em 1.5em 0.8em 0;
       }
 
       &__head {
@@ -117,8 +117,14 @@
 
       &__new {
         color: $c-primary;
-        margin-left: 0.3em;
+        margin-inline-start: 0.3em;
       }
     }
+  }
+
+  &__contacts__loading {
+    display: flex;
+    justify-content: center;
+    padding: 1em;
   }
 }

@@ -1,29 +1,41 @@
-import { VNode } from 'snabbdom';
-import { Player, Status, Source, Clock } from 'game';
-import * as cg from 'chessground/types';
-import { ForecastData } from './forecast/interfaces';
-import { StudyPracticeData, Goal as PracticeGoal } from './study/practice/interfaces';
-import { RelayData } from './study/relay/interfaces';
-import AnalyseController from './ctrl';
-import { ChatCtrl } from 'chat';
-import { ExplorerOpts } from './explorer/interfaces';
-import { StudyData } from './study/interfaces';
-import { AnalyseSocketSend } from './socket';
+import type { VNode } from 'snabbdom';
 
-export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
-export type Seconds = number;
+import type { ExternalEngineInfoFromServer } from 'lib/ceval';
+import type { ChatCtrl, ChatPlugin, ChatOpts } from 'lib/chat/interfaces';
+import type { Player, Status, Source, Clock } from 'lib/game';
+import type { Coords, MoveEvent } from 'lib/prefs';
+import type { EnhanceOpts } from 'lib/richText';
+import type {
+  PvDataServer,
+  ServerEval,
+  TreeNode,
+  TreeNodeBase,
+  TreeNodeLite,
+  TreePath,
+} from 'lib/tree/types';
 
-export { Key, Piece } from 'chessground/types';
+import type { ExplorerOpts } from './explorer/interfaces';
+import type { ForecastData } from './forecast/interfaces';
+import type { AnalyseSocketSend } from './socket';
+import type { StudyDataFromServer } from './study/interfaces';
+import type { StudyPracticeData, Goal as PracticeGoal } from './study/practice/interfaces';
+import type { RelayData } from './study/relay/interfaces';
+import type * as studyDeps from './study/studyDeps';
 
 export interface NvuiPlugin {
-  render(ctrl: AnalyseController): VNode;
+  render(deps?: typeof studyDeps): VNode;
 }
 
 export interface AnalyseApi {
   socketReceive(type: string, data: any): boolean;
-  path(): Tree.Path;
+  path(): TreePath;
   setChapter(id: string): void;
+}
+
+export interface OpeningPuzzle {
+  key: string;
+  name: string;
+  count: number;
 }
 
 // similar, but not identical, to game/GameData
@@ -35,45 +47,56 @@ export interface AnalyseData {
   spectator?: boolean; // for compat with GameData, for game functions
   takebackable: boolean;
   moretimeable: boolean;
-  analysis?: Analysis;
+  analysis?: AnalysisMeta;
   userAnalysis: boolean;
   forecast?: ForecastData;
-  treeParts: Tree.Node[];
-  evalPut?: boolean;
+  sidelines?: TreeNode[][];
+  treeParts: TreeNodeBase[];
   practiceGoal?: PracticeGoal;
   clock?: Clock;
   pref: AnalysePref;
-  url: {
-    socket: string;
-  };
   userTv?: {
     id: string;
   };
+  puzzle?: OpeningPuzzle;
+  externalEngines?: ExternalEngineInfoFromServer[];
 }
 
 export interface AnalysePref {
-  coords: Prefs.Coords;
+  coords: Coords;
   is3d?: boolean;
   showDests?: boolean;
   rookCastle?: boolean;
   destination?: boolean;
   highlight?: boolean;
+  showCaptured?: boolean;
   animationDuration?: number;
+  keyboardMove: boolean;
+  moveEvent: MoveEvent;
 }
 
-export interface ServerEvalData {
+export interface AnalysisUpdate {
   ch: string;
-  analysis?: Analysis;
-  tree: Tree.Node;
+  analysis?: AnalysisMeta;
+  tree: TreeNodeLite;
   division?: Division;
 }
 
-export interface CachedEval {
-  fen: Fen;
+export interface EvalHit {
+  fen: FEN;
+  engineId?: string;
   knodes: number;
   depth: number;
-  pvs: Tree.PvDataServer[];
+  pvs: PvDataServer[];
   path: string;
+}
+
+export interface EvalHitMulti extends EvalScore {
+  fen: FEN;
+}
+
+export interface EvalHitMultiArray {
+  multi: EvalHitMulti[];
 }
 
 // similar, but not identical, to game/Game
@@ -82,7 +105,8 @@ export interface Game {
   status: Status;
   player: Color;
   turns: number;
-  startedAtTurn: number;
+  fen: FEN;
+  startedAtTurn?: number;
   source: Source;
   speed: Speed;
   variant: Variant;
@@ -92,14 +116,15 @@ export interface Game {
   importedBy?: string;
   division?: Division;
   opening?: Opening;
-  perf: string;
+  perf: Perf;
   rated?: boolean;
+  threefold?: boolean;
 }
 
 export interface Opening {
   name: string;
   eco: string;
-  ply: number;
+  ply: Ply;
 }
 
 export interface Division {
@@ -107,18 +132,30 @@ export interface Division {
   end?: number;
 }
 
-export interface Analysis {
+export interface AnalysisMeta {
   id: string;
-  white: AnalysisSide;
-  black: AnalysisSide;
-  partial: boolean;
+  white: AnalysisMetaSide;
+  black: AnalysisMetaSide;
+  partial?: boolean;
+  engine?: AnalysisEngineInfo;
 }
 
-export interface AnalysisSide {
+export interface AnalysisEngineInfo {
+  nodesPerMove: number;
+  id: string;
+  userId: string;
+  engineVersion: string;
+}
+
+export type GamePhase = 'opening' | 'middlegame' | 'endgame';
+
+export interface AnalysisMetaSide {
   acpl: number;
   inaccuracy: number;
   mistake: number;
   blunder: number;
+  accuracy: number;
+  phases?: Partial<Record<GamePhase, number>>;
 }
 
 export interface AnalyseOpts {
@@ -126,40 +163,43 @@ export interface AnalyseOpts {
   data: AnalyseData;
   userId?: string;
   hunter: boolean;
-  embed: boolean;
   explorer: ExplorerOpts;
   socketSend: AnalyseSocketSend;
-  trans: Trans;
-  study?: StudyData;
+  study?: StudyDataFromServer;
   tagTypes?: string;
   practice?: StudyPracticeData;
   relay?: RelayData;
   $side?: Cash;
   $underboard?: Cash;
-  i18n: I18nDict;
-  chat: {
-    parseMoves: boolean;
-    instance?: Promise<ChatCtrl>;
+  chat: ChatOpts & {
+    plugin: ChatPlugin;
+    enhance: EnhanceOpts;
+    instance?: ChatCtrl;
   };
+  wiki?: boolean;
+  inlinePgn?: string;
+  externalEngineEndpoint: string;
+  embed?: boolean;
+  socketUrl?: string;
+  socketVersion?: number;
 }
 
-export interface JustCaptured extends cg.Piece {
+export interface JustCaptured extends Piece {
   promoted?: boolean;
 }
 
 export interface EvalGetData {
-  fen: Fen;
+  fen: FEN;
   path: string;
   variant?: VariantKey;
   mpv?: number;
   up?: boolean;
 }
 
-export interface EvalPutData extends Tree.ServerEval {
+export interface EvalPutData extends ServerEval {
   variant?: VariantKey;
+  engineId: string;
 }
 
 export type Conceal = false | 'conceal' | 'hide' | null;
-export type ConcealOf = (isMainline: boolean) => (path: Tree.Path, node: Tree.Node) => Conceal;
-
-export type Redraw = () => void;
+export type ConcealOf = (isMainline: boolean) => (path: TreePath, node: TreeNode) => Conceal;

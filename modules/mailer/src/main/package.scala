@@ -1,6 +1,6 @@
-package lila
+package lila.mailer
 
-package object mailer extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[mailer] def logger = lila.log("mailer")
-}
+private lazy val logger = lila.log("mailer")

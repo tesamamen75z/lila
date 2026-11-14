@@ -1,73 +1,71 @@
 package lila.round
 
-import scala.concurrent.duration._
+import chess.IntRating
+import scalalib.ThreadLocalRandom
+import scalalib.net.IpAddressStr
 
-import lila.common.IpAddress
-import lila.game.Game
-import lila.user.{ User, UserRepo }
+import scala.util.matching.Regex
+
+import lila.core.net.IpAddress
+import lila.memo.SettingStore
+import lila.rating.UserPerfsExt.bestRating
+import lila.user.UserApi
 
 final class SelfReport(
-    tellRound: TellRound,
-    gameRepo: lila.game.GameRepo,
-    userRepo: UserRepo,
-    ircApi: lila.irc.IrcApi,
-    proxyRepo: GameProxyRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    roundApi: lila.core.round.RoundApi,
+    userApi: UserApi,
+    proxyRepo: GameProxyRepo,
+    noteApi: lila.core.user.NoteApi,
+    settingStore: lila.memo.SettingStore.Builder
+)(using ec: Executor, scheduler: Scheduler):
 
-  private val whitelist = Set("treehugger")
+  import SettingStore.Regex.given
+  val endGameSetting = settingStore[Regex](
+    "selfReportEndGame",
+    default = "-".r,
+    text = "Self reports that end the game".some,
+    perm = _.Admin
+  )
 
-  private val onceEvery = lila.memo.OnceEvery(1 hour)
+  val markUserSetting = settingStore[Regex](
+    "selfReportMarkUser",
+    default = "-".r,
+    text = "Self reports that mark the user".some,
+    perm = _.Admin
+  )
 
-  def apply(
-      userId: Option[User.ID],
-      ip: IpAddress,
-      fullId: Game.FullId,
-      name: String
-  ): Funit =
-    !userId.exists(whitelist.contains) ?? {
-      userId.??(userRepo.named) flatMap { user =>
-        val known = user.exists(_.marks.engine)
-        lila.mon.cheat.cssBot.increment()
-        // user.ifTrue(!known && name != "ceval") ?? { u =>
-        //   Env.report.api.autoBotReport(u.id, referer, name)
-        // }
-        def doLog(): Unit =
-          if (name != "ceval") {
-            lila
-              .log("cheat")
-              .branch("jslog")
-              .info(
-                s"$ip https://lichess.org/$fullId ${user.fold("anon")(_.id)} $name"
-              )
-            user.filter(u => onceEvery(u.id)) foreach { u =>
-              ircApi.selfReport(
-                typ = name,
-                path = fullId.value,
-                user = u,
-                ip = ip
-              )
-            }
-          }
-        if (name == "kb" || fullId.value == "____________") fuccess(doLog())
-        else
-          proxyRepo.pov(fullId.value) flatMap {
-            _ ?? { pov =>
-              if (!known) doLog()
-              if (
-                Set("ceval", "rcb", "cma", "lga")(name) ||
-                (name.startsWith("soc") && (
-                  name.contains("stockfish") || name.contains("userscript") ||
-                    name.contains("__puppeteer_evaluation_script__")
-                ))
-              ) fuccess {
-                if (userId.isDefined) tellRound(pov.gameId, lila.round.actorApi.round.Cheat(pov.color))
-                user.ifTrue(name == "cma") foreach { u =>
-                  lila.common.Bus.publish(lila.hub.actorApi.mod.SelfReportMark(u.id, name), "selfReportMark")
-                }
-              }
-              else gameRepo.setBorderAlert(pov).void
-            }
-          }
+  private val logOnceEvery = scalalib.cache.OnceEvery[IpAddressStr](1.minute)
+
+  private lazy val logger = lila.log("cheat.jslog")
+
+  def apply(userId: Option[UserId], ip: IpAddress, fullId: GameFullId, name: String): Funit =
+    (name != "err").so:
+      val gameUrl = s"https://lichess.org/$fullId"
+      if name != "ceval" && logOnceEvery(ip.str) then
+        logger.info(s"$ip $gameUrl ${userId | "-"} $name")
+        lila.mon.cheat.selfReport(name, userId.isDefined).increment()
+      userId.so(userApi.withPerfs).flatMapz { u =>
+        proxyRepo
+          .pov(fullId)
+          .mapz: pov =>
+            if endGameSetting.get().matches(name)
+            then roundApi.tell(pov.gameId, lila.core.round.Cheat(pov.color))
+            val banDelay = markUserSetting
+              .get()
+              .matches(name)
+              .option:
+                val rating = pov.player.rating | u.perfs.bestRating
+                val delayBase =
+                  if rating > IntRating(2500) then 2
+                  else if rating > IntRating(2300) then 10
+                  else if rating > IntRating(2000) then 30
+                  else if rating > IntRating(1800) then 60
+                  else 120
+                delayBase.minutes + ThreadLocalRandom.nextInt(delayBase * 60).seconds
+            val msg = s"Self-report $name on $gameUrl, " +
+              banDelay.fold("no ban")(d => s"ban in ${d.toMinutes} minutes")
+            noteApi.lichessWrite(u.user, msg)
+            banDelay.foreach: d =>
+              scheduler.scheduleOnce(d):
+                lila.common.Bus.pub(lila.core.mod.SelfReportMark(u.id, name, fullId))
       }
-    }
-}

@@ -1,6 +1,8 @@
-import AnalyseCtrl from '../../ctrl';
-import { path as treePath, ops as treeOps } from 'tree';
-import { makeShapesFromUci } from '../../autoShape';
+import { path as treePath } from 'lib/tree/tree';
+import type { Shape, TreePath } from 'lib/tree/types';
+
+import { makeShapesFromUci } from '@/autoShape';
+import type AnalyseCtrl from '@/ctrl';
 
 export type Feedback = 'play' | 'good' | 'bad' | 'end';
 
@@ -18,44 +20,33 @@ export default class GamebookPlayCtrl {
   constructor(
     readonly root: AnalyseCtrl,
     readonly chapterId: string,
-    readonly trans: Trans,
-    readonly redraw: () => void
+    readonly redraw: () => void,
   ) {
-    // ensure all original nodes have a gamebook entry,
-    // so we can differentiate original nodes from user-made ones
-    treeOps.updateAll(root.tree.root, n => {
-      n.gamebook = n.gamebook || {};
-      if (n.shapes) n.gamebook.shapes = n.shapes.slice(0);
-    });
-
     this.makeState();
   }
 
-  private makeState = (): void => {
-    const node = this.root.node,
-      nodeComment = (node.comments || [])[0],
-      state: Partial<State> = {
-        init: this.root.path === '',
-        comment: nodeComment ? nodeComment.text : undefined,
-        showHint: false,
-      },
-      parPath = treePath.init(this.root.path),
-      parNode = this.root.tree.nodeAtPath(parPath);
+  private readonly makeState = (): void => {
+    const node = this.root.node;
+    const nodeComment = (node.comments || [])[0];
+    const state: Partial<State> = {
+      init: this.root.path === '',
+      comment: nodeComment ? nodeComment.text : undefined,
+      showHint: false,
+    };
+    const parPath = treePath.init(this.root.path);
+    const parNode = this.root.tree.nodeAtPath(parPath);
     if (
       (this.root.onMainline && !node.children[0]) ||
       (!this.root.onMainline && !this.root.tree.pathIsMainline(parPath))
-    ) {
+    )
       state.feedback = 'end';
-    } else if (this.isMyMove()) {
+    else if (this.isMyMove()) {
       state.feedback = 'play';
-      state.hint = (node.gamebook || {}).hint;
-    } else if (this.root.onMainline) {
-      state.feedback = 'good';
-    } else {
+      state.hint = node.gamebook?.hint;
+    } else if (this.root.onMainline) state.feedback = 'good';
+    else {
       state.feedback = 'bad';
-      if (!state.comment) {
-        state.comment = parNode.children[0].gamebook!.deviation;
-      }
+      if (!state.comment) state.comment = parNode.children[0].gamebook?.deviation;
     }
     this.state = state as State;
     if (!state.comment) {
@@ -66,7 +57,8 @@ export default class GamebookPlayCtrl {
 
   isMyMove = () => this.root.turnColor() === this.root.data.orientation;
 
-  movableColor = () => (['play', 'good'].includes(this.state.feedback) ? this.root.data.orientation : undefined);
+  movableColor = () =>
+    ['play', 'good'].includes(this.state.feedback) ? this.root.data.orientation : undefined;
 
   retry = () => {
     let path = this.root.path;
@@ -106,10 +98,12 @@ export default class GamebookPlayCtrl {
   };
 
   solution = () => {
-    this.root.chessground.setShapes(makeShapesFromUci(this.root.turnColor(), this.root.node.children[0].uci!, 'green'));
+    this.root.chessground.setShapes(
+      makeShapesFromUci(this.root.turnColor(), 'green', this.root.node.children[0].uci),
+    );
   };
 
-  canJumpTo = (path: Tree.Path) => treePath.contains(this.root.path, path);
+  canJumpTo = (path: TreePath) => treePath.contains(this.root.path, path);
 
   onJump = () => {
     this.makeState();
@@ -117,9 +111,9 @@ export default class GamebookPlayCtrl {
     setTimeout(() => this.root.withCg(cg => cg.playPremove()), 100);
   };
 
-  onShapeChange = (shapes: Tree.Shape[]) => {
+  onShapeChange = (shapes: Shape[]) => {
     const node = this.root.node;
-    if (node.gamebook && node.gamebook.shapes && !shapes.length) {
+    if (node.gamebook?.shapes && !shapes.length) {
       node.shapes = node.gamebook.shapes.slice(0);
       this.root.jump(this.root.path);
     }

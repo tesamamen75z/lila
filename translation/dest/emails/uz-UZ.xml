@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="emailConfirm_subject">%s lichess.org hisobingizni tasdiqlang</string>
-  <string name="emailConfirm_click" comment="emailConfirm_click&#10;&#10;Part of the confirmation email upon registering for a Lichess account.&#10;&#10;The unique reset link is presented just after this string.">Lichess hisobingizni yoqish uchun quyidagi linkni bosing:</string>
-  <string name="emailConfirm_ignore">Agar siz \"Lichess\" da ro\'yxatdan o\'tmagan bo\'lsangiz, ushbu xabarga beparvo bo\'lishingiz mumkin.</string>
-  <string name="passwordReset_subject">%s lichess.org parolingizni qayta tiklang</string>
-  <string name="passwordReset_intro">Biz sizni hisobingizni parolini tashlab yuborishga so\'rov oldik.</string>
-  <string name="passwordReset_clickOrIgnore">Agar siz ushbu so\'rovni yaratgan bo\'lsangiz, quyidagi linkni bosing. Agar siz bo\'lmasangiz, ushbu emailga parvo qilmasangiz bo\'ladi.</string>
-  <string name="emailChange_subject">%s, elektron manzilingizni tasdiqlang</string>
-  <string name="emailChange_intro">Siz emailingizni almashtirishni so\'radingiz.</string>
-  <string name="emailChange_click">Ushbu xatga huquqingiz borligini tasdiqlash uchun quyidagi linkni bosing:</string>
-  <string name="welcome_subject">%s lichess.org ga xush kelibsiz</string>
-  <string name="welcome_text">Https://lichess.org da sizni hisobingiz muvaffaqiyatli yaratildi.
+  <string name="emailConfirm_subject">%s, lichess.org akkauntingizni tasdiqlang</string>
+  <string name="emailConfirm_intro">Lichessʼda röyxatdan ötganingiz uçun taşakkur!</string>
+  <string name="emailConfirm_click" comment="emailConfirm_click&#10;&#10;Part of the confirmation email upon registering for a Lichess account.&#10;&#10;The unique reset link is presented just after this string.">Lichess akkauntingizni yoqiş uçun quyidagi havolani bosing:</string>
+  <string name="emailConfirm_justIgnore">Agar Lichessʼda röyxatdan ötmagan bölsangiz, bu xabarga eʼtibor bermang. Tasdiqlanmagan akkauntingiz va e‑poçtangiz izlari 48 soatdan keyin tizimlarimizdan öçiriladi.</string>
+  <string name="passwordReset_subject">%s, lichess.org parolingizni tiklang</string>
+  <string name="passwordReset_intro">Akkauntingiz parolini tiklaş böyiça bizga sörov kelib tuşdi.</string>
+  <string name="passwordReset_clickOrIgnore">Agar uşbu sörovni siz yuborgan bölsangiz, quyidagi havolani bosing. Aks holda, uşbu xatga eʼtibor bermang.</string>
+  <string name="emailChange_subject">%s, yangi e‑poçta manzilingizni tasdiqlang</string>
+  <string name="emailChange_intro">Siz e‑poçta manzilingizni özgartiriş haqida sörov yubordingiz.</string>
+  <string name="emailChange_click">Uşbu poçta sizga tegişli ekanligini tasdiqlaş uçun quyidagi havolani bosing:</string>
+  <string name="welcome_subject">%s, lichess.orgʼga xuş kelibsiz</string>
+  <string name="welcome_text">https://lichess.org saytida muvaffaqiyatli röyxatdan ötdingiz.
 
-%1$s:sizni profil sahifangiz. %2$s da uni shaxsiylashtirishingiz mumkin. 
+Sizning profil sahifangiz: %1$s. Profilingizni %2$sʼda tahrirlaşingiz mumkin. 
 
- Omad yor bo\'lsin va doim sizni sipohlaringiz raqibingiz qiroli tomon yo\'l topa olsin:)!</string>
-  <string name="logInToLichess">%s, lichess.org ga kiring</string>
-  <string name="common_orPaste">(Bosish ishlamayabdimi? Buni browzeringizga qo\'yishga urinib ko\'ring!)</string>
-  <string name="common_note">%s ni ishlatishingiz bilan bog\'liq bo\'lgan xizmatchi email manzil.</string>
-  <string name="common_contact">Biz bilan bog\'lanish uchun %s dan foydalaning.</string>
+Öyinlaringiz zavqli bölsin va şaxmat donalaringiz har doim raqib şohi tomon yöl topa olsin!</string>
+  <string name="logInToLichess">%s, lichess.orgʼga kiring</string>
+  <string name="common_linkNotWorking" comment="common_orPaste&#10;&#10;Part of the e-mail received from lichess when changing your e-mail address.">(Havola işlamayaptimi? Uni brauzeringizga qöyib köring!)</string>
+  <string name="common_note">%s ni işlatişingiz bilan boğliq bölgan yordamçi email manzil.</string>
+  <string name="common_contact">Biz bilan boğlaniş uçun %s sahifasiga öting.</string>
 </resources>

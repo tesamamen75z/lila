@@ -112,8 +112,9 @@
   <string name="howTheGameStarts">Уен ничек башлана</string>
   <string name="placeTheBishops">Филне урнаштырыгыз!
 Алар атчылар янына китәләр.</string>
-  <string name="castlingComplete">Котлыйбыз! Сез һәрвакыт диярлек уенда калкалада булырга тиеш.</string>
+  <string name="castling">Рокировка</string>
   <string name="enPassant">Бик вакытлы</string>
+  <string name="castlingComplete">Котлыйбыз! Сез һәрвакыт диярлек уенда калкалада булырга тиеш.</string>
   <string name="theSpecialPawnMove">Махсус җәяүле хәрәкәте</string>
   <string name="enPassantIntro">Рәкыйпнең җәяүле ике квадрат белән хәрәкәтләнгәндә, сез аны бер квадрат хәрәкәт кебек кабул итә аласыз.</string>
   <string name="stalemate">Пат</string>
@@ -126,13 +127,20 @@
   <string name="whatNext">Дәвамы?</string>
   <string name="register">Теркәлү</string>
   <string name="getAFreeLichessAccount">Азат Lichess хисабын алыгыз</string>
+  <string name="practice">Күнегүләрегез</string>
   <string name="puzzles">Башваткычлар</string>
   <string name="exerciseYourTacticalSkills">Тактик осталыгыгызны кулланыгыз</string>
   <string name="videos">Видеолар</string>
   <string name="playPeople">Уйнау әдәм белән</string>
   <string name="letsGo">Әйдә!</string>
+  <string name="awesome">Бик шәп!</string>
+  <string name="excellent">Гаҗәп яхшы!</string>
+  <string name="greatJob">Шәп эш!</string>
+  <string name="perfect">Бик әйбәт!</string>
+  <string name="outstanding">Искиткеч!</string>
   <string name="yesYesYes">Афәрин!</string>
   <string name="next">Киләсе</string>
+  <string name="nextX">Киләсе: %s</string>
   <string name="backToMenu">Минюга кайту</string>
   <string name="retry">Кабатла</string>
 </resources>

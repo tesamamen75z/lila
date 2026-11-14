@@ -103,6 +103,7 @@ Y no pierdas las tuyas.</string>
   <string name="pawnsFormTheFrontLine">Los peons forman la linia delantera. Mueve qualsequier pieza pa continar.</string>
   <string name="boardSetupComplete">Felicidatz! Ya sabes cómo colocar las piezas en o escaquero.</string>
   <string name="castling">Enroque</string>
+  <string name="enPassant">Captura a lo paso</string>
   <string name="theSpecialKingMove">Lo movimiento especial d\'o rei</string>
   <string name="castlingIntro">Mete a lo tuyo rei a salvo y desplega la tuya torre pa atacar!</string>
   <string name="castleKingSide">Mueve lo tuyo rei dos quadretz pa fer un enroque curto.</string>
@@ -115,7 +116,6 @@ Y no pierdas las tuyas.</string>
   <string name="findAWayToCastleKingSide">Troba la forma de enrocar en curto!</string>
   <string name="findAWayToCastleQueenSide">Troba la forma de enrocar en largo!</string>
   <string name="castlingComplete">Norabuena! Conviene enrocar en quasi totas las partidas.</string>
-  <string name="enPassant">Captura a lo paso</string>
   <string name="theSpecialPawnMove">Lo movimiento especial d\'o peón</string>
   <string name="enPassantIntro">Quan lo peón oponent mueve dos quadretz, puetz capturar-lo como si en hese moviu nomás una.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Las negras han moviu lo suyo peón dos quadretz! Captura-lo a lo paso.</string>
@@ -142,6 +142,12 @@ peón = 1
 Lo rei ye valioso! Perder-lo significa perder la partida.</string>
   <string name="queenOverBishop">Captura la pieza mas valurosa!
 Dama &gt; Alfil</string>
+  <string name="pieceValueExchange">Captura la pieza que tienga mas valura!
+ No cambies
+ una pieza que valga mas per una de menos valura.</string>
+  <string name="pieceValueLegal">Captura la pieza 
+que tienga mas valura!
+Asegura-te que lo movimiento ye legal.</string>
   <string name="takeThePieceWithTheHighestValue">Captura la pieza mas valurosa!</string>
   <string name="pieceValueComplete">Felicidatz! Conoixes la valura d\'as piezas!
 Dama = 9
@@ -181,8 +187,8 @@ peón = 1</string>
   <string name="nailedIt">L\'has clavau!</string>
   <string name="rightOn">Exacto!</string>
   <string name="stageXComplete">Libel %s completo</string>
-  <string name="yourScore">La tuya puntuación</string>
   <string name="next">Siguient</string>
+  <string name="nextX">Siguient: %s</string>
   <string name="backToMenu">Tornar a lo menú</string>
   <string name="puzzleFailed">Solución incorrecta!</string>
   <string name="retry">Reintentar</string>

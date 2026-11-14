@@ -1,6 +1,5 @@
-package lila
+package lila.forumSearch
 
-package object forumSearch extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
 
-  private[forumSearch] val logger = lila.log("forumSearch")
-}
+val index = lila.search.Index.Forum

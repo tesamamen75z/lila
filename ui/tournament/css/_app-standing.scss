@@ -2,16 +2,23 @@
   border: none;
 
   .player {
-    padding-left: 0px;
-    padding-right: 0px;
+    padding-left: 0;
+    padding-right: 0;
+
+    .user-link {
+      @extend %flex-center-nowrap;
+    }
 
     .name {
       @extend %nowrap-ellipsis;
 
       display: inline-block;
-      vertical-align: middle;
-      padding-right: 5px;
+      padding-inline-end: 5px;
       max-width: 140px;
+
+      @media (min-width: at-least($x-large)) {
+        max-width: 200px;
+      }
     }
   }
 
@@ -26,13 +33,13 @@
 
   tr.long .user-link .rating {
     display: block;
-    padding-left: 0px;
+    direction: ltr;
+    padding-inline-start: 0;
   }
 
   tr {
     @include transition;
-
-    user-select: none;
+    @include prevent-select;
   }
 
   .loading tbody {
@@ -41,43 +48,26 @@
     @include transition(opacity, 0.3s);
   }
 
-  &:not(.created):not(.loading) tbody tr:hover {
-    background: mix($c-primary, $c-bg-box, 30%);
+  &:not(.created, .loading) tbody tr:hover {
+    background: color-mix(in oklab, $c-primary 30%, $c-bg);
     cursor: pointer;
   }
 
   tr.me td:first-child {
-    $c-me-border: mix($c-secondary, $c-bg-box, 70%);
-
-    background: linear-gradient(
-      to right,
-      $c-me-border 0px,
-      $c-me-border 5px,
-      rgba(0, 0, 0, 0) 5px,
-      rgba(0, 0, 0, 0) 100%
-    );
+    @include gradient-border(color-mix(in oklab, $c-secondary 70%, $c-bg), to right, to left);
   }
 
   tr.active td:last-child {
-    $c-active-border: mix($c-primary, $c-bg-box, 70%);
-
-    background: linear-gradient(
-      to left,
-      $c-active-border 0px,
-      $c-active-border 5px,
-      rgba(0, 0, 0, 0) 5px,
-      rgba(0, 0, 0, 0) 100%
-    );
+    @include gradient-border(color-mix(in oklab, $c-primary 70%, $c-bg), to left, to right);
   }
 
   td.rank {
-    @extend %roboto;
+    @include padding-direction(1em, 0.5em, 1em, 10px);
 
-    padding: 1em 0.5em 1em 10px;
     width: 1px;
 
     /* helps keeping it as small as possible */
-    i {
+    icon {
       opacity: 0.4;
       font-size: 0.8em;
     }
@@ -85,8 +75,7 @@
 
   .sheet {
     text-align: right;
-    padding-right: 0;
-    padding-left: 0;
+    padding-inline: 0;
     letter-spacing: 0.1em;
 
     & > * {
@@ -123,6 +112,6 @@
   .total {
     text-align: right;
     font-weight: bold;
-    padding-right: $block-gap;
+    padding-inline-end: $block-gap;
   }
 }

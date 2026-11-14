@@ -4,8 +4,6 @@
   .left {
     @extend %flex-center-nowrap;
 
-    align-items: stretch;
-    flex: 0 1 auto;
     overflow: hidden;
   }
 
@@ -16,53 +14,50 @@
   }
 
   .status {
-    @extend %flex-center;
+    @extend %flex-center-center;
 
-    justify-content: center;
     width: 2.4em;
-    margin-right: 0.1em;
+    margin-inline-end: 0.1em;
     transition: 2.5s;
   }
 
-  i {
+  icon {
     font-size: 1.2em;
-    opacity: 0.5;
-    transition: 2.5s;
   }
 
-  .contrib i {
+  .contrib icon {
     opacity: 0.7;
   }
 
-  .online i {
+  .online icon {
     opacity: 0.8;
     color: $c-good;
   }
 
-  .online.contrib i {
+  .online.contrib icon {
     opacity: 1;
   }
 
-  > div:nth-child(4n-3) .status.active {
+  .study-list > div:nth-child(4n-3) .status.active {
     background: #42a5f5;
   }
 
-  > div:nth-child(4n-2) .status.active {
+  .study-list > div:nth-child(4n-2) .status.active {
     background: #f44336;
   }
 
-  > div:nth-child(4n-1) .status.active {
+  .study-list > div:nth-child(4n-1) .status.active {
     background: #fdd835;
   }
 
-  > div:nth-child(4n-0) .status.active {
+  .study-list > div:nth-child(4n-0) .status.active {
     background: #4caf50;
   }
 
   .status.active {
     transition: none;
 
-    i {
+    icon {
       transition: none;
       opacity: 1;
       color: #fff;
@@ -74,48 +69,40 @@
     opacity: 0.7;
   }
 
-  > div:hover .leave:hover {
+  .study-list > div:hover .leave:hover {
     background-color: $c-bad;
   }
 
-  .add {
-    @extend %roboto;
+  .add,
+  .button-thin {
+    width: 100%;
+    text-align: start;
 
-    &:hover i {
-      color: $c-link;
+    icon {
+      font-size: 1em;
       opacity: 1;
-      transition: none;
     }
   }
 
-  .admin {
-    text-align: center;
+  .admin button {
+    @extend %box-radius-bottom;
 
-    button {
-      margin-bottom: 0.5em;
-    }
+    justify-content: center;
+    padding-block: 2px;
   }
 
   m-config,
   .editing {
-    background: mix($c-accent, $c-bg-box, 10%) !important;
+    background: color-mix(in oklab, $c-accent 10%, $c-bg) !important;
+
+    .kick button {
+      height: 28px;
+      padding-block: 6px;
+    }
   }
 
   m-config {
     @extend %flex-between;
-
-    padding: 0.4em 0.8em 1em 0.8em;
-
-    .role {
-      @extend %flex-center;
-
-      label {
-        cursor: pointer;
-      }
-    }
-
-    .switch {
-      margin-right: 0.5em;
-    }
+    @include padding-direction(0.4em, 0.6em, 0.8em, 0.6em);
   }
 }

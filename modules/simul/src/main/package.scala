@@ -1,11 +1,8 @@
-package lila
+package lila.simul
 
-package object simul extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[simul] val logger = lila.log("simul")
+private lazy val logger = lila.log("simul")
 
-}
-
-package simul {
-  case class SimulTeam(id: String, name: String, isIn: Boolean)
-}
+def canBeFeatured(u: User) = u.hasTitle && !u.lameOrTroll

@@ -1,35 +1,32 @@
 package lila.team
 
-import akka.actor._
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 
-import lila.common.config._
-import lila.mod.ModlogApi
-import lila.notify.NotifyApi
-import lila.socket.Socket.{ GetVersion, SocketVersion }
+import lila.common.Bus
+import lila.core.config.*
+import lila.core.socket.{ GetVersion, SocketVersion }
 
 @Module
 final class Env(
-    captcher: lila.hub.actors.Captcher,
-    timeline: lila.hub.actors.Timeline,
-    teamSearch: lila.hub.actors.TeamSearch,
-    userRepo: lila.user.UserRepo,
-    modLog: ModlogApi,
-    notifyApi: NotifyApi,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    chatApi: lila.chat.ChatApi,
+    captcha: lila.core.captcha.CaptchaApi,
+    userApi: lila.core.user.UserApi,
+    flairApi: lila.core.user.FlairApi,
+    notifyApi: lila.core.notify.NotifyApi,
+    socketKit: lila.core.socket.SocketKit,
+    chat: lila.core.chat.ChatApi,
     cacheApi: lila.memo.CacheApi,
-    lightUserApi: lila.user.LightUserApi,
-    db: lila.db.Db
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    mode: play.api.Mode
-) {
+    lightUserApi: lila.core.user.LightUserApi,
+    userJson: lila.core.user.JsonView,
+    userRepo: lila.core.user.UserRepo,
+    db: lila.db.Db,
+    mongoRateLimitApi: lila.memo.MongoRateLimitApi,
+    spamApi: lila.core.security.SpamApi
+)(using Executor, Scheduler, org.apache.pekko.stream.Materializer):
 
-  lazy val teamRepo    = new TeamRepo(db(CollName("team")))
-  lazy val memberRepo  = new MemberRepo(db(CollName("team_member")))
-  lazy val requestRepo = new RequestRepo(db(CollName("team_request")))
+  lazy val teamRepo = TeamRepo(db(CollName("team")))
+  lazy val memberRepo = TeamMemberRepo(db(CollName("team_member")))
+  lazy val requestRepo = TeamRequestRepo(db(CollName("team_request")))
+  private lazy val updateRepo = TeamUpdateRepo(db(CollName("team_update")))
 
   lazy val forms = wire[TeamForm]
 
@@ -37,33 +34,46 @@ final class Env(
 
   lazy val paginator = wire[PaginatorBuilder]
 
-  lazy val cached: Cached = wire[Cached]
+  lazy val cached: TeamCached = wire[TeamCached]
 
   lazy val jsonView = wire[JsonView]
 
   private val teamSocket = wire[TeamSocket]
 
-  def version(teamId: Team.ID) =
-    teamSocket.rooms.ask[SocketVersion](teamId)(GetVersion)
+  def version(teamId: TeamId) = teamSocket.rooms.ask[SocketVersion](teamId.into(RoomId))(GetVersion.apply)
 
-  private lazy val notifier = wire[Notifier]
+  export cached.{ lightApi as lightTeamApi, async as lightTeam, sync as lightTeamSync }
 
-  lazy val getTeamName = new GetTeamName(cached.blockingTeamName)
+  def isBetaTester(using myId: MyId) = cached.isMember(TeamId("lichess-beta-testers"))
+
+  lazy val update = wire[TeamUpdateApi]
+
+  lazy val security = wire[TeamSecurity]
 
   lazy val api = wire[TeamApi]
 
-  lila.common.Bus.subscribeFuns(
-    "shadowban" -> { case lila.hub.actorApi.mod.Shadowban(userId, true) =>
-      api.deleteRequestsByUserId(userId).unit
-    },
-    "teamIsLeader" -> { case lila.hub.actorApi.team.IsLeader(teamId, userId, promise) =>
-      promise completeWith cached.isLeader(teamId, userId)
-    },
-    "teamJoinedBy" -> { case lila.hub.actorApi.team.TeamIdsJoinedBy(userId, promise) =>
-      promise completeWith cached.teamIdsList(userId)
-    },
-    "teamIsLeaderOf" -> { case lila.hub.actorApi.team.IsLeaderOf(leaderId, memberId, promise) =>
-      promise completeWith api.isLeaderOf(leaderId, memberId)
-    }
-  )
-}
+  wire[TeamClasSync]
+
+  lila.common.Cli.handle(_.ManageTeam):
+    case "team" :: "members" :: "add" :: teamId :: members :: Nil =>
+      for
+        team <- teamRepo.byId(TeamId(teamId)).orFail(s"Team $teamId not found")
+        userIds = members.split(',').flatMap(UserStr.read).map(_.id).toList
+        _ <- api.addMembers(team, userIds)
+      yield s"Added ${userIds.size} members to team ${team.name}"
+
+  Bus.sub[lila.core.mod.Shadowban]:
+    case lila.core.mod.Shadowban(userId, true) =>
+      api.deleteRequestsByUserId(userId)
+
+  Bus.sub[lila.core.team.IsLeaderWithCommPerm]:
+    case lila.core.team.IsLeaderWithCommPerm(teamId, userId, promise) =>
+      promise.completeWith(api.hasCommPerm(teamId)(using userId.into(MyId)))
+
+  Bus.sub[lila.core.team.TeamIdsJoinedBy]:
+    case lila.core.team.TeamIdsJoinedBy(userId, promise) =>
+      promise.completeWith(cached.teamIdsList(userId))
+
+  Bus.sub[lila.core.team.IsLeaderOf]:
+    case lila.core.team.IsLeaderOf(leaderId, memberId, promise) =>
+      promise.completeWith(api.isLeaderOf(leaderId, memberId))

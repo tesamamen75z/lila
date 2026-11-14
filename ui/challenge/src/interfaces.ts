@@ -1,33 +1,20 @@
+import type { LiconValue } from 'lib/licon';
+
 export interface ChallengeOpts {
+  el: Element;
   data?: ChallengeData;
   show(): void;
   setCount(nb: number): void;
   pulse(): void;
 }
 
-export interface Ctrl {
-  update(data: ChallengeData): void;
-  data(): ChallengeData;
-  trans(): (key: string) => string;
-  reasons(): Reasons;
-  decline(id: string, reason: string): void;
-  cancel(id: string): void;
-  onRedirect(): void;
-  redirecting(): boolean;
-}
-
 type ChallengeStatus = 'created' | 'offline' | 'canceled' | 'declined' | 'accepted';
 export type ChallengeDirection = 'in' | 'out';
-type FEN = string;
 
-export interface ChallengeUser {
-  id: string;
-  name: string;
+export interface ChallengeUser extends LightUser {
   rating: number;
   provisional?: boolean;
-  title?: string;
   online?: boolean;
-  patron?: boolean;
   lag?: number;
 }
 
@@ -45,29 +32,24 @@ export interface Challenge {
   status: ChallengeStatus;
   challenger?: ChallengeUser;
   destUser?: ChallengeUser;
+  rules?: unknown[];
   variant: Variant;
   initialFen: FEN;
   rated: boolean;
   timeControl: TimeControl;
-  color: Color;
+  color: Color | 'random';
+  finalColor: Color;
   perf: {
-    icon: string;
+    icon: LiconValue;
     name: string;
   };
   declined?: boolean;
 }
 
-export type Reasons = {
-  [key: string]: string;
-};
+export type Reasons = Record<string, string>;
 
 export interface ChallengeData {
   in: Array<Challenge>;
   out: Array<Challenge>;
-  i18n?: {
-    [key: string]: string;
-  };
   reasons?: Reasons;
 }
-
-export type Redraw = () => void;

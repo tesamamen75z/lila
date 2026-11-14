@@ -1,127 +1,78 @@
-import { h, VNode, Attrs } from 'snabbdom';
-import { fixCrazySan } from 'chess';
+import { Position } from 'chessops';
 
-export { bind, onInsert, bindSubmit } from 'common/snabbdom';
+import { completeNode } from 'lib/tree/node';
+import type { TreeNode, TreeNodeBase, TreeNodeLite } from 'lib/tree/types';
 
-export { autolink, innerHTML, enrichText, richHTML, toYouTubeEmbed, toTwitchEmbed } from 'common/richText';
+import type AnalyseCtrl from './ctrl';
 
-export const emptyRedButton = 'button.button.button-red.button-empty';
-
-const longPressDuration = 610; // used in bindMobileTapHold
-
-export function plyColor(ply: number): Color {
-  return ply % 2 === 0 ? 'white' : 'black';
-}
-
-export function bindMobileMousedown(el: HTMLElement, f: (e: Event) => unknown, redraw?: () => void) {
-  for (const mousedownEvent of ['touchstart', 'mousedown']) {
-    el.addEventListener(mousedownEvent, e => {
-      f(e);
-      e.preventDefault();
-      if (redraw) redraw();
-    });
+export function treeReconstruct(
+  parts: TreeNodeBase[],
+  variant: VariantKey,
+  sidelines?: TreeNode[][],
+): TreeNode {
+  const completer = completeNode(variant);
+  const root = completer(parts[0]);
+  let node = root;
+  for (let i = 1; i < parts.length; i++) {
+    const n = completer(parts[i]);
+    const variations = sidelines ? sidelines[i] : [];
+    node.children.unshift(n, ...variations);
+    node = n;
   }
+  return root;
 }
 
-export function bindMobileTapHold(el: HTMLElement, f: (e: Event) => unknown, redraw?: () => void) {
-  let longPressCountdown: number;
-
-  el.addEventListener('touchstart', e => {
-    longPressCountdown = setTimeout(() => {
-      f(e);
-      if (redraw) redraw();
-    }, longPressDuration);
-  });
-
-  el.addEventListener('touchmove', () => {
-    clearTimeout(longPressCountdown);
-  });
-
-  el.addEventListener('touchcancel', () => {
-    clearTimeout(longPressCountdown);
-  });
-
-  el.addEventListener('touchend', () => {
-    clearTimeout(longPressCountdown);
-  });
+export function addCrazyData(node: TreeNode, pos: Position): void {
+  if (pos.pockets)
+    node.crazy = {
+      pockets: [pos.pockets.white, pos.pockets.black],
+    };
 }
 
-export function readOnlyProp<A>(value: A): () => A {
-  return function (): A {
-    return value;
-  };
-}
-
-export function dataIcon(icon: string): Attrs {
-  return {
-    'data-icon': icon,
-  };
-}
-
-export function iconTag(icon: string) {
-  return h('i', { attrs: dataIcon(icon) });
-}
-
-export function plyToTurn(ply: number): number {
-  return Math.floor((ply - 1) / 2) + 1;
-}
-
-export function nodeFullName(node: Tree.Node) {
-  if (node.san) return plyToTurn(node.ply) + (node.ply % 2 === 1 ? '.' : '...') + ' ' + fixCrazySan(node.san);
-  return 'Initial position';
-}
-
-export function plural(noun: string, nb: number): string {
-  return nb + ' ' + (nb === 1 ? noun : noun + 's');
-}
-
-export function titleNameToId(titleName: string): string {
-  const split = titleName.split(' ');
-  return (split.length === 1 ? split[0] : split[1]).toLowerCase();
-}
-
-export function spinner(): VNode {
-  return h('div.spinner', [
-    h('svg', { attrs: { viewBox: '0 0 40 40' } }, [
-      h('circle', {
-        attrs: { cx: 20, cy: 20, r: 18, fill: 'none' },
-      }),
-    ]),
-  ]);
-}
-
-export function baseUrl() {
-  return `${window.location.protocol}//${window.location.host}`;
-}
-
-export function option(value: string, current: string | undefined, name: string) {
-  return h(
-    'option',
-    {
-      attrs: {
-        value: value,
-        selected: value === current,
-      },
-    },
-    name
+export function hasUserContent(node: TreeNodeLite): boolean {
+  return (
+    !node.comp ||
+    Boolean(node.comments?.some(comment => !comment.comp)) ||
+    Boolean(node.glyphs?.some(glyph => !glyph.comp)) ||
+    node.children.some(hasUserContent)
   );
 }
 
-export function scrollTo(el: HTMLElement | undefined, target: HTMLElement | null) {
-  if (el && target) el.scrollTop = target.offsetTop - el.offsetHeight / 2 + target.offsetHeight / 2;
+// keep computer nodes only when they are needed as ancestors of a user node
+export function pruneMainlineAnalysis(node: TreeNodeLite): boolean {
+  node.children = node.children.filter(pruneMainlineAnalysis);
+  return hasUserContent(node);
 }
 
-export function treeReconstruct(parts: Tree.Node[]): Tree.Node {
-  const root = parts[0],
-    nb = parts.length;
-  let node = root;
-  root.id = '';
-  for (let i = 1; i < nb; i++) {
-    const n = parts[i];
-    if (node.children) node.children.unshift(n);
-    else node.children = [n];
-    node = n;
+export function mergeReviewData(into: TreeNodeLite, from: TreeNodeLite): void {
+  into.children = into.children.filter(hasUserContent);
+  if (from.eval) into.eval = from.eval;
+
+  const comments = new Map(into.comments?.filter(c => !c.comp).map(c => [c.id, c]));
+  from.comments?.forEach(c => comments.set(c.id, c));
+  into.comments = Array.from(comments.values());
+
+  const glyphs = new Map(into.glyphs?.filter(g => !g.comp).map(g => [`${g.id}:false`, g]));
+  from.glyphs?.forEach(g => glyphs.set(`${g.id}:${!!g.comp}`, g));
+  into.glyphs = Array.from(glyphs.values());
+
+  for (const fromChild of from.children) {
+    const intoChild = into.children.find(n => fromChild.id === n.id);
+    if (intoChild) mergeReviewData(intoChild, fromChild);
+    else into.children.push(fromChild);
   }
-  node.children = node.children || [];
-  return root;
+}
+
+export function registerPublicApi(ctrl: AnalyseCtrl): void {
+  if (ctrl.forecast) return; // ongoing correspondence analysis
+  const api = (window as any).lichess;
+  const { prev, next, first, last, previousBranch, nextBranch } = ctrl.navigate;
+  api.chessground = () => ctrl.chessground;
+  api.analysis = {
+    playUci: ctrl.playUci,
+    navigate: { prev, next, first, last, previousBranch, nextBranch },
+    data: () => ({
+      game: ctrl.data.game,
+    }),
+  };
 }

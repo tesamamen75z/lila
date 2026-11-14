@@ -1,14 +1,29 @@
 package lila.forum
 
-import lila.db.dsl._
-import reactivemongo.api.bson._
+import reactivemongo.api.bson.*
+import scalalib.Iso
 
-private object BSONHandlers {
+import lila.core.forum.{ ForumPostMini, ForumTopicMini }
+import lila.db.dsl.{ *, given }
 
-  implicit val CategBSONHandler = Macros.handler[Categ]
+private object BSONHandlers:
 
-  implicit val PostEditBSONHandler = Macros.handler[OldVersion]
-  implicit val PostBSONHandler     = Macros.handler[Post]
+  given BSONDocumentHandler[ForumCateg] = Macros.handler
 
-  implicit val TopicBSONHandler = Macros.handler[Topic]
-}
+  given BSONDocumentHandler[OldVersion] = Macros.handler
+
+  private given reactionIso: Iso.StringIso[ForumPost.Reaction] =
+    Iso.string(key => ForumPost.Reaction(key).err(s"Unknown reaction $key"), _.key)
+
+  given BSONHandler[ForumPost.Reaction] = quickHandler[ForumPost.Reaction](
+    { case BSONString(key) => reactionIso.from(key) },
+    reaction => BSONString(reaction.key)
+  )
+
+  private given BSONHandler[ForumPost.Reactions] = typedMapHandlerIso[ForumPost.Reaction, Set[UserId]]
+
+  given BSONDocumentHandler[ForumPost] = Macros.handler
+  given BSONDocumentHandler[ForumTopic] = Macros.handler
+
+  given BSONDocumentHandler[ForumPostMini] = Macros.handler
+  given BSONDocumentHandler[ForumTopicMini] = Macros.handler

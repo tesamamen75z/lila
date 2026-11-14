@@ -1,28 +1,25 @@
 package lila.playban
 
-import com.softwaremill.macwire._
-import play.api.Configuration
+import com.softwaremill.macwire.*
 
-import lila.common.config.CollName
+import lila.core.config.CollName
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    messenger: lila.msg.MsgApi,
-    reporter: lila.hub.actors.Report,
-    chatApi: lila.chat.ChatApi,
-    userRepo: lila.user.UserRepo,
-    noteApi: lila.user.NoteApi,
-    lightUser: lila.common.LightUser.Getter,
+    messenger: lila.core.msg.MsgApi,
+    chatApi: lila.core.chat.ChatApi,
+    gameApi: lila.core.game.GameApi,
+    noteApi: lila.core.user.NoteApi,
+    userApi: lila.core.user.UserApi,
+    userTrustApi: lila.core.security.UserTrustApi,
+    lightUser: lila.core.LightUser.Getter,
     db: lila.db.Db,
     cacheApi: lila.memo.CacheApi
-)(implicit ec: scala.concurrent.ExecutionContext, mode: play.api.Mode) {
+)(using Executor, play.api.Mode):
 
-  private lazy val playbanColl = db(
-    CollName(appConfig.get[String]("playban.collection.playban"))
-  )
+  private val playbanColl = db(CollName("playban"))
 
-  private lazy val feedback = wire[PlaybanFeedback]
+  private val feedback = wire[PlaybanFeedback]
 
-  lazy val api = wire[PlaybanApi]
-}
+  val api = wire[PlaybanApi]
+  export api.{ bansOf, hasCurrentPlayban, rageSitOf }

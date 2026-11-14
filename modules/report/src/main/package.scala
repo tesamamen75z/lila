@@ -1,6 +1,6 @@
-package lila
+package lila.report
 
-package object report extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[report] def logger = lila.log("report")
-}
+private lazy val logger = lila.log("report")

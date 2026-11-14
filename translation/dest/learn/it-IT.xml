@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="learnChess">Impara a giocare a scacchi</string>
+  <string name="learnChess">Impara gli scacchi</string>
   <string name="byPlaying">giocando!</string>
   <string name="menu">Menù</string>
-  <string name="progressX">Completato: %s</string>
+  <string name="progressX">Progresso: %s</string>
   <string name="resetMyProgress">Azzera i progressi</string>
   <string name="youWillLoseAllYourProgress">Perderai tutti i tuoi progressi!</string>
   <string name="play">gioca!</string>
@@ -29,7 +29,7 @@ Ti servono entrambi!</string>
   <string name="queenComplete">Congratulazioni! La donna non ha segreti per te.</string>
   <string name="theKing">Il re</string>
   <string name="theMostImportantPiece">Il pezzo più importante</string>
-  <string name="kingIntro">Tu sei il re. Se cadi in battaglia la partita è perduta.</string>
+  <string name="kingIntro">Tu sei il re. Se cadi in battaglia la partita è persa.</string>
   <string name="theKingIsSlow">Il re è lento.</string>
   <string name="lastOne">L\'ultimo!</string>
   <string name="kingComplete">Ora puoi comandare il comandante!</string>
@@ -128,6 +128,7 @@ Proprio al fianco della sua regina.</string>
 Fai una mossa per continuare.</string>
   <string name="boardSetupComplete">Congratulazioni! Ora sai come preparare la scacchiera.</string>
   <string name="castling">L\'arrocco</string>
+  <string name="enPassant">Wenn Passant (presa al varco)</string>
   <string name="theSpecialKingMove">La mossa speciale del re</string>
   <string name="castlingIntro">Metti il tuo re in sicurezza e sviluppa la tua torre per l\'attacco!</string>
   <string name="castleKingSide">Muovi il re di due case sull\'ala di re
@@ -150,7 +151,6 @@ arroccare sull\'ala di re!</string>
   <string name="findAWayToCastleQueenSide">Trova un modo per
 arroccare sull\'ala di regina!</string>
   <string name="castlingComplete">Congratulazioni! Dovrai arroccare quasi in ogni partita.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">La mossa speciale del pedone</string>
   <string name="enPassantIntro">Quando il pedone avversario si muove di due case, lo puoi catturare come se si fosse mosso di una casa sola.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Il nero ha mosso il pedone
@@ -230,9 +230,9 @@ in due mosse!</string>
   <string name="nailedIt">Azzeccato.</string>
   <string name="rightOn">Giusto!</string>
   <string name="stageXComplete">Fase %s completata</string>
-  <string name="yourScore">Il tuo punteggio</string>
   <string name="next">Successivo</string>
+  <string name="nextX">Successivo: %s</string>
   <string name="backToMenu">Torna al menù</string>
-  <string name="puzzleFailed">Puzzle sbagliato!</string>
+  <string name="puzzleFailed">Hai sbagliato!</string>
   <string name="retry">Riprova</string>
 </resources>

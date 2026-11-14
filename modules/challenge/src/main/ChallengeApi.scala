@@ -1,169 +1,235 @@
 package lila.challenge
 
-import org.joda.time.DateTime
-import scala.concurrent.duration._
-
 import lila.common.Bus
-import lila.common.config.Max
-import lila.game.{ Game, Pov }
-import lila.hub.actorApi.socket.SendTo
-import lila.memo.CacheApi._
-import lila.user.{ User, UserRepo }
-import lila.i18n.I18nLangPicker
+import lila.core.challenge.PositiveEvent
+import lila.core.i18n.LangPicker
+import lila.core.socket.SendTo
+import lila.memo.CacheApi.*
 
 final class ChallengeApi(
     repo: ChallengeRepo,
     challengeMaker: ChallengeMaker,
-    userRepo: UserRepo,
+    userApi: lila.core.user.UserApi,
+    lightUserApi: lila.core.user.LightUserApi,
     joiner: ChallengeJoiner,
     jsonView: JsonView,
-    gameCache: lila.game.Cached,
-    maxPlaying: Max,
-    cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem
-) {
+    gameApi: lila.core.game.GameApi,
+    rematches: lila.game.Rematches,
+    cacheApi: lila.memo.CacheApi,
+    langPicker: LangPicker
+)(using Executor, org.apache.pekko.actor.ActorSystem, Scheduler, lila.core.i18n.Translator):
 
-  import Challenge._
+  import Challenge.*
 
-  def allFor(userId: User.ID): Fu[AllChallenges] =
-    createdByDestId(userId) zip createdByChallengerId(userId) dmap (AllChallenges.apply _).tupled
+  def allFor(userId: UserId, max: Int = 50): Fu[AllChallenges] =
+    createdByDestId(userId, max).zip(createdByChallengerId(userId)).dmap((AllChallenges.apply).tupled)
+
+  def delayedCreate(c: Challenge): Fu[Option[() => Funit]] =
+    isLimitedByMaxPlaying(c).not.map:
+      _.option(() => doCreate(c))
 
   // returns boolean success
   def create(c: Challenge): Fu[Boolean] =
-    isLimitedByMaxPlaying(c) flatMap {
-      case true => fuFalse
-      case false =>
-        {
-          repo like c flatMap { _ ?? repo.cancel }
-        } >> (repo insert c) >>- {
-          uncacheAndNotify(c)
-          Bus.publish(Event.Create(c), "challenge")
-        } inject true
-    }
+    delayedCreate(c).flatMapz: f =>
+      for _ <- f() yield true
 
-  def byId = repo byId _
+  def createOpen(config: lila.core.setup.OpenConfig)(using me: Option[Me]): Fu[Challenge] =
+    val c = Challenge.make(
+      variant = config.variant,
+      initialFen = config.position,
+      timeControl = Challenge.makeTimeControl(config.clock, config.days),
+      rated = config.rated,
+      color = "random",
+      challenger = Challenger.Open,
+      destUser = none,
+      rematchOf = none,
+      name = config.name,
+      openToUserIds = config.userIds,
+      rules = config.rules,
+      expiresAt = config.expiresAt
+    )
+    for
+      _ <- doCreate(c)
+      _ = me.foreach(me => openCreatedBy.put(c.id, me))
+    yield c
 
-  def activeByIdFor(id: Challenge.ID, dest: User) = repo.byIdFor(id, dest).dmap(_.filter(_.active))
-  def activeByIdBy(id: Challenge.ID, orig: User)  = repo.byIdBy(id, orig).dmap(_.filter(_.active))
+  private val openCreatedBy =
+    cacheApi.notLoadingSync[ChallengeId, UserId](32, "challenge.open.by"):
+      _.expireAfterWrite(1.hour).build()
 
-  def onlineByIdFor(id: Challenge.ID, dest: User) = repo.byIdFor(id, dest).dmap(_.filter(_.online))
+  private def doCreate(c: Challenge) =
+    for _ <- repo.insertIfMissing(c)
+    yield
+      uncacheAndNotify(c)
+      Bus.pub(PositiveEvent.Create(c))
 
-  val countInFor = cacheApi[User.ID, Int](65536, "challenge.countInFor") {
-    _.expireAfterAccess(20 minutes)
-      .buildAsyncFuture(repo.countCreatedByDestId)
-  }
+  def isOpenBy(id: ChallengeId, maker: User) = openCreatedBy.getIfPresent(id).contains(maker.id)
 
-  def createdByChallengerId = repo createdByChallengerId _
+  export repo.byId
 
-  def createdByDestId = repo createdByDestId _
+  def redirect(anyPath: String): Fu[Option[play.api.mvc.Call]] =
+    GameId
+      .from(anyPath)
+      .map(_.into(ChallengeId))
+      .so: id =>
+        repo.exists(id).map(_.option(routes.Challenge.show(id)))
+
+  def activeByIdFor(id: ChallengeId, dest: User): Future[Option[Challenge]] =
+    repo.byIdFor(id, dest).dmap(_.filter(_.active))
+
+  def activeByIdBy(id: ChallengeId, by: User | String): Future[Option[Challenge]] =
+    for opt <- repo.byId(id)
+    yield opt.filter: c =>
+      c.active && (c.challenger, by).match
+        case (Challenger.Registered(orig, _), user: User) if user.is(orig) => true
+        case (Challenger.Open, user: User) if isOpenBy(id, user) => true
+        case (Challenger.Anonymous(secret), anonSecret: String) if secret == anonSecret => true
+        case _ => false
+
+  val countInFor = cacheApi[UserId, Int](131_072, "challenge.countInFor"):
+    _.expireAfterAccess(15.minutes).buildAsyncFuture(repo.countCreatedByDestId)
+
+  def createdByChallengerId = repo.createdByChallengerId()
+
+  def createdByDestId(userId: UserId, max: Int = 50) = countInFor
+    .get(userId)
+    .flatMap: nb =>
+      if nb > 5 then repo.createdByPopularDestId(max)(userId)
+      else repo.createdByDestId()(userId)
+
+  // drop the cached offer id (as Rematcher.no does) so a new rematch challenge gets a fresh id
+  private def dropRematchOffer(c: Challenge): Unit = c.rematchOf.foreach(rematches.drop)
 
   def cancel(c: Challenge) =
-    repo.cancel(c) >>- {
+    for _ <- repo.cancel(c)
+    yield
+      dropRematchOffer(c)
       uncacheAndNotify(c)
-      Bus.publish(Event.Cancel(c), "challenge")
-    }
+      Bus.pub(NegativeEvent.Cancel(c.cancel))
 
-  private def offline(c: Challenge) = (repo offline c) >>- uncacheAndNotify(c)
+  private def offline(c: Challenge) = for _ <- repo.offline(c) yield uncacheAndNotify(c)
 
-  private[challenge] def ping(id: Challenge.ID): Funit =
-    repo statusById id flatMap {
-      case Some(Status.Created) => repo setSeen id
-      case Some(Status.Offline) => (repo setSeenAgain id) >> byId(id).map { _ foreach uncacheAndNotify }
-      case _                    => fuccess(socketReload(id))
-    }
+  private[challenge] def ping(id: ChallengeId): Funit =
+    repo
+      .statusById(id)
+      .flatMap:
+        case Some(Status.Created) => repo.setSeen(id)
+        case Some(Status.Offline) => repo.setSeenAgain(id) >> byId(id).map(_.foreach(uncacheAndNotify))
+        case _ => fuccess(socketReload(id))
 
   def decline(c: Challenge, reason: Challenge.DeclineReason) =
-    repo.decline(c, reason) >>- {
+    for _ <- repo.decline(c, reason)
+    yield
+      dropRematchOffer(c)
       uncacheAndNotify(c)
-      Bus.publish(Event.Decline(c declineWith reason), "challenge")
-    }
+      Bus.pub(NegativeEvent.Decline(c.declineWith(reason)))
 
-  private val acceptQueue = new lila.hub.DuctSequencer(maxSize = 64, timeout = 5 seconds, "challengeAccept")
+  private val acceptQueue = scalalib.actor.AsyncActorSequencers[ChallengeId](
+    maxSize = Max(8),
+    expiration = 1.minute,
+    timeout = 5.seconds,
+    name = "challengeAccept",
+    lila.mon.asyncActorMonitor.full
+  )
 
   def accept(
       c: Challenge,
-      user: Option[User],
-      sid: Option[String],
-      color: Option[chess.Color] = None
-  ): Fu[Option[Pov]] =
-    acceptQueue {
-      if (user.exists(_.isBot) && !Game.isBotCompatible(chess.Speed(c.clock.map(_.config))))
-        fuccess(none)
-      else if (c.challengerIsOpen)
-        repo.setChallenger(c.setChallenger(user, sid), color) inject none
+      anonSecret: Option[String],
+      requestedColor: Option[Color] = None
+  )(using me: Option[Me]): FuRaise[String, Option[Pov]] =
+    acceptQueue(c.id):
+      def withPerf = me.map(_.value).traverse(userApi.withPerf(_, c.perfType))
+      if c.canceled
+      then "The challenge has been canceled.".raise
+      else if c.declined
+      then "The challenge has been declined.".raise
+      else if me.exists(_.isBot) && !c.clock.map(_.config).forall(lila.core.game.isBotCompatible)
+      then "Game incompatible with a BOT account".raise
+      else if c.open.exists(!_.canJoin)
+      then "The challenge is not for you to accept.".raise
       else
-        joiner(c, user, color).flatMap {
-          _ ?? { pov =>
-            (repo accept c) >>- {
-              uncacheAndNotify(c)
-              Bus.publish(Event.Accept(c, user.map(_.id)), "challenge")
-            } inject pov.some
-          }
-        }
+        val openFixedColor = for
+          me <- me
+          open <- c.open
+          userIds <- open.userIds
+        yield Color.fromWhite(me.is(userIds._1))
+        val color = openFixedColor.orElse(requestedColor)
+        if c.challengerIsOpen
+        then
+          for
+            me <- withPerf
+            _ <- repo.setChallenger(c.setChallenger(me, anonSecret), color)
+          yield none
+        else if color.map(Challenge.ColorChoice.apply).has(c.colorChoice)
+        then "This color has already been chosen".raise
+        else
+          for
+            me <- withPerf
+            pov <- joiner(c, me)
+            _ <- repo.accept(c)
+          yield
+            uncacheAndNotify(c)
+            Bus.pub(PositiveEvent.Accept(c, pov.game, me.map(_.id)))
+            c.rematchOf.foreach: gameId =>
+              Bus.pub(lila.game.actorApi.NotifyRematch(gameId, pov.game))
+            pov.some
+
+  def offerRematchForGame(game: Game, user: User): Fu[Boolean] =
+    challengeMaker.makeRematchOf(game, user).flatMapz { challenge =>
+      create(challenge).recover(lila.db.recoverDuplicateKey: _ =>
+        logger.warn(s"${game.id} duplicate key ${challenge.id}")
+        false)
     }
 
-  def sendRematchOf(game: Game, user: User): Fu[Boolean] =
-    challengeMaker.makeRematchOf(game, user) flatMap { _ ?? create }
+  def setDestUser(c: Challenge, u: User): Funit = for
+    user <- userApi.withPerf(u, c.perfType)
+    challenge = c.setDestUser(user)
+    _ <- repo.update(challenge)
+  yield
+    uncacheAndNotify(challenge)
+    Bus.pub(lila.core.challenge.PositiveEvent.Create(challenge))
 
-  def setDestUser(c: Challenge, u: User): Funit = {
-    val challenge = c setDestUser u
-    repo.update(challenge) >>- {
-      uncacheAndNotify(challenge)
-      Bus.publish(Event.Create(challenge), "challenge")
-    }
-  }
+  def removeByUserId(userId: UserId): Funit =
+    repo.allWithUserId(userId).flatMap(_.sequentiallyVoid(remove))
 
-  def removeByUserId(userId: User.ID) =
-    repo allWithUserId userId flatMap { cs =>
-      lila.common.Future.applySequentially(cs)(remove).void
-    }
-
-  def oauthAccept(dest: User, challenge: Challenge): Fu[Option[Game]] =
-    joiner(challenge, dest.some, none).map2(_.game)
+  def removeByGameId(gameId: GameId): Funit =
+    repo.byId(gameId.into(ChallengeId)).flatMap(_.so(remove))
 
   private def isLimitedByMaxPlaying(c: Challenge) =
-    if (c.hasClock) fuFalse
-    else
-      c.userIds
-        .map { userId =>
-          gameCache.nbPlaying(userId) dmap (maxPlaying <=)
-        }
-        .sequenceFu
-        .dmap(_ exists identity)
+    c.clock.nonEmpty.so:
+      c.userIds.existsM: userId =>
+        gameApi.countNowPlaying(userId).dmap(lila.core.game.maxPlaying <= _)
 
-  private[challenge] def sweep: Funit =
-    repo.realTimeUnseenSince(DateTime.now minusSeconds 20, max = 50).flatMap { cs =>
-      lila.common.Future.applySequentially(cs)(offline).void
-    } >>
-      repo.expired(50).flatMap { cs =>
-        lila.common.Future.applySequentially(cs)(remove).void
-      }
+  private[challenge] def sweep: Funit = for
+    unseen <- repo.realTimeUnseenSince(nowInstant.minusSeconds(20), max = 50)
+    _ <- unseen.sequentiallyVoid(offline)
+    expired <- repo.expired(50)
+    _ <- expired.sequentiallyVoid(remove)
+  yield ()
 
   private def remove(c: Challenge) =
-    repo.remove(c.id) >>- uncacheAndNotify(c)
+    for _ <- repo.remove(c.id) yield uncacheAndNotify(c)
 
-  private def uncacheAndNotify(c: Challenge): Unit = {
-    c.destUserId ?? countInFor.invalidate
-    c.destUserId ?? notify
-    c.challengerUserId ?? notify
+  private def uncacheAndNotify(c: Challenge): Unit =
+    c.destUserId.foreach(countInFor.invalidate)
+    c.destUserId.foreach(notifyUser.apply)
+    c.challengerUserId.foreach(notifyUser.apply)
     socketReload(c.id)
-  }
 
-  private def socketReload(id: Challenge.ID): Unit =
-    socket.foreach(_ reload id)
+  private def socketReload(id: ChallengeId): Unit =
+    socket.foreach(_.reload(id))
 
-  private def notify(userId: User.ID): Funit =
-    for {
-      all  <- allFor(userId)
-      lang <- userRepo langOf userId map I18nLangPicker.byStrOrDefault
-    } yield Bus.publish(
-      SendTo(userId, lila.socket.Socket.makeMessage("challenges", jsonView(all)(lang))),
-      "socketUsers"
-    )
+  private object notifyUser:
+    private val throttler = new lila.common.EarlyMultiThrottler[UserId](logger)
+    def apply(userId: UserId): Unit = throttler(userId, 3.seconds):
+      for
+        all <- allFor(userId)
+        lang <- userApi.langOf(userId).map(langPicker.byLangTagOrDefault)
+        _ <- lightUserApi.preloadMany(all.all.flatMap(_.userIds))
+      yield
+        given play.api.i18n.Lang = lang
+        Bus.pub(SendTo(userId, lila.core.socket.makeMessage("challenges", jsonView(all))))
 
   // work around circular dependency
   private var socket: Option[ChallengeSocket] = None
-  private[challenge] def registerSocket(s: ChallengeSocket) = { socket = s.some }
-}
+  private[challenge] def registerSocket(s: ChallengeSocket) = socket = s.some

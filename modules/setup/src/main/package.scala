@@ -1,6 +1,12 @@
-package lila
+package lila.setup
 
-package object setup extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[setup] val logger = lila.log("setup")
-}
+private val variantsWhereWhiteIsBetter: Set[chess.variant.Variant] = Set(
+  chess.variant.ThreeCheck,
+  chess.variant.Atomic,
+  chess.variant.Horde,
+  chess.variant.RacingKings,
+  chess.variant.Antichess
+)

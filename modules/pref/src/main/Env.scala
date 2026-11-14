@@ -2,13 +2,12 @@ package lila.pref
 
 import com.softwaremill.macwire.Module
 
-import lila.common.config.CollName
+import lila.core.config.CollName
 
 @Module
 final class Env(
     cacheApi: lila.memo.CacheApi,
     db: lila.db.Db
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  val api = new PrefApi(db(CollName("pref")), cacheApi)
-}
+  val api = PrefApi(db(CollName("pref")), cacheApi)

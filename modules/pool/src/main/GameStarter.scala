@@ -1,85 +1,77 @@
 package lila.pool
 
-import scala.concurrent.duration._
+import chess.ByColor
 
-import lila.game.{ Game, GameRepo, IdGenerator, Player }
-import lila.rating.Perf
-import lila.user.{ User, UserRepo }
+import lila.common.Bus
+import lila.core.game.{ GameRepo, IdGenerator, NewPlayer, Source }
+import lila.core.pool.{ Pairing, Pairings }
 
 final private class GameStarter(
-    userRepo: UserRepo,
+    userApi: lila.core.user.UserApi,
     gameRepo: GameRepo,
+    newPlayer: NewPlayer,
     idGenerator: IdGenerator,
-    onStart: Game.Id => Unit
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem
-) {
+    onStart: GameId => Unit
+)(using Executor, Scheduler):
 
-  import PoolApi._
-
-  private val workQueue = new lila.hub.DuctSequencer(maxSize = 32, timeout = 10 seconds, name = "gameStarter")
+  private val workQueue = scalalib.actor.AsyncActorSequencer(
+    maxSize = Max(64),
+    timeout = 10.seconds,
+    name = "gameStarter",
+    lila.mon.asyncActorMonitor.full
+  )
 
   def apply(pool: PoolConfig, couples: Vector[MatchMaking.Couple]): Funit =
-    couples.nonEmpty ?? {
-      workQueue {
-        val userIds = couples.flatMap(_.userIds)
-        userRepo.perfOf(userIds, pool.perfType) flatMap { perfs =>
-          idGenerator.games(couples.size) flatMap { ids =>
-            couples.zip(ids).map((one(pool, perfs) _).tupled).sequenceFu.map { pairings =>
-              lila.common.Bus.publish(Pairings(pairings.flatten.toList), "poolPairings")
-            }
-          }
-        }
-      }
-    }
+    couples.nonEmpty.so:
+      val userIds = couples.flatMap(_.userIds)
+      workQueue:
+        for
+          (perfs, ids) <- userApi.perfOf(userIds, pool.perfKey).zip(idGenerator.games(couples.size))
+          pairingOpts <- couples.zip(ids).parallel(one(pool, perfs).tupled)
+        yield
+          val pairings = pairingOpts.flatten.toList
+          for
+            pairing <- pairings
+            (sri, _) <- pairing.players.toList
+          do Bus.publishDyn(pairing, s"hookRemove:$sri")
+          Bus.pub(Pairings(pairings))
 
-  private def one(pool: PoolConfig, perfs: Map[User.ID, Perf])(
+  private def one(pool: PoolConfig, perfs: Map[UserId, Perf])(
       couple: MatchMaking.Couple,
-      id: Game.ID
-  ): Fu[Option[Pairing]] = {
-    import couple._
-    import cats.implicits._
-    (perfs.get(p1.userId), perfs.get(p2.userId)).mapN((_, _)) ?? { case (perf1, perf2) =>
-      for {
-        p1White <- userRepo.firstGetsWhite(p1.userId, p2.userId)
-        (whitePerf, blackPerf)     = if (p1White) perf1 -> perf2 else perf2 -> perf1
-        (whiteMember, blackMember) = if (p1White) p1 -> p2 else p2 -> p1
+      id: GameId
+  ): Fu[Option[Pairing]] =
+    import couple.*
+    (perfs.get(p1.userId), perfs.get(p2.userId)).tupled.traverse: (perf1, perf2) =>
+      for
+        p1White <- userApi.firstGetsWhite(p1.userId, p2.userId)
+        (whitePerf, blackPerf) = if p1White then perf1 -> perf2 else perf2 -> perf1
+        (whiteMember, blackMember) = if p1White then p1 -> p2 else p2 -> p1
         game = makeGame(
           id,
           pool,
           whiteMember.userId -> whitePerf,
           blackMember.userId -> blackPerf
         ).start
-        _ <- gameRepo insertDenormalized game
-      } yield {
-        onStart(Game.Id(game.id))
-        Pairing(
-          game,
-          whiteSri = whiteMember.sri,
-          blackSri = blackMember.sri
-        ).some
-      }
-    }
-  }
+        _ <- gameRepo.insertDenormalized(game)
+      yield
+        onStart(game.id)
+        Pairing(ByColor(whiteMember.sri -> game.fullIds.white, blackMember.sri -> game.fullIds.black))
 
   private def makeGame(
-      id: Game.ID,
+      id: GameId,
       pool: PoolConfig,
-      whiteUser: (User.ID, Perf),
-      blackUser: (User.ID, Perf)
+      whiteUser: (UserId, Perf),
+      blackUser: (UserId, Perf)
   ) =
     Game(
       id = id,
       chess = chess.Game(
-        situation = chess.Situation(chess.variant.Standard),
+        position = chess.variant.Standard.initialPosition,
         clock = pool.clock.toClock.some
       ),
-      whitePlayer = Player.make(chess.White, whiteUser),
-      blackPlayer = Player.make(chess.Black, blackUser),
-      mode = chess.Mode.Rated,
+      players = ByColor(whiteUser, blackUser).mapWithColor((u, p) => newPlayer(u, p)),
+      rated = chess.Rated.Yes,
       status = chess.Status.Created,
       daysPerTurn = none,
-      metadata = Game.metadata(lila.game.Source.Pool)
+      metadata = lila.core.game.newMetadata(Source.Pool)
     )
-}

@@ -1,34 +1,52 @@
 package lila.mod
 
-import lila.notify.{ Notification, NotifyApi }
-import lila.report.{ Mod, Suspect, Victim }
+import play.api.i18n.Lang
+
+import lila.core.i18n.{ I18nKey, LangPicker, Translate, Translator }
+import lila.core.msg.SystemMsg
+import lila.core.notify.{ NotificationContent, NotifyApi }
+import lila.core.report.SuspectId
+import lila.rating.PerfType
+import lila.report.{ ReporterId, Room, Suspect }
 
 final private class ModNotifier(
     notifyApi: NotifyApi,
-    reportApi: lila.report.ReportApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    reportApi: lila.report.ReportApi,
+    pmPresets: ModPresetsApi,
+    msgApi: lila.core.msg.MsgApi,
+    userApi: lila.core.user.UserApi,
+    langPicker: LangPicker
+)(using Executor, Translator):
 
-  def reporters(mod: Mod, sus: Suspect): Funit =
-    reportApi.recentReportersOf(sus) flatMap {
-      _.filter(r => mod.user.id != r.value)
-        .map { reporterId =>
-          notifyApi.addNotification(
-            Notification.make(
-              notifies = Notification.Notifies(reporterId.value),
-              content = lila.notify.ReportedBanned
-            )
-          )
-        }
-        .sequenceFu
-        .void
-    }
+  object actionTaken:
+    private val onceEvery = scalalib.cache.OnceEvery[(SuspectId, UserId)](1.hour)
+    private val ignore = Set(ReporterId.lichess, ReporterId.irwin, ReporterId.kaladin)
 
-  def refund(victim: Victim, pt: lila.rating.PerfType, points: Int): Funit =
-    notifyApi.addNotification {
-      implicit val lang = victim.user.realLang | lila.i18n.defaultLang
-      Notification.make(
-        notifies = Notification.Notifies(victim.user.id),
-        content = lila.notify.RatingRefund(pt.trans, points)
-      )
-    }
-}
+    def apply(mod: ModId, sus: Suspect, room: Room): Funit =
+      reportApi
+        .recentReportersOf(sus, room)
+        .flatMap:
+          _.filterNot(ignore)
+            .filterNot(_.is(mod))
+            .sequentiallyVoid: reporter =>
+              onceEvery(sus.id -> reporter.id).so:
+                for
+                  lang <- userApi.langOf(reporter.id).map(langPicker.byLangTagOrDefault)
+                  msg = actionTakenMessage(using lang)
+                  _ <- msgApi.systemPost(SystemMsg.standard(reporter.id, msg))
+                yield ()
+
+  def refund(user: User, pt: PerfType, points: Int): Funit =
+    given play.api.i18n.Lang = user.realLang | lila.core.i18n.defaultLang
+    notifyApi.notifyOne(user, NotificationContent.RatingRefund(perf = pt.trans, points))
+
+  def notifyKidMode(mod: ModId, user: User): Funit =
+    pmPresets.setKidModePreset match
+      case None =>
+        msgApi
+          .systemPost:
+            SystemMsg.standard(mod.userId, "No kid mode preset found, couldn't send a PM.")
+          .void
+      case Some(preset) => msgApi.systemPost(SystemMsg.mustRead(user.id, preset.text)).void
+
+  private def actionTakenMessage(using Lang) = I18nKey.msg.modActionFeedback.txt()

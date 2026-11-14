@@ -3,7 +3,10 @@ db.msg_thread.drop();
 
 function makeIndexes() {
   db.msg_thread.ensureIndex({ users: 1, 'lastMsg.date': -1 }, { background: 1 });
-  db.msg_thread.ensureIndex({ users: 1 }, { partialFilterExpression: { 'lastMsg.read': false }, background: 1 });
+  db.msg_thread.ensureIndex(
+    { users: 1 },
+    { partialFilterExpression: { 'lastMsg.read': false }, background: 1 },
+  );
   db.msg_msg.ensureIndex({ tid: 1, date: -1 }, { background: 1 });
 }
 
@@ -22,7 +25,15 @@ if (!db.m_thread_sorted.count()) {
       $or: [
         {
           creatorId: {
-            $nin: ['lichess', 'lichess-qa', 'lichess-blog', 'lichess-team', 'mirlife', 'lichess4545', 'whatnext'],
+            $nin: [
+              'lichess',
+              'lichess-qa',
+              'lichess-blog',
+              'lichess-team',
+              'mirlife',
+              'lichess4545',
+              'whatnext',
+            ],
           },
         },
         {
@@ -31,7 +42,7 @@ if (!db.m_thread_sorted.count()) {
       ],
     })
     .forEach(t => {
-      if (t.creatorId == t.invitedId) return;
+      if (t.creatorId === t.invitedId) return;
       t.visibleByUserIds.sort();
       db.m_thread_sorted.insert(t);
     });
@@ -49,7 +60,7 @@ db.m_thread_sorted
 
     o.threads.forEach(t => {
       t.posts.forEach(p => {
-        if (o.creatorId == 'lichess' && isOld(p.createdAt)) return;
+        if (o.creatorId === 'lichess' && isOld(p.createdAt)) return;
         msgs.push({
           _id: p.id,
           tid: threadId,
@@ -73,7 +84,7 @@ db.m_thread_sorted
         text: last.text.slice(0, 60),
         user: last.user,
         date: last.date,
-        read: !o.threads.find(t => t.posts.find(p => p.isRead)) || isOld(last.date),
+        read: !o.threads.some(t => t.posts.find(p => p.isRead)) || isOld(last.date),
       },
     };
 

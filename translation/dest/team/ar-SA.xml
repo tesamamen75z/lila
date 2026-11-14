@@ -11,13 +11,12 @@
     <item quantity="other">%s عضو</item>
   </plurals>
   <string name="allTeams">كل الفِرق</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">الفرق التي تقودها</string>
   <string name="newTeam">فريق جديد</string>
   <string name="myTeams">فرقي</string>
   <string name="noTeamFound">لايوجد فريق</string>
   <string name="joinTeam">انضم للفريق</string>
   <string name="quitTeam">انسحب من الفريق</string>
-  <string name="manuallyReviewAdmissionRequests">مراجعة طلبات القبول يدويًا</string>
-  <string name="manuallyReviewAdmissionRequestsHelp">إذا تم تحديده، سيحتاج اللاعبون إلى كتابة طلب للانضمام إلى الفريق، والذي يمكنك رفضه أو قبوله.</string>
   <plurals name="teamLeaders">
     <item quantity="zero">قائد الفريق</item>
     <item quantity="one">قائد الفريق</item>
@@ -26,41 +25,45 @@
     <item quantity="many">قائد للفريق</item>
     <item quantity="other">قادة الفريق</item>
   </plurals>
-  <string name="teamBestPlayers">أفضل اللاعبين</string>
   <string name="teamRecentMembers">آخر الأعضاء</string>
-  <string name="kickSomeone">طرد أحداً ما من الفريق</string>
-  <string name="whoToKick">من تريد طرده من الفريق؟</string>
-  <plurals name="xJoinRequests">
-    <item quantity="zero">طلب انضمام٪ s</item>
-    <item quantity="one">%s طلب انضمام</item>
-    <item quantity="two">%s طلب انضمام</item>
-    <item quantity="few">%s طلب انضمام</item>
-    <item quantity="many">%s طلب انضمام</item>
-    <item quantity="other">%s طلب انضمام</item>
-  </plurals>
-  <string name="willBeReviewed">سيتم النظر في طلب انضمامك من قبل قائد الفريق.</string>
+  <string name="willBeReviewed">سيراقب طلب انضمامك من قبل قائد الفريق.</string>
   <string name="beingReviewed">طلب انضمامك مازال يتم النظر فيه من قبل قائد الفريق.</string>
-  <string name="subToTeamMessages">الاشتراك في رسائل الفريق</string>
-  <string name="teamBattle">معركة الفرق</string>
-  <string name="teamBattleOverview">معركة بين مجموعة فرق، كل لاعب يحرز النقاط لفريقه</string>
+  <string name="requestDeclined">تم رفض طلب انضمامك للفريق من قبل القائد.</string>
+  <string name="teamBattle">مواجهة الفرق</string>
+  <string name="teamBattleOverview">منافسة بين عدة فرق، حيث يحرز كل لاعب نقاطًا لفريقه</string>
   <string name="teamTournament">بطولات الفريق</string>
-  <string name="teamTournamentOverview">بطولة الارينا التي يمكن فقط لأعضاء فريقك الأنضمام إليها</string>
+  <string name="teamTournamentOverview">بطولة ألأرينا التي يمكن فقط لأعضاء فريقك الانضمام إليها</string>
   <string name="swissTournamentOverview">بطولة سويسرية يمكن فقط لأعضاء فريقك الانضمام إليها</string>
-  <string name="messageAllMembers">مراسلة جميع الأعضاء</string>
-  <string name="messageAllMembersOverview">ارسل رسالة خاصة إلى كل عضو في الفريق</string>
-  <string name="messageAllMembersLongDescription">إرسال رسالة خاصة إلى جميع أعضاء الفريق.
-يمكنك استخدام هذا لاستدعاء اللاعبين للانضمام إلى مسابقة للفريق أو مسابقة الفرق.
-اللاعبين الذين لا يحبون تلقي رسائلك قد يغادرون الفريق.</string>
+  <string name="teamUpdates">تحديثات الفريق</string>
+  <string name="subToTeamUpdates">إشعارات أو تحديثات الفريق</string>
+  <string name="teamEvents">فعاليات الفريق</string>
+  <string name="upcomingTeamEvents">فعاليات الفريق القادمة</string>
   <string name="teamsIlead">الفرق التي أقودها</string>
-  <string name="youWayWantToLinkOneOfTheseTournaments">قد ترغب في ربط إحدى هذه البطولات القادمة؟</string>
-  <string name="usersWhoCanManageThisTeam">المستخدمين الذين يمكنهم إدارة هذا الفريق</string>
   <string name="leadersChat">محادثة القادة</string>
-  <string name="closeTeam">إغلاق الفريق</string>
-  <string name="closeTeamDescription">يغلق الفريق إلى الأبد.</string>
-  <string name="teamPassword">كلمة مرور الفريق</string>
-  <string name="teamPasswordDescriptionForLeader">(اختياري) كلمة مرور يجب أن يعرفها الأعضاء الجدد للانضمام إلى هذا الفريق.</string>
-  <string name="incorrectTeamPassword">كلمة مرور الفريق غير صحيحة.</string>
+  <string name="introduction">مقدمة</string>
+  <string name="entryCode">رمز دخول الفريق</string>
+  <string name="entryCodeDescriptionForLeader">(اختياري) كلمة مرور يجب أن يعرفها الأعضاء الجدد للانضمام إلى هذا الفريق.</string>
+  <string name="incorrectEntryCode">رمز خاطئ.</string>
+  <string name="forumLabel">منتدى الفريق</string>
   <string name="teamAlreadyExists">هذا الفريق موجود بالفعل.</string>
-  <string name="upcomingTourns">البطولات القادمة</string>
+  <string name="upcomingTournaments">البطولات القادمة</string>
   <string name="completedTourns">البطولات المنتهية</string>
+  <string name="joinLichessVariantTeam">انضم إلى فريق %s الرسمي للأخبار والأحداث</string>
+  <string name="innerTeam">الفريق الداخلي</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="zero">معركة %s فريق</item>
+    <item quantity="one">معركة فريق واحد</item>
+    <item quantity="two">معركة فريقين</item>
+    <item quantity="few">معركة %s أفرقة</item>
+    <item quantity="many">معركة %s فريقا</item>
+    <item quantity="other">معركة %s فريقا</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="zero">%s قائدا لكل فريق</item>
+    <item quantity="one">قائد واحد لكل فريق</item>
+    <item quantity="two">قائدين للفريق</item>
+    <item quantity="few">%s قادة للفريق الواحد</item>
+    <item quantity="many">%s قائد للفريق الواحد</item>
+    <item quantity="other">%s قائد للفريق الواحد</item>
+  </plurals>
 </resources>

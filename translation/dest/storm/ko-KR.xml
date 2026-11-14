@@ -14,7 +14,7 @@
     <item quantity="other">%s번 도전</item>
   </plurals>
   <plurals name="playedNbRunsOfPuzzleStorm">
-    <item quantity="other">%2$s 중%1$s개 플레이함</item>
+    <item quantity="other">%2$s(을)를 %1$s회 플레이함</item>
   </plurals>
   <string name="highscoreX">최고기록: %s</string>
   <string name="score">점수</string>
@@ -27,7 +27,7 @@
   <string name="puzzlesPlayed">플레이한 퍼즐</string>
   <string name="newRun">새로 시작(단축키: 스페이스바)</string>
   <string name="endRun">끝내기(단축키: 엔터)</string>
-  <string name="highscores">하이스코어</string>
+  <string name="highscores">최고 기록</string>
   <string name="viewBestRuns">최고 기록 보기</string>
   <string name="bestRunOfDay">일일 최고기록</string>
   <string name="runs">도전 횟수</string>
@@ -48,4 +48,13 @@
   <string name="skip">건너뛰기</string>
   <string name="skipHelp">레이스 당 한 번 건너뛸 수 있습니다:</string>
   <string name="skipExplanation">이 수를 건너뛰고 콤보 기록을 보존하세요! 한 레이스에 한 번만 가능합니다.</string>
+  <string name="failedPuzzles">실패한 퍼즐</string>
+  <string name="slowPuzzles">느린 퍼즐</string>
+  <string name="skippedPuzzle">건너뛴 퍼즐</string>
+  <string name="thisWeek">이번 주</string>
+  <string name="thisMonth">이번 달</string>
+  <string name="allTime">모든 기간</string>
+  <string name="clickToReload">눌러서 새로고침</string>
+  <string name="thisRunHasExpired">이 도전은 만료되었습니다!</string>
+  <string name="thisRunWasOpenedInAnotherTab">이 도전은 다른 탭에서 열렸습니다!</string>
 </resources>

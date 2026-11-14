@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="faqAbbreviation">FAQ</string>
-  <string name="frequentlyAskedQuestions">Domande frequenti</string>
+  <string name="faqAbbreviation">Domande Frequenti</string>
+  <string name="frequentlyAskedQuestions">Domande Frequenti</string>
   <string name="whyIsLichessCalledLichess">Perché Lichess si chiama Lichess?</string>
   <string name="lichessCombinationLiveLightLibrePronounced">Lichess è una combinazione di live/light/libre e scacchi. Si pronuncia %1$s.</string>
   <string name="leechess">lìcess</string>
@@ -16,6 +16,8 @@
   <string name="otherWaysToHelp">altri modi per aiutare</string>
   <string name="areThereWebsitesBasedOnLichess">Ci sono siti web basati su Lichess?</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">Sì. Lichess ha ispirato altri siti open-source che usano il nostro %1$s, le nostre %2$s e il nostro %3$s.</string>
+  <string name="keyboardShortcuts">Quali scorciatoie da tastiera sono disponibili?</string>
+  <string name="keyboardShortcutsExplanation">Alcune pagine di Lichess hanno delle scorciatoie da tastiera che puoi usare. Prova a premere il tasto \'?\' sulle pagine di studi, analisi, puzzle, o partite per avere una lista delle scorciatoie da tastiera.</string>
   <string name="fairPlay">Fair Play</string>
   <string name="whenAmIEligibleRatinRefund">Quando posso beneficiare del rimborso automatico del punteggio perso contro chi imbroglia?</string>
   <string name="ratingRefundExplanation">Un minuto dopo aver individuato un giocatore che imbroglia, vengono considerate le ultime 40 partite classificate negli ultimi 3 giorni. Se sei il loro avversario in una di quelle partite, hai perso punteggio (a causa di una sconfitta o un pareggio) e il tuo punteggio non era provvisorio, otterrai un rimborso del punteggio. Il rimborso è limitato in base al punteggio massimo e al progresso del tuo punteggio dopo la partita.
@@ -25,6 +27,8 @@
   <string name="howCanIBecomeModerator">Come posso diventare un moderatore?</string>
   <string name="youCannotApply">Non è possibile fare domanda per diventare un moderatore. Se vediamo qualcuno che pensiamo possa essere un moderatore, li contatteremo direttamente.</string>
   <string name="isCorrespondenceDifferent">La partite per corrispondenza sono diverse dagli scacchi normali?</string>
+  <string name="pleaseReadFairPlayPage">Per ulteriori informazioni, leggi la nostra %s</string>
+  <string name="fairPlayPage">pagina sul fair play</string>
   <string name="youCanUseOpeningBookNoEngine">Su Lichess, la principale differenza nelle regole per gli scacchi per corrispondenza è che è consentito un libro di apertura. L\'uso dei motori scacchistici è ancora proibito e comporterà la loro segnalazione per l\'utilizzo del computer. Sebbene ICCF consenta l\'uso dei motori scacchistici nel gioco per corrispondenza, Lichess no.</string>
   <string name="gameplay">Dinamica di gioco</string>
   <string name="howBulletBlitzEtcDecided">Come vengono decisi Bullet, Blitz e altre cadenze di gioco?</string>
@@ -50,6 +54,7 @@ L\'analisi del computer su Lichess è fornita da Stockfish.</string>
 In rari casi può essere difficile decidere automaticamente (linee forzate, fortezze). Di default ci schieriamo sempre con il giocatore che non è rimasto senza tempo.
 
 Nota che può essere possibile dare scacco matto con un solo cavallo o alfiere se l\'avversario ha un pezzo che potrebbe bloccare il re.</string>
+  <string name="fideHandbook">Regolamento FIDE</string>
   <string name="fideHandbookX">Manuale FIDE %s</string>
   <string name="discoveringEnPassant">Perché una pedone può catturare un altro pedone quando è già passato? (en passant)</string>
   <string name="explainingEnPassant">Questa è una mossa legale conosciuta come \"en passant\" (\"al varco\"). L\'articolo di Wikipedia fornisce una %1$s.
@@ -60,10 +65,9 @@ Nota che può essere possibile dare scacco matto con un solo cavallo o alfiere s
 
 Vedi l\'%3$s su questa mossa per fare un po\' di pratica con essa.</string>
   <string name="goodIntroduction">buona introduzione</string>
-  <string name="officialRulesPDF">regole ufficiali (PDF)</string>
   <string name="lichessTraining">Allenamento Lichess</string>
   <string name="threefoldRepetition">Triplice ripetizione</string>
-  <string name="threefoldRepetitionExplanation">Se una posizione avviene tre volte, i giocatori possono chiamare una patta da %1$s. Lichess implementa le regole ufficiali della FIDE, come descritto nell\'articolo 9.2 (d) del %2$s.</string>
+  <string name="threefoldRepetitionExplanation">Se una posizione avviene tre volte, i giocatori possono chiamare una patta da %1$s. Lichess implementa le regole ufficiali della FIDE, come descritto nell\'articolo 9.2 del %2$s.</string>
   <string name="threefoldRepetitionLowerCase">triplice ripetizione</string>
   <string name="notRepeatedMoves">Non abbiamo ripetuto le mosse. Perché la partita è stata comunque dichiarata patta per ripetizione?</string>
   <string name="repeatedPositionsThatMatters">La triplice ripetizione riguarda la %1$s, non le mosse. La ripetizione non deve necessariamente avvenire consecutivamente.</string>
@@ -95,7 +99,6 @@ Non chiedere il titolo di LM.</string>
   <string name="usernamesCannotBeChanged">No, i nomi utenti non possono essere modificati per ragioni tecniche e pratiche. I nomi utente compaiono in troppi posti: database, esportazioni, log, e nella testa delle persone. Puoi solo cambiare le maiuscole una volta sola.</string>
   <string name="uniqueTrophies">Trofei unici</string>
   <string name="ownerUniqueTrophies">Questo trofeo è unico nella storia di Lichess, nessun altro tranne %1$s lo potrà mai avere.</string>
-  <string name="wayOfBerserkExplanation">Per ottenerlo hiimgosu si è superato nel vincere il 100%% delle partite di un %s in berserk.</string>
   <string name="aHourlyBulletTournament">un torneo Bullet orario</string>
   <string name="goldenZeeExplanation">ZugAddict, durante uno streaming, ha cercato per 2 ore di sconfiggere l\'A.I. livello 8 in partite 1+0 senza riuscirci. Thibault gli ha detto che se, durante lo streaming, fosse riuscito a sconfiggere l\'A.I., avrebbe ottenuto un trofeo personalizzato. ZugAddict, un\'ora dopo, ha distrutto Stockfish e dunque la promessa è stata mantenuta.</string>
   <string name="lichessRatings">Punteggio di Lichess</string>
@@ -138,4 +141,28 @@ Un altro aspetto di rilievo è che, allo scorrere del tempo senza aver giocate p
 Clicca sull\'icona a forma di lucchetto accanto a lichess.org nella barra degli indirizzi URL del tuo browser.
 
 Quindi seleziona se consentire o bloccare le notifiche da Lichess.</string>
+  <string name="enableAutoplayForSoundsQ">Attivare la riproduzione automatica dei suoni?</string>
+  <string name="desktop">desktop</string>
+  <string name="enableAutoplayForSoundsFirefox">1. Vai su lichess.org
+2. Premi Ctrl-i su Linux/Windows o cmd-i su MacOS
+3. Fai clic sulla scheda Autorizzazioni
+4. Consenti audio e video su lichess.org</string>
+  <string name="enableAutoplayForSoundsSafari">1. Vai su lichess.org
+2. Fai clic su Safari nella barra dei menu
+3. Fai clic su Impostazioni per lichess.org...
+4. Consenti ogni riproduzione automatica</string>
+  <string name="enableAutoplayForSoundsMicrosoftEdge">1. Clicca sui tre puntini nell\'angolo in alto a destra
+2. Clicca su Impostazioni
+3. Clicca su Cookies e autorizzazioni del sito
+4. Scendi nella pagina e clicca su Riproduzione automatica di contenuti multimediali
+5. Aggiungi lichess.org agli autorizzati</string>
+  <string name="stopMyselfFromPlaying">Smettere di giocare?</string>
+  <string name="mentalHealthCondition">vera e propria condizione di salute mentale</string>
+  <string name="lichessUserstyles">Stili utente di lichess</string>
+  <string name="fewerLobbyPools">gruppi di gioco più lenti</string>
+  <string name="adviceOnMitigatingAddiction">Riceviamo regolarmente messaggi da parte degli utenti che ci chiedono aiuto per impedire loro di giocare troppo.
+
+Mentre Lichess non banna o blocca giocatori tranne per le violazioni dei Termini di Servizio, consigliamo l\'uso di strumenti esterni per limitare il comportamento di gioco eccessivo. Alcuni bloccanti di siti web suggeriti frequentemente sono %1$s, %2$s, e %3$s. Se desideri continuare a utilizzare il sito ma non venire tentato dalle partite ad alta cadenza di gioco, potresti anche essere interessato a degli %4$s, eccone uno con %5$s.
+
+Alcuni giocatori potrebbero ritenere che il loro comportamento di gioco si stia trasformando in dipendenza. Infatti, l\'OMS classifica il disturbo da gioco come una %6$s, con caratteristiche essenziali essere 1) scarso autocontrollo sul gioco, 2) aumento della priorità data al gioco e 3) continuare a giocare nonostante le conseguenze negative. Se pensi che il tuo comportamento di gioco a scacchi rientra in questi criteri, ti invitiamo a parlarne con un amico o un familiare e/o con un professionista.</string>
 </resources>

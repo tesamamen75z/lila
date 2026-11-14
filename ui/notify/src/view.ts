@@ -1,110 +1,86 @@
-import { Ctrl, NotifyData, Notification } from './interfaces';
-import { h, VNode } from 'snabbdom';
+import { licon } from 'lib/licon';
+import { pubsub } from 'lib/pubsub';
+import { hl, type VNode, type LooseVNodes, spinnerVdom as spinner, dataIcon, onInsert } from 'lib/view';
+
+import type { Ctrl, NotifyData, Notification } from './interfaces';
 import makeRenderers from './renderers';
+
+const renderers = makeRenderers();
 
 export default function view(ctrl: Ctrl): VNode {
   const d = ctrl.data();
-  return h(
+  return hl(
     'div#notify-app.links.dropdown',
-    d && !ctrl.initiating() ? renderContent(ctrl, d) : [h('div.initiating', spinner())]
+    d && !ctrl.initiating() ? renderContent(ctrl, d) : [hl('div.initiating', spinner())],
   );
 }
 
-function renderContent(ctrl: Ctrl, d: NotifyData): VNode[] {
+function renderContent(ctrl: Ctrl, d: NotifyData): LooseVNodes {
   const pager = d.pager;
   const nb = pager.currentPageResults.length;
+  return [
+    hl('div.pager.prev', {
+      attrs: dataIcon(licon.UpTriangle),
+      class: { disabled: !pager.previousPage },
+      hook: clickHook(ctrl.previousPage),
+    }),
+    hl('a.settings.button.button-empty', {
+      attrs: {
+        href: '/account/preferences/notification',
+        'data-icon': licon.Gear,
+        title: i18n.site.settings,
+      },
+    }),
+    nb === 0
+      ? empty()
+      : [
+          hl('button.delete.button.button-empty', {
+            attrs: { 'data-icon': licon.Trash, title: 'Clear' },
+            hook: clickHook(ctrl.clear),
+          }),
+          recentNotifications(d, ctrl.scrolling()),
+        ],
 
-  const nodes: VNode[] = [];
+    pager.nextPage &&
+      hl('div.pager.next', { attrs: dataIcon(licon.DownTriangle), hook: clickHook(ctrl.nextPage) }),
 
-  if (pager.previousPage)
-    nodes.push(
-      h('div.pager.prev', {
-        attrs: { 'data-icon': '' },
-        hook: clickHook(ctrl.previousPage),
-      })
-    );
-  else if (pager.nextPage)
-    nodes.push(
-      h('div.pager.prev.disabled', {
-        attrs: { 'data-icon': '' },
-      })
-    );
-
-  nodes.push(nb ? recentNotifications(d, ctrl.scrolling()) : empty());
-
-  if (pager.nextPage)
-    nodes.push(
-      h('div.pager.next', {
-        attrs: { 'data-icon': '' },
-        hook: clickHook(ctrl.nextPage),
-      })
-    );
-
-  if (!('Notification' in window))
-    nodes.push(h('div.browser-notification', 'Browser does not support notification popups'));
-  else if (Notification.permission == 'denied') nodes.push(notificationDenied());
-
-  return nodes;
-}
-
-export function asText(n: Notification, trans: Trans): string | undefined {
-  const renderers = makeRenderers(trans);
-  return renderers[n.type] ? renderers[n.type].text(n) : undefined;
+    !('Notification' in window)
+      ? hl('div.browser-notification', 'Browser does not support notification popups')
+      : Notification.permission === 'denied' && notificationDenied(),
+  ];
 }
 
 function notificationDenied(): VNode {
-  return h(
+  return hl(
     'a.browser-notification.denied',
-    {
-      attrs: {
-        href: '/faq#browser-notifications',
-        target: '_blank',
-        rel: 'noopener',
-      },
-    },
-    'Notification popups disabled by browser setting'
+    { attrs: { href: '/faq#browser-notifications', target: '_blank' } },
+    i18n.site.browserNotificationsDenied,
   );
 }
 
-function asHtml(n: Notification, trans: Trans): VNode | undefined {
-  const renderers = makeRenderers(trans);
+function asHtml(n: Notification): VNode | undefined {
   return renderers[n.type] ? renderers[n.type].html(n) : undefined;
 }
 
 function clickHook(f: () => void) {
-  return {
-    insert: (vnode: VNode) => {
-      (vnode.elm as HTMLElement).addEventListener('click', f);
-    },
-  };
+  return onInsert(el => {
+    el.addEventListener('click', f);
+  });
 }
 
-const contentLoaded = (vnode: VNode) => lichess.contentLoaded(vnode.elm as HTMLElement);
+const contentLoaded = (vnode: VNode) => pubsub.emit('content-loaded', vnode.elm as HTMLElement);
 
 function recentNotifications(d: NotifyData, scrolling: boolean): VNode {
-  const trans = lichess.trans(d.i18n);
-  return h(
+  return hl(
     'div',
     {
-      class: {
-        notifications: true,
-        scrolling,
-      },
-      hook: {
-        insert: contentLoaded,
-        postpatch: contentLoaded,
-      },
+      class: { notifications: true, scrolling },
+      hook: { insert: contentLoaded, postpatch: contentLoaded },
     },
-    d.pager.currentPageResults.map(n => asHtml(n, trans)) as VNode[]
+    d.pager.currentPageResults.map(asHtml),
   );
 }
 
 function empty() {
-  return h('div.empty.text', { attrs: { 'data-icon': '' } }, 'No notifications.');
-}
-
-function spinner() {
-  return h('div.spinner', [
-    h('svg', { attrs: { viewBox: '0 0 40 40' } }, [h('circle', { attrs: { cx: 20, cy: 20, r: 18, fill: 'none' } })]),
-  ]);
+  return hl('div.empty.text', { attrs: dataIcon(licon.InfoCircle) }, i18n.site.nothingToSeeHere);
 }

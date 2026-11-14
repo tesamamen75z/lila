@@ -1,84 +1,97 @@
 package controllers
 
-import play.api.mvc._
+import play.api.libs.json.*
+import play.api.mvc.*
 
-import lila.api.Context
-import lila.app._
-import views._
+import lila.app.{ *, given }
+import lila.common.HTTPRequest
+import lila.common.Json.given
+import lila.notify.NotificationPref
 
-final class Pref(env: Env) extends LilaController(env) {
+final class Pref(env: Env) extends LilaController(env):
 
-  private def api   = env.pref.api
+  private def api = env.pref.api
   private def forms = lila.pref.PrefForm
 
-  def apiGet =
-    Scoped(_.Preference.Read) { _ => me =>
-      env.pref.api.getPref(me) map { prefs =>
-        JsonOk {
-          import play.api.libs.json._
-          import lila.pref.JsonView._
-          Json.obj("prefs" -> prefs)
-        }
-      }
+  def apiGet = Scoped(_.Preference.Read, _.Web.Mobile, _.Web.Takex3) { _ ?=> me ?=>
+    env.pref.api.get(me).map { prefs =>
+      JsonOk:
+        Json
+          .obj("prefs" -> lila.pref.toJson(prefs))
+          .add("language" -> me.lang)
     }
+  }
 
-  def form(categSlug: String) =
-    Auth { implicit ctx => me =>
-      lila.pref.PrefCateg(categSlug) match {
-        case None => notFound
-        case Some(categ) =>
-          Ok(html.account.pref(me, forms prefOf ctx.pref, categ)).fuccess
-      }
-    }
+  def form(categSlug: String) = Auth { ctx ?=> me ?=>
+    lila.pref.PrefCateg(categSlug) match
+      case None if categSlug == "notification" =>
+        Ok.async:
+          env.notifyM.api.prefs
+            .form(me)
+            .map:
+              views.account.pref.notification(_)
+      case None => notFound
+      case Some(categ) => Ok.page(views.account.pref(me, forms.prefOf(ctx.pref), categ))
+  }
 
-  def formApply =
-    AuthBody { implicit ctx => _ =>
-      def onSuccess(data: lila.pref.PrefForm.PrefData) = api.setPref(data(ctx.pref)) inject Ok("saved")
-      implicit val req                                 = ctx.body
-      forms.pref
-        .bindFromRequest()
-        .fold(
-          _ =>
-            forms.pref
-              .bindFromRequest(lila.pref.FormCompatLayer(ctx.pref, ctx.body))
-              .fold(
-                err => BadRequest(err.toString).fuccess,
-                onSuccess
-              ),
-          onSuccess
+  def formApply = AuthBody { ctx ?=> me ?=>
+    def onSuccess(data: lila.pref.PrefForm.PrefData) =
+      api.setPref(me, data(ctx.pref)).inject(Ok("saved"))
+    val form = forms.pref(lichobile = HTTPRequest.isLichobile)
+    bindForm(form)(
+      _ =>
+        form
+          .bindFromRequest(lila.pref.FormCompatLayer(ctx.pref, ctx.body))
+          .fold(
+            err => BadRequest(err.toString).toFuccess,
+            onSuccess
+          ),
+      onSuccess
+    )
+  }
+
+  def notifyFormApply = AuthBody { ctx ?=> me ?=>
+    bindForm(NotificationPref.form.form)(
+      err => BadRequest(err.toString).toFuccess,
+      data => env.notifyM.api.prefs.set(me, data).inject(Ok("saved"))
+    )
+  }
+
+  def set(name: String) = OpenBody:
+    if name == "zoom"
+    then Ok.withCookies(env.security.lilaCookie.cookie("zoom", (getInt("v") | 85).toString))
+    else if name == "agreement" then
+      for _ <- ctx.me.so(api.agree(_))
+      yield if HTTPRequest.isXhr(ctx.req) then NoContent else Redirect(routes.Lobby.home)
+    else
+      lila.pref.PrefSingleChange.changes
+        .get(name)
+        .so: change =>
+          bindForm(change.form)(
+            form => fuccess(BadRequest(form.errors.flatMap(_.messages).mkString("\n"))),
+            v =>
+              for _ <- ctx.me.so(api.setPref(_, change.update(v)))
+              yield Ok(()).withCookies(env.security.lilaCookie.session(name, v.toString))
+          )
+
+  def apiSet(name: String) = ScopedBody(_.Web.Mobile, _.Preference.Write) { ctx ?=> me ?=>
+    lila.pref.PrefSingleChange.changes
+      .get(name)
+      .so: change =>
+        bindForm(change.form)(
+          jsonFormError,
+          v => api.setPref(me, change.update(v)).inject(NoContent)
         )
-    }
+  }
 
-  def set(name: String) =
-    OpenBody { implicit ctx =>
-      if (name == "zoom") {
-        Ok.withCookies(env.lilaCookie.session("zoom2", (getInt("v") | 185).toString)).fuccess
-      } else {
-        implicit val req = ctx.body
-        (setters get name) ?? { case (form, fn) =>
-          FormResult(form) { v =>
-            fn(v, ctx) map { cookie =>
-              Ok(()).withCookies(cookie)
-            }
-          }
-        }
-      }
-    }
+  def network = Auth { ctx ?=> me ?=>
+    Ok.page(views.account.pref.network(ctx.pref.isUsingAltSocket))
+  }
 
-  private lazy val setters = Map(
-    "theme"      -> (forms.theme      -> save("theme") _),
-    "pieceSet"   -> (forms.pieceSet   -> save("pieceSet") _),
-    "theme3d"    -> (forms.theme3d    -> save("theme3d") _),
-    "pieceSet3d" -> (forms.pieceSet3d -> save("pieceSet3d") _),
-    "soundSet"   -> (forms.soundSet   -> save("soundSet") _),
-    "bg"         -> (forms.bg         -> save("bg") _),
-    "bgImg"      -> (forms.bgImg      -> save("bgImg") _),
-    "is3d"       -> (forms.is3d       -> save("is3d") _),
-    "zen"        -> (forms.zen        -> save("zen") _)
-  )
-
-  private def save(name: String)(value: String, ctx: Context): Fu[Cookie] =
-    ctx.me ?? {
-      api.setPrefString(_, name, value)
-    } inject env.lilaCookie.session(name, value)(ctx.req)
-}
+  def networkPost = AuthBody { ctx ?=> me ?=>
+    for _ <- bindForm(forms.cfRoutingForm)(
+        _ => funit,
+        cfRouting => env.pref.api.setPref(me, ctx.pref.copy(usingAltSocket = cfRouting.some))
+      )
+    yield Redirect(routes.Pref.network)
+  }

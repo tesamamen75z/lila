@@ -1,8 +1,21 @@
-package lila
+package lila.challenge
 
-import org.joda.time.DateTime
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.ChallengeId
 
-package object challenge extends PackageObject {
+private def inTwoWeeks = nowInstant.plusWeeks(2)
 
-  private[challenge] def inTwoWeeks = DateTime.now plusWeeks 2
-}
+private lazy val logger = lila.log("challenge")
+
+case class AllChallenges(in: List[Challenge], out: List[Challenge]):
+  def all = in ::: out
+
+enum Direction:
+  def name = Direction.this.toString.toLowerCase
+  case In // I can accept this challenge
+  case Out // I created this challenge
+
+enum NegativeEvent:
+  case Decline(c: Challenge)
+  case Cancel(c: Challenge)

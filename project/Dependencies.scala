@@ -1,85 +1,114 @@
-import play.sbt.PlayImport._
-import sbt._, Keys._
+import sbt.*, Keys.*
 
-object Dependencies {
+object Dependencies:
+  val arch = if System.getProperty("os.arch").toLowerCase.startsWith("aarch") then "aarch_64" else "x86_64"
+  val dashArch = arch.replace("_", "-")
+  val (os, notifier) =
+    if System.getProperty("os.name").toLowerCase.startsWith("mac") then ("osx", "kqueue")
+    else ("linux", "epoll")
 
-  val lilaMaven = "lila-maven" at "https://raw.githubusercontent.com/ornicar/lila-maven/master"
+  val jitpack = "jitpack".at("https://jitpack.io")
+  val lilaMaven = "lila-maven".at("https://raw.githubusercontent.com/lichess-org/lila-maven/master")
+  val sonashots = "sonashots".at("https://oss.sonatype.org/content/repositories/snapshots")
 
-  val scalalib    = "com.github.ornicar"         %% "scalalib"                        % "7.0.2"
-  val hasher      = "com.roundeights"            %% "hasher"                          % "1.2.1"
-  val jodaTime    = "joda-time"                   % "joda-time"                       % "2.10.10"
-  val chess       = "org.lichess"                %% "scalachess"                      % "10.2.6"
-  val compression = "org.lichess"                %% "compression"                     % "1.6"
-  val maxmind     = "com.sanoma.cda"             %% "maxmind-geoip2-scala"            % "1.3.1-THIB"
-  val prismic     = "io.prismic"                 %% "scala-kit"                       % "1.2.19-THIB213"
-  val scrimage    = "com.sksamuel.scrimage"       % "scrimage-core"                   % "4.0.20"
-  val scaffeine   = "com.github.blemale"         %% "scaffeine"                       % "4.0.2"  % "compile"
-  val googleOAuth = "com.google.auth"             % "google-auth-library-oauth2-http" % "0.27.0"
-  val scalaUri    = "io.lemonlabs"               %% "scala-uri"                       % "3.5.0"
-  val scalatags   = "com.lihaoyi"                %% "scalatags"                       % "0.9.4"
-  val lettuce     = "io.lettuce"                  % "lettuce-core"                    % "6.1.4.RELEASE"
-  val epoll       = "io.netty"                    % "netty-transport-native-epoll"    % "4.1.65.Final" classifier "linux-x86_64"
-  val autoconfig  = "io.methvin.play"            %% "autoconfig-macros"               % "0.3.2"  % "provided"
-  val scalatest   = "org.scalatest"              %% "scalatest"                       % "3.1.0"  % Test
-  val uaparser    = "org.uaparser"               %% "uap-scala"                       % "0.13.0"
-  val specs2      = "org.specs2"                 %% "specs2-core"                     % "4.12.3" % Test
-  val apacheText  = "org.apache.commons"          % "commons-text"                    % "1.9"
-  val bloomFilter = "com.github.alexandrnikitin" %% "bloom-filter"                    % "0.13.1"
+  val cats = "org.typelevel" %% "cats-core" % "2.13.0"
+  val alleycats = "org.typelevel" %% "alleycats-core" % "2.13.0"
+  val catsMtl = "org.typelevel" %% "cats-mtl" % "1.7.0"
+  val hasher = "com.roundeights" %% "hasher" % "1.3.1"
+  val compression = "com.github.lichess-org" % "compression" % "3.2.1"
+  val maxmind = "com.maxmind.geoip2" % "geoip2" % "4.0.1"
+  val caffeine = "com.github.ben-manes.caffeine" % "caffeine" % "3.3.1" % "compile"
+  val scaffeine = "com.github.blemale" %% "scaffeine" % "5.3.0" % "compile"
+  val googleOAuth = "com.google.auth" % "google-auth-library-oauth2-http" % "1.57.0"
+  val galimatias = "io.mola.galimatias" % "galimatias" % "0.2.2-NF"
+  val scalatags = "com.lihaoyi" %% "scalatags" % "0.13.1"
+  val lettuce = "io.lettuce" % "lettuce-core" % "7.9.0.RELEASE"
+  val nettyTransport =
+    ("io.netty" % s"netty-transport-native-$notifier" % "4.2.20.Final").classifier(s"$os-$arch")
+  val lilaSearch = ("com.github.lichess-org.lila-search" %% "client" % "3.6.1")
+  val munit = "org.scalameta" %% "munit" % "1.3.6" % Test
+  val uaparser = "org.uaparser" %% "uap-scala" % "0.21.0"
+  val apacheText = "org.apache.commons" % "commons-text" % "1.15.0"
+  val apacheMath = "org.apache.commons" % "commons-math3" % "3.6.1"
+  val probabilisticDataStructures =
+    "com.github.lenguyenthanh" % "scala-probabilistic-data-structures" % "0.0.2"
+  val kittens = "org.typelevel" %% "kittens" % "3.5.0"
 
-  object flexmark {
-    val version = "0.50.50"
+  val scalacheck = "org.scalacheck" %% "scalacheck" % "1.20.0" % Test
+  val munitCheck = "org.scalameta" %% "munit-scalacheck" % "1.3.1" % Test
+
+  object tests:
+    val bundle = Seq(munit)
+
+  object chess:
+    val version = "18.1.0"
+    val org = "com.github.lichess-org.scalachess"
+    // val org = "org.lichess" // for publishLocal
+    val core = org %% "scalachess" % version
+    val testKit = org %% "scalachess-test-kit" % version % Test
+    val playJson = org %% "scalachess-play-json" % version
+    val rating = org %% "scalachess-rating" % version
+    val tiebreak = org %% "scalachess-tiebreak" % version
+    def bundle = Seq(core, testKit, playJson, rating, tiebreak)
+
+  object scalalib:
+    val version = "11.13.0"
+    val org = "com.github.lichess-org.scalalib"
+    val core = org %% "scalalib-core" % version
+    val model = org %% "scalalib-model" % version
+    val playJson = org %% "scalalib-play-json" % version
+    val lila = org %% "scalalib-lila" % version
+    def bundle = Seq(core, model, playJson, lila)
+
+  object flexmark:
+    val version = "0.64.8"
     val bundle =
       ("com.vladsch.flexmark" % "flexmark" % version) ::
-        List("formatter", "ext-tables", "ext-autolink", "ext-gfm-strikethrough").map { ext =>
-          "com.vladsch.flexmark" % s"flexmark-$ext" % version
-        }
-  }
+        List("ext-tables", "ext-anchorlink", "ext-autolink", "ext-gfm-strikethrough", "html2md-converter")
+          .map { ext =>
+            "com.vladsch.flexmark" % s"flexmark-$ext" % version
+          }
 
-  object macwire {
-    val version = "2.3.7"
-    val macros  = "com.softwaremill.macwire" %% "macros" % version % "provided"
-    val util    = "com.softwaremill.macwire" %% "util"   % version % "provided"
-    def bundle  = Seq(macros, util)
-  }
+  object macwire:
+    val version = "2.6.7"
+    val macros = "com.softwaremill.macwire" %% "macros" % version % "provided"
+    val util = "com.softwaremill.macwire" %% "util" % version % "provided"
+    val tagging = "com.softwaremill.common" %% "tagging" % "2.3.5"
+    def bundle = Seq(macros, util, tagging)
 
-  object reactivemongo {
-    val version = "1.0.5"
+  object reactivemongo:
+    // Use the Pekko actor backend instead of the default Akka one, so the whole app is Akka-free.
+    val driver = ("org.reactivemongo" %% "reactivemongo" % "1.1.0-pekko.noshaded.RC22")
+    val actorsPekko = "org.reactivemongo" %% "reactivemongo-actors-pekko" % "1.1.0-RC22"
+    val stream = "org.reactivemongo" %% "reactivemongo-pekkostream" % "1.1.0-RC22"
+    def bundle = Seq(driver, actorsPekko, stream)
 
-    val driver = "org.reactivemongo" %% "reactivemongo"               % version
-    val stream = "org.reactivemongo" %% "reactivemongo-akkastream"    % version
-    val epoll  = "org.reactivemongo"  % "reactivemongo-shaded-native" % s"$version-linux-x86-64"
-    val kamon  = "org.reactivemongo" %% "reactivemongo-kamon"         % version
-    def bundle = Seq(driver, stream)
-  }
+  object play:
+    import lichess.play.sbt.BuildInfo.version as playVersion
+    val liplay = "com.github.lichess-org.liplay"
+    val api = liplay %% "play" % playVersion
+    val server = liplay %% "play-server" % playVersion
+    val netty = liplay %% "play-netty-server" % playVersion
+    val logback = liplay %% "play-logback" % playVersion
+    val json = "org.playframework" %% "play-json" % "3.0.6"
+    val mailer = "org.playframework" %% "play-mailer" % "10.1.0"
 
-  object play {
-    val version = "2.8.7-lila_1.6"
-    val api     = "com.typesafe.play" %% "play"        % version
-    val json    = "com.typesafe.play" %% "play-json"   % "2.9.2"
-    val mailer  = "com.typesafe.play" %% "play-mailer" % "8.0.1"
-  }
+  object playWs:
+    val version = "3.0.14"
+    val ahc = "org.playframework" %% "play-ahc-ws-standalone" % version
+    val json = "org.playframework" %% "play-ws-standalone-json" % version
+    val bundle = Seq(ahc, json)
 
-  object playWs {
-    val version = "2.1.2"
-    val ahc     = "com.typesafe.play" %% "play-ahc-ws-standalone"  % version
-    val json    = "com.typesafe.play" %% "play-ws-standalone-json" % version
-    val bundle  = Seq(ahc, json)
-  }
-
-  object kamon {
-    val version    = "2.1.18"
-    val core       = "io.kamon" %% "kamon-core"           % version
-    val influxdb   = "io.kamon" %% "kamon-influxdb"       % version
-    val metrics    = "io.kamon" %% "kamon-system-metrics" % version
-    val prometheus = "io.kamon" %% "kamon-prometheus"     % version
-  }
-  object akka {
-    val version    = "2.6.8"
-    val akka       = "com.typesafe.akka" %% "akka-actor"       % version
-    val akkaTyped  = "com.typesafe.akka" %% "akka-actor-typed" % version
-    val akkaStream = "com.typesafe.akka" %% "akka-stream"      % version
-    val akkaSlf4j  = "com.typesafe.akka" %% "akka-slf4j"       % version
-    val testkit    = "com.typesafe.akka" %% "akka-testkit"     % version % Test
-    def bundle     = List(akka, akkaTyped, akkaStream, akkaSlf4j)
-  }
-}
+  object kamon:
+    val version = "2.8.1"
+    val core = "io.kamon" %% "kamon-core" % version
+    val influxdb = "io.kamon" %% "kamon-influxdb" % version
+    val metrics = "io.kamon" %% "kamon-system-metrics" % version
+    val prometheus = "io.kamon" %% "kamon-prometheus" % version
+  object pekko:
+    val version = "1.7.1"
+    val actor = "org.apache.pekko" %% "pekko-actor" % version
+    val pekkoStream = "org.apache.pekko" %% "pekko-stream" % version
+    val pekkoSlf4j = "org.apache.pekko" %% "pekko-slf4j" % version
+    val pekkoTyped = "org.apache.pekko" %% "pekko-actor-typed" % version
+    def bundle = List(actor, pekkoStream, pekkoSlf4j, pekkoTyped)

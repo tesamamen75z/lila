@@ -1,34 +1,83 @@
-package views.html.base
+package views.base
 
-import lila.app.templating.Environment._
-import lila.app.ui.EmbedConfig
-import lila.app.ui.ScalatagsTemplate._
-import lila.pref.SoundSet
+import lila.app.UiEnv.{ *, given }
+import lila.core.i18n.I18nModule
+import lila.ui.ContentSecurityPolicy
 
-object embed {
-
-  import EmbedConfig.implicits._
-
-  def apply(title: String, cssModule: String)(body: Modifier*)(implicit config: EmbedConfig) =
+object embed:
+  /* a minimalist embed that doesn't load site.ts */
+  def minimal(title: String, cssKeys: List[String] = Nil, modules: EsmList = Nil)(body: Modifier*)(using
+      ctx: EmbedContext
+  ) = lila.ui.Snippet:
     frag(
-      layout.bits.doctype,
-      layout.bits.htmlTag(config.lang)(
+      page.ui.doctype,
+      page.ui.htmlTag(using ctx.lang)(
+        cls := ctx.bg,
+        style := page.htmlStyle,
         head(
-          layout.bits.charset,
-          layout.bits.viewport,
-          layout.bits.metaCsp(basicCsp withNonce config.nonce),
+          page.ui.charset,
+          page.ui.viewport,
+          page.ui.metaCsp(lila.web.ContentSecurityPolicy.embed.withNonce(ctx.nonce).withInlineIconFont),
+          page.ui.noRobots,
           st.headTitle(title),
-          layout.bits.pieceSprite(config.pieceSet),
-          cssTagWithTheme(cssModule, config.bg)
+          (ctx.bg == "system").option(page.ui.systemThemeScript(ctx.nonce.some)),
+          page.pieceSetImages.load(ctx.pieceSet.name),
+          cssTag("lib.theme.embed"),
+          cssKeys.map(cssTag),
+          page.ui.scriptsPreload(modules.flatMap(_.map(_.key)))
         ),
-        st.body(cls := s"base highlight ${config.board}")(
-          layout.dataSoundSet := SoundSet.silent.key,
-          layout.dataAssetUrl,
-          layout.dataAssetVersion := assetVersion.value,
-          layout.dataTheme := config.bg,
-          layout.dataPieceSet := config.pieceSet.name,
-          body
+        st.body(
+          bodyModifiers,
+          body,
+          page.ui.inlineJs(ctx.nonce),
+          page.ui.modulesInit(modules, ctx.nonce.some)
         )
       )
     )
-}
+
+  private def bodyModifiers(using ctx: EmbedContext) = List(
+    cls := List("simple-board" -> ctx.pref.simpleBoard),
+    page.ui.dataSoundSet := lila.pref.SoundSet.silent.key,
+    page.ui.dataAssetUrl,
+    page.ui.dataAssetVersion := assetVersion.value,
+    page.ui.dataTheme := ctx.bg,
+    page.ui.dataPieceSet := ctx.pieceSet.name,
+    page.ui.dataBoard := ctx.boardClass,
+    page.ui.dataSocketDomains,
+    style := page.boardStyle(zoomable = false)
+  )
+
+  /* a heavier embed that loads site.ts and connects to WS */
+  def site(
+      title: String,
+      cssKeys: List[String] = Nil,
+      modules: EsmList = Nil,
+      pageModule: Option[PageModule] = None,
+      csp: Update[ContentSecurityPolicy] = identity,
+      i18nModules: List[I18nModule.Selector] = Nil
+  )(body: Modifier*)(using ctx: EmbedContext) = lila.ui.Snippet:
+    val allModules = modules ++ pageModule.so(module => esmPage(module.name))
+    frag(
+      page.ui.doctype,
+      page.ui.htmlTag(using ctx.lang)(
+        cls := ctx.bg,
+        head(
+          page.ui.charset,
+          page.ui.viewport,
+          page.ui.noRobots,
+          page.ui.metaCsp(csp(basicCsp.withNonce(ctx.nonce).withInlineIconFont)),
+          st.headTitle(title),
+          (ctx.bg == "system").option(page.ui.systemThemeScript(ctx.nonce.some)),
+          page.pieceSetImages.load(ctx.pieceSet.name),
+          cssTag("lib.theme.embed"),
+          cssKeys.map(cssTag),
+          page.ui.sitePreload(List[I18nModule.Selector](_.site, _.timeago) ++ i18nModules, allModules),
+          page.ui.lichessFontFaceCss
+        ),
+        st.body(bodyModifiers)(
+          body,
+          page.ui.modulesInit(allModules, ctx.nonce.some),
+          pageModule.map(mod => frag(jsonScript(mod.data)))
+        )
+      )
+    )

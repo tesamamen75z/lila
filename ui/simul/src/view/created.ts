@@ -1,218 +1,164 @@
-import { h, VNode } from 'snabbdom';
-import SimulCtrl from '../ctrl';
-import { Applicant } from '../interfaces';
-import xhr from '../xhr';
-import * as util from './util';
-import modal from 'common/modal';
+import type { VNode } from 'snabbdom';
 
-export default function (showText: (ctrl: SimulCtrl) => VNode) {
+import { licon } from 'lib/licon';
+import { domDialog, confirm, bind, hl, dataIcon } from 'lib/view';
+
+import type SimulCtrl from '@/ctrl';
+import type { Applicant } from '@/interfaces';
+import xhr from '@/xhr';
+
+import * as util from './util';
+
+export default function (showText: (ctrl: SimulCtrl) => VNode | false) {
   return (ctrl: SimulCtrl) => {
-    const candidates = ctrl.candidates().sort(byName),
-      accepted = ctrl.accepted().sort(byName),
-      isHost = ctrl.createdByMe();
-    const variantIconFor = (a: Applicant) => {
-      const variant = ctrl.data.variants.find(v => a.variant == v.key);
-      return (
-        variant &&
-        h('td.variant', {
-          attrs: {
-            'data-icon': variant.icon,
-          },
-        })
-      );
-    };
+    const candidates = ctrl.candidates().sort(byName);
+    const accepted = ctrl.accepted().sort(byName);
+    const isHost = ctrl.createdByMe();
+    const canJoin = ctrl.data.canJoin;
     return [
-      h('div.box__top', [
+      hl('div.box__top', [
         util.title(ctrl),
-        h(
+        hl(
           'div.box__top__actions',
           ctrl.opts.userId
             ? isHost
               ? [startOrCancel(ctrl, accepted), randomButton(ctrl)]
               : ctrl.containsMe()
-              ? h(
-                  'a.button',
-                  {
-                    hook: util.bind('click', () => xhr.withdraw(ctrl.data.id)),
-                  },
-                  ctrl.trans('withdraw')
-                )
-              : h(
-                  'a.button.text' + (ctrl.teamBlock() ? '.disabled' : ''),
-                  {
-                    attrs: {
-                      disabled: ctrl.teamBlock(),
-                      'data-icon': '',
-                    },
-                    hook: ctrl.teamBlock()
-                      ? {}
-                      : util.bind('click', () => {
-                          if (ctrl.data.variants.length === 1) xhr.join(ctrl.data.id, ctrl.data.variants[0].key);
-                          else {
-                            modal({
-                              content: $('.simul .continue-with'),
-                              onInsert($wrap) {
-                                $wrap.find('button').on('click', function (this: HTMLElement) {
-                                  modal.close();
-                                  xhr.join(ctrl.data.id, $(this).data('variant'));
+                ? hl(
+                    'a.button',
+                    { hook: bind('click', () => xhr.withdraw(ctrl.data.id)) },
+                    i18n.site.withdraw,
+                  )
+                : hl(
+                    'a.button.text' + (canJoin ? '' : '.disabled'),
+                    {
+                      attrs: { disabled: !canJoin, ...dataIcon(licon.PlayTriangle) },
+                      hook: canJoin
+                        ? bind('click', () => {
+                            if (ctrl.data.variants.length === 1)
+                              xhr.join(ctrl.data.id, ctrl.data.variants[0].key);
+                            else
+                              domDialog({
+                                closeButton: true,
+                                cash: $('.simul .continue-with'),
+                                modal: true,
+                                easyClose: 'clickOutside',
+                              }).then(dlg => {
+                                $('button.button', dlg.view).on('click', function (this: HTMLButtonElement) {
+                                  xhr.join(ctrl.data.id, this.dataset.variant as VariantKey);
+                                  dlg.close();
                                 });
-                              },
-                            });
-                          }
-                        }),
-                  },
-                  ctrl.teamBlock() && ctrl.data.team
-                    ? ctrl.trans('mustBeInTeam', ctrl.data.team.name)
-                    : ctrl.trans('join')
-                )
-            : h(
+                                dlg.show();
+                              });
+                          })
+                        : {},
+                    },
+                    i18n.site.join,
+                  )
+            : hl(
                 'a.button.text',
                 {
                   attrs: {
-                    'data-icon': '',
+                    ...dataIcon(licon.PlayTriangle),
                     href: '/login?referrer=' + window.location.pathname,
                   },
                 },
-                ctrl.trans('signIn')
-              )
+                i18n.site.signIn,
+              ),
         ),
       ]),
       showText(ctrl),
       ctrl.acceptedContainsMe()
-        ? h('p.instructions', 'You have been selected! Hold still, the simul is about to begin.')
-        : isHost && ctrl.data.applicants.length < 6
-        ? h('p.instructions', 'Share this page URL to let people enter the simul!')
-        : null,
-      h(
+        ? hl('p.instructions', 'You have been selected! Hold still, the simul is about to begin.')
+        : isHost &&
+          ctrl.data.applicants.length < 6 &&
+          hl('p.instructions', 'Share this page URL to let people enter the simul!'),
+      hl(
         'div.halves',
-        {
-          hook: {
-            postpatch(_old, vnode) {
-              lichess.powertip.manualUserIn(vnode.elm as HTMLElement);
-            },
-          },
-        },
+        { hook: { postpatch: (_old, vnode) => site.powertip.manualUserIn(vnode.elm as HTMLElement) } },
         [
-          h(
+          hl(
             'div.half.candidates',
-            h(
+            hl(
               'table.slist.slist-pad',
-              h(
+              hl(
                 'thead',
-                h(
+                hl(
                   'tr',
-                  h(
-                    'th',
-                    {
-                      attrs: { colspan: 3 },
-                    },
-                    [h('strong', candidates.length), ' candidate players']
-                  )
-                )
+                  hl('th', { attrs: { colspan: 3 } }, [
+                    hl('strong', candidates.length),
+                    ' candidate players',
+                  ]),
+                ),
               ),
-              h(
+              hl(
                 'tbody',
                 candidates.map(applicant => {
-                  return h(
+                  return hl(
                     'tr',
-                    {
-                      key: applicant.player.id,
-                      class: {
-                        me: ctrl.opts.userId === applicant.player.id,
-                      },
-                    },
+                    { key: applicant.player.id, class: { me: ctrl.opts.userId === applicant.player.id } },
                     [
-                      h('td', util.player(applicant.player)),
-                      variantIconFor(applicant),
-                      h(
+                      hl('td', util.player(applicant.player, ctrl)),
+                      variantIconFor(ctrl, applicant),
+                      hl(
                         'td.action',
-                        isHost
-                          ? [
-                              h('a.button', {
-                                attrs: {
-                                  'data-icon': '',
-                                  title: 'Accept',
-                                },
-                                hook: util.bind('click', () => xhr.accept(applicant.player.id)(ctrl.data.id)),
-                              }),
-                            ]
-                          : []
+                        isHost &&
+                          hl('a.button', {
+                            attrs: { ...dataIcon(licon.Checkmark), title: 'Accept' },
+                            hook: bind('click', () => xhr.accept(applicant.player.id)(ctrl.data.id)),
+                          }),
                       ),
-                    ]
+                    ],
                   );
-                })
-              )
-            )
+                }),
+              ),
+            ),
           ),
-          h('div.half.accepted', [
-            h(
+          hl('div.half.accepted', [
+            hl(
               'table.slist.user_list',
-              h('thead', [
-                h(
+              hl('thead', [
+                hl(
                   'tr',
-                  h(
-                    'th',
-                    {
-                      attrs: { colspan: 3 },
-                    },
-                    [h('strong', accepted.length), ' accepted players']
-                  )
+                  hl('th', { attrs: { colspan: 3 } }, [hl('strong', accepted.length), ' accepted players']),
                 ),
-                isHost && candidates.length && !accepted.length
-                  ? [h('tr.help', h('th', 'Now you get to accept some players, then start the simul'))]
-                  : [],
+                isHost &&
+                  candidates.length > 0 &&
+                  !accepted.length &&
+                  hl('tr.help', hl('th', 'Now you get to accept some players, then start the simul')),
               ]),
-              h(
+              hl(
                 'tbody',
                 accepted.map(applicant => {
-                  return h(
+                  return hl(
                     'tr',
-                    {
-                      key: applicant.player.id,
-                      class: {
-                        me: ctrl.opts.userId === applicant.player.id,
-                      },
-                    },
+                    { key: applicant.player.id, class: { me: ctrl.opts.userId === applicant.player.id } },
                     [
-                      h('td', util.player(applicant.player)),
-                      variantIconFor(applicant),
-                      h(
+                      hl('td', util.player(applicant.player, ctrl)),
+                      variantIconFor(ctrl, applicant),
+                      hl(
                         'td.action',
-                        isHost
-                          ? [
-                              h('a.button.button-red', {
-                                attrs: {
-                                  'data-icon': '',
-                                },
-                                hook: util.bind('click', () => xhr.reject(applicant.player.id)(ctrl.data.id)),
-                              }),
-                            ]
-                          : []
+                        isHost &&
+                          hl('a.button.button-red', {
+                            attrs: dataIcon(licon.X),
+                            hook: bind('click', () => xhr.reject(applicant.player.id)(ctrl.data.id)),
+                          }),
                       ),
-                    ]
+                    ],
                   );
-                })
-              )
+                }),
+              ),
             ),
           ]),
-        ]
+        ],
       ),
-      ctrl.data.quote
-        ? h('blockquote.pull-quote', [h('p', ctrl.data.quote.text), h('footer', ctrl.data.quote.author)])
-        : null,
-      h(
+      ctrl.data.quote &&
+        hl('blockquote.pull-quote', [hl('p', ctrl.data.quote.text), hl('footer', ctrl.data.quote.author)]),
+      hl(
         'div.continue-with.none',
-        ctrl.data.variants.map(function (variant) {
-          return h(
-            'button.button',
-            {
-              attrs: {
-                'data-variant': variant.key,
-              },
-            },
-            variant.name
-          );
-        })
+        ctrl.data.variants.map(variant =>
+          hl('button.button', { attrs: { 'data-variant': variant.key } }, variant.name),
+        ),
       ),
     ];
   };
@@ -221,44 +167,39 @@ export default function (showText: (ctrl: SimulCtrl) => VNode) {
 const byName = (a: Applicant, b: Applicant) => (a.player.name > b.player.name ? 1 : -1);
 
 const randomButton = (ctrl: SimulCtrl) =>
-  ctrl.candidates().length
-    ? h(
-        'a.button.text',
-        {
-          attrs: {
-            'data-icon': '',
-          },
-          hook: util.bind('click', () => {
-            const candidates = ctrl.candidates();
-            const randomCandidate = candidates[Math.floor(Math.random() * candidates.length)];
-            xhr.accept(randomCandidate.player.id)(ctrl.data.id);
-          }),
-        },
-        'Accept random candidate'
-      )
-    : null;
+  ctrl.candidates().length > 0 &&
+  hl(
+    'a.button.text',
+    {
+      attrs: dataIcon(licon.Checkmark),
+      hook: bind('click', () => {
+        const candidates = ctrl.candidates();
+        const randomCandidate = candidates[Math.floor(Math.random() * candidates.length)];
+        xhr.accept(randomCandidate.player.id)(ctrl.data.id);
+      }),
+    },
+    'Accept random candidate',
+  );
 
 const startOrCancel = (ctrl: SimulCtrl, accepted: Applicant[]) =>
   accepted.length > 1
-    ? h(
+    ? hl(
         'a.button.button-green.text',
-        {
-          attrs: {
-            'data-icon': '',
-          },
-          hook: util.bind('click', () => xhr.start(ctrl.data.id)),
-        },
-        `Start (${accepted.length})`
+        { attrs: dataIcon(licon.PlayTriangle), hook: bind('click', () => xhr.start(ctrl.data.id)) },
+        `Start (${accepted.length})`,
       )
-    : h(
+    : hl(
         'a.button.button-red.text',
         {
-          attrs: {
-            'data-icon': '',
-          },
-          hook: util.bind('click', () => {
-            if (confirm('Delete this simul?')) xhr.abort(ctrl.data.id);
+          attrs: dataIcon(licon.X),
+          hook: bind('click', async () => {
+            if (await confirm('Delete this simul?')) xhr.abort(ctrl.data.id);
           }),
         },
-        ctrl.trans('cancel')
+        i18n.site.cancel,
       );
+
+const variantIconFor = (ctrl: SimulCtrl, a: Applicant) => {
+  const variant = ctrl.data.variants.find(v => a.variant === v.key);
+  return variant && hl('td.variant', { attrs: dataIcon(variant.icon) });
+};

@@ -1,51 +1,68 @@
-import config from './config';
-import CurrentPuzzle from 'puz/current';
-import throttle from 'common/throttle';
-import { Api as CgApi } from 'chessground/api';
-import { Boost } from './boost';
-import { Clock } from 'puz/clock';
-import { Combo } from 'puz/combo';
-import { Countdown } from './countdown';
-import { getNow, puzzlePov, sound } from 'puz/util';
-import { makeCgOpts } from 'puz/run';
-import { parseUci } from 'chessops/util';
-import { Run } from 'puz/interfaces';
-import { prop, Prop } from 'common';
-import { RacerOpts, RacerData, RacerVm, RacerPrefs, Race, UpdatableData, RaceStatus, WithGround } from './interfaces';
-import { Role } from 'chessground/types';
-import { storedProp } from 'common/storage';
-import { PromotionCtrl } from 'chess/promotion';
+import { type Prop, defined, prop } from 'lib';
+import { throttle } from 'lib/async';
+import { type WithGround } from 'lib/game/ground';
+import { PromotionCtrl } from 'lib/game/promotion';
+import { pubsub } from 'lib/pubsub';
+import { Clock } from 'lib/puz/clock';
+import { Combo } from 'lib/puz/combo';
+import CurrentPuzzle from 'lib/puz/current';
+import { PuzFilters } from 'lib/puz/filters';
+import type { PuzCtrl, Run } from 'lib/puz/interfaces';
+import { playAndTestUciMutatingPosition } from 'lib/puz/moveTest';
+import { makeCgOpts } from 'lib/puz/run';
+import { getNow, puzzlePov, sound } from 'lib/puz/util';
+import { wsConnect, wsSend } from 'lib/socket';
+import { storedBooleanProp } from 'lib/storage';
+import { toggleZenMode } from 'lib/view/zen';
 
-export default class StormCtrl {
-  private data: RacerData;
-  private redraw: () => void;
-  private sign = Math.random().toString(36);
+import { Boost } from './boost';
+import config from './config';
+import { Countdown } from './countdown';
+import type {
+  RacerOpts,
+  RacerData,
+  RacerVm,
+  RacerPrefs,
+  Race,
+  UpdatableData,
+  RaceStatus,
+  Vehicle,
+} from './interfaces';
+
+export default class RacerCtrl implements PuzCtrl {
+  private readonly data: RacerData;
+  private readonly sign = Math.random().toString(36);
   private localScore = 0;
   race: Race;
   pref: RacerPrefs;
   run: Run;
   vm: RacerVm;
-  trans: Trans;
+  filters: PuzFilters;
   promotion: PromotionCtrl;
   countdown: Countdown;
   boost: Boost = new Boost();
   skipAvailable = true;
-  knowsSkip = storedProp('racer.skip', false);
-  ground = prop<CgApi | false>(false) as Prop<CgApi | false>;
+  knowsSkip: Prop<boolean> = storedBooleanProp('racer.skip', false);
+  ground: Prop<CgApi | false> = prop<CgApi | false>(false);
   flipped = false;
+  redrawInterval: Timeout;
+  vehicle: Vehicle[];
 
-  constructor(opts: RacerOpts, redraw: (data: RacerData) => void) {
+  constructor(
+    opts: RacerOpts,
+    readonly redraw: () => void,
+  ) {
     this.data = opts.data;
     this.race = this.data.race;
+    this.vehicle = this.makeVehicles(this.race.id);
     this.pref = opts.pref;
-    this.redraw = () => redraw(this.data);
-    this.trans = lichess.trans(opts.i18n);
+    this.filters = new PuzFilters(redraw, true);
     this.run = {
       pov: puzzlePov(this.data.puzzles[0]),
       moves: 0,
       errors: 0,
       current: new CurrentPuzzle(0, this.data.puzzles[0]),
-      clock: new Clock(config, Math.max(0, -opts.data.startsIn)),
+      clock: new Clock(config, defined(opts.data.startsIn) ? Math.max(0, -opts.data.startsIn) : undefined),
       history: [],
       combo: new Combo(config),
       modifier: {
@@ -53,12 +70,20 @@ export default class StormCtrl {
       },
     };
     this.vm = {
-      alreadyStarted: opts.data.startsIn && opts.data.startsIn <= 0,
+      alreadyStarted: defined(opts.data.startsIn) && opts.data.startsIn <= 0,
     };
-    this.countdown = new Countdown(this.run.clock, this.resetGround, () => setTimeout(this.redraw));
-    this.promotion = new PromotionCtrl(this.withGround, this.resetGround, this.redraw);
+    this.countdown = new Countdown(
+      this.run.clock,
+      () => {
+        this.setGround();
+        this.run.current.moveIndex = 0;
+        this.setGround();
+      },
+      () => setTimeout(this.redraw),
+    );
+    this.promotion = new PromotionCtrl(this.withGround, this.setGround, this.redraw);
     this.serverUpdate(opts.data);
-    lichess.socket = new lichess.StrongSocket(`/racer/${this.race.id}`, false, {
+    wsConnect(`/racer/${this.race.id}`, false, {
       events: {
         racerState: (data: UpdatableData) => {
           this.serverUpdate(data);
@@ -66,18 +91,19 @@ export default class StormCtrl {
           this.redrawSlow();
         },
       },
-    });
-    lichess.socket.sign(this.sign);
-    setInterval(this.redraw, 1000);
+    }).sign(this.sign);
+    pubsub.on('zen', () => toggleZenMode({ unconditional: true }));
+    $('#zentog').on('click', this.toggleZen);
+    this.redrawInterval = setInterval(this.redraw, 1000);
     setTimeout(this.hotkeys, 1000);
-    // this.simulate();
   }
 
   serverUpdate = (data: UpdatableData) => {
     this.data.players = data.players;
     this.boost.setPlayers(data.players);
-    if (data.startsIn) {
+    if (data.startsIn && this.status() === 'pre') {
       this.vm.startsAt = new Date(Date.now() + data.startsIn);
+      this.run.current.startAt = getNow() + data.startsIn;
       if (data.startsIn > 0) this.countdown.start(this.vm.startsAt, this.isPlayer());
       else this.run.clock.start();
     }
@@ -87,40 +113,44 @@ export default class StormCtrl {
 
   players = () => this.data.players;
 
-  isPlayer = () => !this.vm.alreadyStarted && this.data.players.some(p => p.name == this.data.player.name);
+  isPlayer = () => !this.vm.alreadyStarted && this.data.players.some(p => p.name === this.data.player.name);
 
   raceFull = () => this.data.players.length >= 10;
 
   status = (): RaceStatus => (this.run.clock.started() ? (this.run.clock.flag() ? 'post' : 'racing') : 'pre');
 
-  isRacing = () => this.status() == 'racing';
+  isRacing = () => this.status() === 'racing';
 
   isOwner = () => this.data.owner;
 
   myScore = (): number | undefined => {
-    const p = this.data.players.find(p => p.name == this.data.player.name);
+    const p = this.data.players.find(p => p.name === this.data.player.name);
     return p?.score;
   };
 
   join = throttle(1000, () => {
-    if (!this.isPlayer()) this.socketSend('racerJoin');
+    if (!this.isPlayer()) this.socketSend('racerJoin', undefined);
   });
 
   start = throttle(1000, () => {
-    if (this.isOwner()) this.socketSend('racerStart');
+    if (this.isOwner()) this.socketSend('racerStart', undefined);
   });
 
   countdownSeconds = (): number | undefined =>
-    this.status() == 'pre' && this.vm.startsAt && this.vm.startsAt > new Date()
-      ? Math.min(9, Math.ceil((this.vm.startsAt.getTime() - Date.now()) / 1000))
+    this.status() === 'pre' && this.vm.startsAt && this.vm.startsAt > new Date()
+      ? Math.min(10, Math.ceil((this.vm.startsAt.getTime() - Date.now()) / 1000))
       : undefined;
 
   end = (): void => {
-    this.resetGround();
+    this.run.unfinishedId = this.run.current.puzzle.id;
+    this.pushToHistory(false); // add last unsolved puzzle
+    this.setGround();
     this.redraw();
     sound.end();
-    lichess.pubsub.emit('ply', 0); // restore resize handle
+    pubsub.emit('ply', 0); // restore resize handle
+    $('body').toggleClass('playing'); // end zen
     this.redrawSlow();
+    clearInterval(this.redrawInterval);
   };
 
   canSkip = () => this.skipAvailable;
@@ -129,17 +159,18 @@ export default class StormCtrl {
     if (this.skipAvailable && this.run.clock.started()) {
       this.skipAvailable = false;
       sound.good();
+      this.run.skipId = this.run.current.puzzle.id;
       this.playUci(this.run.current.expectedMove());
       this.knowsSkip(true);
     }
   };
 
   userMove = (orig: Key, dest: Key): void => {
-    if (!this.promotion.start(orig, dest, this.playUserMove)) this.playUserMove(orig, dest);
+    if (!this.promotion.start(orig, dest, { submit: this.playUserMove })) this.playUserMove(orig, dest);
   };
 
   playUserMove = (orig: Key, dest: Key, promotion?: Role): void =>
-    this.playUci(`${orig}${dest}${promotion ? (promotion == 'knight' ? 'n' : promotion[0]) : ''}`);
+    this.playUci(`${orig}${dest}${promotion ? (promotion === 'knight' ? 'n' : promotion[0]) : ''}`);
 
   playUci = (uci: Uci): void => {
     const now = getNow();
@@ -148,11 +179,8 @@ export default class StormCtrl {
     else {
       this.run.moves++;
       this.promotion.cancel();
-      const pos = puzzle.position();
-      const move = parseUci(uci)!;
-      let captureSound = pos.board.occupied.has(move.to);
-      pos.play(move);
-      if (pos.isCheckmate() || uci == puzzle.expectedMove()) {
+      const correct = playAndTestUciMutatingPosition(puzzle.position(), puzzle.expectedMove(), uci);
+      if (correct) {
         puzzle.moveIndex++;
         this.localScore++;
         this.run.combo.inc();
@@ -164,40 +192,55 @@ export default class StormCtrl {
         }
         this.socketSend('racerScore', this.localScore);
         if (puzzle.isOver()) {
-          if (!this.incPuzzle()) this.end();
+          if (!this.incPuzzle(true)) this.end();
         } else {
           puzzle.moveIndex++;
-          captureSound = captureSound || pos.board.occupied.has(parseUci(puzzle.line[puzzle.moveIndex]!)!.to);
         }
-        sound.move(captureSound);
+        this.run.current.playSound(puzzle);
       } else {
         sound.wrong();
         this.run.errors++;
         this.run.combo.reset();
         if (this.run.clock.flag()) this.end();
-        else if (!this.incPuzzle()) this.end();
+        else if (!this.incPuzzle(false)) this.end();
       }
       this.redraw();
       this.redrawQuick();
       this.redrawSlow();
     }
-    this.resetGround();
-    lichess.pubsub.emit('ply', this.run.moves);
+    this.setGround();
+    if (this.run.current.moveIndex < 0) {
+      this.run.current.moveIndex = 0;
+      this.setGround();
+    }
+    pubsub.emit('ply', this.run.moves);
   };
 
-  private redrawQuick = () => setTimeout(this.redraw, 100);
-  private redrawSlow = () => setTimeout(this.redraw, 1000);
+  private readonly makeVehicles = (raceId: string): Vehicle[] => {
+    const vehicle = [];
+    for (let c = 0; c < 10; c++) {
+      let h = 0;
+      const str = `${raceId}${c}`;
+      for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+      vehicle.push(Math.abs(h) % 4); // If the car number is changed, change the number.
+    }
+    return vehicle;
+  };
 
-  private cgOpts = () =>
+  private readonly redrawQuick = () => setTimeout(this.redraw, 100);
+  private readonly redrawSlow = () => setTimeout(this.redraw, 1000);
+
+  private readonly cgOpts = () =>
     this.isPlayer()
       ? makeCgOpts(this.run, this.isRacing(), this.flipped)
       : {
           orientation: this.run.pov,
         };
 
-  private resetGround = () => this.withGround(g => g.set(this.cgOpts()));
+  private readonly setGround = () => this.withGround(g => g.set(this.cgOpts()));
 
-  private incPuzzle = (): boolean => {
+  private readonly incPuzzle = (win: boolean): boolean => {
+    this.pushToHistory(win);
     const index = this.run.current.index;
     if (index < this.data.puzzles.length - 1) {
       this.run.current = new CurrentPuzzle(index + 1, this.data.puzzles[index + 1]);
@@ -206,9 +249,16 @@ export default class StormCtrl {
     return false;
   };
 
+  private readonly pushToHistory = (win: boolean) =>
+    this.run.history.push({
+      puzzle: this.data.puzzles[this.run.current.index],
+      win,
+      millis: getNow() - this.run.current.startAt,
+    });
+
   withGround: WithGround = f => {
     const g = this.ground();
-    return g && f(g);
+    return g ? f(g) : undefined;
   };
 
   flip = () => {
@@ -217,7 +267,12 @@ export default class StormCtrl {
     this.redraw();
   };
 
-  private socketSend = (tpe: string, data?: any) => lichess.socket.send(tpe, data, { sign: this.sign });
+  private readonly socketSend = <K extends 'racerScore' | 'racerStart' | 'racerJoin'>(
+    tpe: K,
+    data: K extends 'racerScore' ? number : undefined,
+  ) => wsSend(tpe, data, { sign: this.sign, ackable: false });
 
-  private hotkeys = () => window.Mousetrap.bind('f', this.flip);
+  private readonly toggleZen = () => pubsub.emit('zen');
+
+  private readonly hotkeys = () => site.mousetrap.bind('f', this.flip).bind('z', this.toggleZen);
 }

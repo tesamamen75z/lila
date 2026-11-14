@@ -46,15 +46,11 @@
   <string name="annotateWithGlyphs">Bi glîfan îzah bike</string>
   <string name="theChapterIsTooShortToBeAnalysed">Ev beş pir kurt e bo analîzkirinê.</string>
   <string name="onlyContributorsCanRequestAnalysis">Tenê beşdarên xebatê dikarin analîza kombersê daxwaz bikin.</string>
-  <string name="getAFullComputerAnalysis">Ji bo vê xeta sereke analîzeke kombersê ya bi hûrgilî werbigire.</string>
   <string name="makeSureTheChapterIsComplete">Pê bawer be ku beş temam bûye. Tu dikarî tenê carekê analîzê bixwazî.</string>
   <string name="allSyncMembersRemainOnTheSamePosition">Hemû endamên senkronîze li eynî pozîsyonê dimînin</string>
   <string name="shareChanges">Guhertinan bi temaşevanan re parve bike û wan qeydê ser rajekerê bike</string>
   <string name="playing">Dilîzî</string>
-  <string name="first">Yekem</string>
-  <string name="previous">Yê berî</string>
   <string name="next">Yê piştre</string>
-  <string name="last">Ya dawî</string>
   <string name="shareAndExport">Parve bike û derxîne</string>
   <string name="cloneStudy">Klon bike</string>
   <string name="studyPgn">PGNa xebatê</string>
@@ -90,14 +86,8 @@
   <string name="loadAPositionFromFen">Pozisyonek bar bike ji FENê</string>
   <string name="loadAGameFromPgn">Lîstikek bar bike ji PGN</string>
   <string name="automatic">Otomatîk</string>
-  <plurals name="pasteYourPgnTextHereUpToNbGames">
-    <item quantity="one">Nivîsa xwe ya PGNê bi vir ve bize, herî zêde %s lîstik</item>
-    <item quantity="other">Nivîsa xwe ya PGNê bi vir ve bize, herî zêde %s lîstik</item>
-  </plurals>
   <string name="urlOfTheGame">URLya lîstikê</string>
-  <string name="loadAGameFromXOrY">Lîstikekê bar bike ji %1$s an %2$s</string>
   <string name="createChapter">Beşê çêbike</string>
-  <string name="configureLiveBroadcast">Weşana zindî mîheng bike</string>
   <string name="createStudy">Xebatê çêbike</string>
   <string name="editStudy">Xebatê sererast bike</string>
   <string name="visibility">Xuyabarî</string>
@@ -115,9 +105,8 @@
   <string name="noLetPeopleBrowseFreely">Na: bihêle ku herkes bi serbestî bigere</string>
   <string name="pinnedStudyComment">Şîroveya xebatê ya zeliqandî</string>
   <string name="start">Dest pê bike</string>
-  <string name="save">Qeyd bike</string>
   <string name="clearChat">Gotûbêjê paqij bike</string>
   <string name="deleteTheStudyChatHistory">Bila dîroka gotûbêja xebatê were jêbirin? Jê veger tine!</string>
   <string name="deleteStudy">Xebatê jê bibe</string>
-  <string name="deleteTheEntireStudy">Bila temamiya xebatê were jêbirin? Ji vê nikarî vegerî!</string>
+  <string name="goodMove">Hemleya baş</string>
 </resources>

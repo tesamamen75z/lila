@@ -1,45 +1,39 @@
 package lila.common
 
-import org.joda.time.DateTime
-import play.api.libs.json.{ Json => PlayJson, _ }
-import chess.format.FEN
+import io.mola.galimatias.URL
+import play.api.libs.json.{ Json as PlayJson, * }
 
-object Json {
+object Json:
 
-  def anyValWriter[O, A: Writes](f: O => A) =
-    Writes[O] { o =>
-      PlayJson toJson f(o)
-    }
+  export scalalib.json.Json.{ *, given }
+  export chess.json.Json.given
 
-  def intAnyValWriter[O](f: O => Int): Writes[O]       = anyValWriter[O, Int](f)
-  def stringAnyValWriter[O](f: O => String): Writes[O] = anyValWriter[O, String](f)
+  given userStrReads: Reads[UserStr] = Reads
+    .of[String]
+    .flatMapResult: str =>
+      JsResult.fromTry(UserStr.read(str).toTry(s"Invalid username: $str"))
 
-  def stringIsoWriter[O](iso: Iso[String, O]): Writes[O] = anyValWriter[O, String](iso.to)
-  def intIsoWriter[O](iso: Iso[Int, O]): Writes[O]       = anyValWriter[O, Int](iso.to)
+  given Writes[lila.core.relation.Relation] = writeAs(_.isFollow)
 
-  def stringIsoReader[O](iso: Iso[String, O]): Reads[O] = Reads.of[String] map iso.from
+  given Writes[PerfKey] = writeAs(PerfKey.value)
 
-  def intIsoFormat[O](iso: Iso[Int, O]): Format[O] =
-    Format[O](
-      Reads.of[Int] map iso.from,
-      Writes { o =>
-        JsNumber(iso to o)
-      }
-    )
+  given Writes[URL] = writeAs(_.toString)
 
-  def stringIsoFormat[O](iso: Iso[String, O]): Format[O] =
-    Format[O](
-      Reads.of[String] map iso.from,
-      Writes { o =>
-        JsString(iso to o)
-      }
-    )
+  given Writes[chess.PlayerTitle] = writeAs(_.value)
 
-  implicit val centisReads = Reads.of[Int] map chess.Centis.apply
+  given Writes[lila.core.plan.PatronColorResolved] = writeAs(_.value.id)
 
-  implicit val jodaWrites = Writes[DateTime] { time =>
-    JsNumber(time.getMillis)
-  }
+  given [A: Writes]: OWrites[chess.ByColor[A]] = PlayJson.writes
 
-  implicit val fenFormat: Format[FEN] = stringIsoFormat[FEN](Iso.fenIso)
-}
+  given NoJsonHandler[chess.Square] with {}
+
+  import lila.core.LightUser
+  given lightUserWrites: OWrites[LightUser] = OWrites(lightUser.write)
+  object lightUser:
+    def write(u: LightUser): JsObject = writeNoId(u) + ("id" -> JsString(u.id.value))
+    def writeNoId(u: LightUser): JsObject = PlayJson
+      .obj("name" -> u.name)
+      .add("title", u.title)
+      .add("flair", u.flair)
+      .add("patron", u.isPatron)
+      .add("patronColor", u.patronAndColor.map(_.color))

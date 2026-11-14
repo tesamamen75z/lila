@@ -9,6 +9,10 @@
     <item quantity="one">%s խաղափուլ</item>
     <item quantity="other">%s խաղափուլ</item>
   </plurals>
+  <plurals name="xRoundsSwiss" comment="%s rounds of a Swiss game">
+    <item quantity="one">%s խաղափուլ շվեյցարական մրցակարգով</item>
+    <item quantity="other">%s խաղափուլ շվեյցարական մրցակարգով</item>
+  </plurals>
   <plurals name="oneRoundEveryXDays">
     <item quantity="one">Մեկ խաղափուլ %s օրում</item>
     <item quantity="other">Մեկ խաղափուլ %s օրում</item>
@@ -22,7 +26,6 @@
     <item quantity="one">%s րոպե խաղափուլերի միջև</item>
     <item quantity="other">%s րոպե խաղափուլերի միջև</item>
   </plurals>
-  <string name="startingIn" comment="Displayed above a timer">Սկսվում է</string>
   <string name="nextRound">Հաջորդ խաղափուլ</string>
   <plurals name="ongoingGames" comment="Displayed next to the ongoing games count">
     <item quantity="one">Ընթացիկ պարտիա</item>
@@ -51,15 +54,33 @@
   <string name="pairingsA">%1$sով, իրացված %2$s-ով, %3$sը հաշվի առնելով։</string>
   <string name="moreRoundsThanPlayersQ">Ի՞նչ կլինի, եթե մրցաշարում լինի ավելի շատ խաղափուլ, քան խաղացողներն են։</string>
   <string name="moreRoundsThanPlayersA">Երբ բոլոր  հնարավոր զույգերը խաղացվեն, մրցաշարը կավարտվի և կհայտարարվի հաղթողը։</string>
-  <string name="restrictedToTeamsQ">Ինչո՞ւ է դա հասանելի միայն թիմերին։</string>
   <string name="restrictedToTeamsA">Շվեյցարական մրցաշարերը նախատեսված չէին առցանց շախմատի համար։ Նրանք խաղացողներից պահանջում են ճշտապահություն, նպատակաուղղվածություն և համբերություն:
 Կարծում ենք, որ այս պայմանները ավելի հաճախ կատարվում են թիմի ներսում, քան գլոբալ մրցաշարերում։</string>
   <string name="numberOfByesQ">Քանի՞ bye կարող է ստանալ խաղացողը  (կարող է լինել խաղափուլից ազատ)։</string>
+  <string name="numberOfByesA">Խաղացողը չխաղացած պարտիայի համար ստանում է մեկ միավոր, եթե այդ խաղափուլում չի հաջողվում գտնել մրցակցի։
+Նաև` կես միավոր է շնորհվում մրցաշարին ուշ միանալու համար։</string>
+  <string name="earlyDrawsQ">Ի՞նչ է տեղի ունենում վաղ ոչ-ոքիների դեպքում։</string>
+  <string name="whatIfOneDoesntPlayQ">Ի՞նչ կլինի, եթե խաղացողը չի խաղում պարտիան։</string>
+  <string name="whatIfOneDoesntPlayA">Նրա ժամացույցը կմիանա, նա կսպառի ժամանակը և կպարտվի պարտիայում։
+Այդ ժամանակ համակարգը խաղացողին կհանի մրցաշարից` հետագա պարտություններից խուսափելու համար։
+Խաղացողը ցանկացած պահի կարող է վերադառնալ մրցաշար։</string>
+  <string name="lateJoinQ">Կարո՞ղ են խաղացողները ուշ միանալ մրցաշարին։</string>
+  <string name="lateJoinA">Այո, եթե չի խաղացվել խաղափուլերի կեսը։ Օրինակ, 11-ռաունդանոց շվեյցարական մրցաշարում խաղացողը կարող է սկսել խաղալ, եթե դեռ չի սկսվել 6-րդ խաղափուլը։ 12-ռաունդանոցում` համապատասխանաբար 7-րդը։ Ուշ միացումը տալիս է միայն մեկ բացթողում, նույնիսկ եթե բաց է թողնված մի քանի խաղափուլ։</string>
+  <string name="willSwissReplaceArenasQ">Շվեյցարական մրցաշարերը կարո՞ղ են փոխարինել «Արենա» մրցաշարերին։</string>
+  <string name="willSwissReplaceArenasA">Ոչ։ Նրանք լրացնում են իրար։</string>
+  <string name="roundRobinA">Մենք կցանկանայինք ավելացնել այն, բայց, ցավոք, շրջանաձև մրցաշարը հարմար չէ առցանց խաղերի համար:Պատճառն այն է, որ արդարացի լուծում չկա այն իրավիճակների համար, երբ խաղացողը ժամանակից շուտ լքում է մրցաշարը: Մենք չենք կարող հույս ունենալ, որ բոլոր խաղացողները կխաղան առցանց մրցաշարում: Դա պարզապես տեղի չի ունենա, և արդյունքում շրջանաձև մրցակարգով մրցաշարերի մեծ մասը կլինի ոչ կոռեկտ և անարդար, ինչը զրոյացնում է դրանց գոյության բուն իմաստը:
+Շրջանաձև մրցաշարի ամենահարմար փոխարինումը կարող է լինել շվեյցարական մրցակարգով անցկացվող մրցաշարը, որն ունի մեծ թվով տուրեր: Այս դեպքում բոլոր հնարավոր զույգերը կարող են խաղալ մրցաշարի ընթացքում:</string>
+  <string name="otherSystemsQ">Ի՞նչ վերաբերում է մյուս մրցաշարային համակարգերին:</string>
+  <string name="otherSystemsA">Այժմ մենք չենք նախատեսում ավելացնել այլ մրցաշարային համակարգեր։</string>
+  <string name="teamOnly">Շվեյցարական մրցաշարեր կարող են ստեղծվել միայն ակումբների ղեկավարների կողմից, և նրանք կարող են խաղալ միայն ակումբի անդամները:           
+%1$s՝ սկսելու խաղալ Շվեյցարիայի մրցաշարում.</string>
   <string name="joinOrCreateTeam">Միացեք կամ ստեղծեք թիմ</string>
   <string name="nowPlaying">Այժմ խաղում են</string>
   <string name="startingSoon">Շուտով կսկսվեն</string>
   <string name="comparison">Համեմատություն</string>
   <string name="tournDuration">Մրցաշարի տևողությունը</string>
+  <string name="predefinedDuration">Սահմանված տևողությունը ըստ ժամանակի</string>
+  <string name="durationUnknown">Տրված խաղափուլերի առավելագույն քանակը, տևողությունը անհայտ է</string>
   <string name="numberOfGames">Պարտիաների քանակ</string>
   <string name="numberOfGamesAsManyAsPossible">Այնքան, որքան հնարավոր է խաղալ հատկացված ժամանակում</string>
   <string name="numberOfGamesPreDefined">Որոշվում է նախապես, բոլոր խաղացողների համար միանման</string>
@@ -67,8 +88,8 @@
   <string name="pairingSystemArena">Համեմատելի վարկանիշով ցանկացած հասանելի մրցակից</string>
   <string name="pairingSystemSwiss">Լավագույն զույգն ըստ վաստակած միավորների և թայ-բրեյքների</string>
   <string name="pairingWaitTime">Միանալու սպասման ժամանակ</string>
-  <string name="pairingWaitTimeFast">Արագ. պետք չէ սպասել բոլոր խաղացողներին</string>
-  <string name="pairingWaitTimeSlow">Դանդաղ. սպասել բոլոր խաղացողներին</string>
+  <string name="pairingWaitTimeArena">Արագ. պետք չէ սպասել բոլոր խաղացողներին</string>
+  <string name="pairingWaitTimeSwiss">Դանդաղ. սպասել բոլոր խաղացողներին</string>
   <string name="identicalPairing">Նման զույգեր</string>
   <string name="possibleButNotConsecutive">Հնարավոր, բայց ոչ հաջորդական</string>
   <string name="identicalForbidden">Արգելված է</string>
@@ -79,4 +100,6 @@
   <string name="streaksAndBerserk">Շարքեր և բերսերկ</string>
   <string name="similarToOTB">Նման է OTB մրցաշարերին</string>
   <string name="unlimitedAndFree">Անսահմանափակ և անվճար</string>
+  <string name="predefinedUsers">Թույլատրել միայն թվարկված խաղացողների մասնակցությունը</string>
+  <string name="playYourGames">Պարտիաներդ հասցրու ավարտին</string>
 </resources>

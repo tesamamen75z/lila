@@ -132,6 +132,7 @@ Wezir öz reňkinde durmaly.</string>
 Dowam etmek üçin bir göçüm ediň.</string>
   <string name="boardSetupComplete">Gutlaýarys! Küşt tagtasy düzülişini doly bilýäňiz.</string>
   <string name="castling">Rakirowka</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Şanyň aýratyn göçümi</string>
   <string name="castlingIntro">Şaňyzy asudalyga getiriň we ruhyňyzy hüjüm üçin öňe sürüň!</string>
   <string name="castleKingSide">Şaňyzy 2 öýjük süýşüriň
@@ -155,7 +156,6 @@ eger-de şa şah astynda bolsa.
   <string name="findAWayToCastleQueenSide">Bir ýol tapyň
 wezirtarap rakirowka üçin!</string>
   <string name="castlingComplete">Gutlaýarys! Hemişe diýen ýaly rakirowka etmelisiňiz.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Pyýadanyň aýratyn göçümi</string>
   <string name="enPassantIntro">Garşydaşyňyzyň pyýadasy 2 öýjük süýşende 1 öýjük süýşen dek iýip bilersiňiz.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Garalar edil şu wagt
@@ -229,7 +229,6 @@ bimaza ediň!</string>
   <string name="nailedIt">Tüýs özi.</string>
   <string name="rightOn">Edil şeýle!</string>
   <string name="stageXComplete">Tapgyr %s tamamlandy</string>
-  <string name="yourScore">Utugyňyz</string>
   <string name="next">Indiki</string>
   <string name="backToMenu">Menýuwa dolan</string>
   <string name="puzzleFailed">Tapmaça çözülmedi!</string>

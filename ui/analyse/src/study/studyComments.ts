@@ -1,80 +1,55 @@
-import { h, VNode } from 'snabbdom';
-import AnalyseCtrl from '../ctrl';
-import { nodeFullName, bind, richHTML } from '../util';
-import { StudyCtrl } from './interfaces';
+import { h, type VNode } from 'snabbdom';
+
+import { licon } from 'lib/licon';
+import { richHTML } from 'lib/richText';
+import { bind, confirm } from 'lib/view';
+import { profileUrl } from 'lib/view/userLink';
+
+import type AnalyseCtrl from '@/ctrl';
+import { nodeFullName } from '@/view/util';
+
+import type StudyCtrl from './studyCtrl';
 
 export type AuthorObj = {
   id: string;
-  name: string;
+  name: string; // contains the title
 };
 export type Author = AuthorObj | string;
 
 function authorDom(author: Author): string | VNode {
   if (!author) return 'Unknown';
   if (typeof author === 'string') return author;
-  return h(
-    'span.user-link.ulpt',
-    {
-      attrs: { 'data-href': '/@/' + author.id },
-    },
-    author.name
-  );
+  return h('span.user-link.ulpt', { attrs: { 'data-href': profileUrl(author.id) } }, author.name);
 }
 
-export function isAuthorObj(author: Author): author is AuthorObj {
-  return typeof author === 'object';
-}
+export const isAuthorObj = (author: Author): author is AuthorObj => typeof author === 'object';
 
-export function authorText(author?: Author): string {
-  if (!author) return 'Unknown';
-  if (typeof author === 'string') return author;
-  return author.name;
-}
+export const authorText = (author?: Author): string =>
+  !author ? 'Unknown' : typeof author === 'string' ? author : author.name;
 
 export function currentComments(ctrl: AnalyseCtrl, includingMine: boolean): VNode | undefined {
-  if (!ctrl.node.comments) return;
-  const node = ctrl.node,
-    study: StudyCtrl = ctrl.study!,
-    chapter = study.currentChapter(),
-    comments = node.comments!;
-  if (!comments.length) return;
+  if (!ctrl.node.comments) return undefined;
+  const node = ctrl.node;
+  const study: StudyCtrl = ctrl.study!;
+  const chapter = study.currentChapter();
+  const comments = node.comments!;
+  if (!comments.length) return undefined;
   return h(
     'div',
-    comments.map((comment: Tree.Comment) => {
+    comments.map(comment => {
       const by: Author = comment.by;
       const isMine = isAuthorObj(by) && by.id === ctrl.opts.userId;
-      if (!includingMine && isMine) return;
-      const canDelete = isMine || study.members.isOwner();
+      if (!includingMine && isMine) return undefined;
       return h('div.study__comment.' + comment.id, [
-        canDelete && study.vm.mode.write
+        study.members.canContribute() && study.vm.mode.write
           ? h('a.edit', {
-              attrs: {
-                'data-icon': '',
-                title: 'Delete',
-              },
-              hook: bind(
-                'click',
-                _ => {
-                  if (confirm('Delete ' + authorText(by) + "'s comment?"))
-                    study.commentForm.delete(chapter.id, ctrl.path, comment.id);
-                },
-                ctrl.redraw
-              ),
-            })
-          : null,
-        isMine && study.vm.mode.write
-          ? h('a.edit', {
-              attrs: {
-                'data-icon': '',
-                title: 'Edit',
-              },
-              hook: bind(
-                'click',
-                _ => {
-                  study.commentForm.start(chapter.id, ctrl.path, node);
-                },
-                ctrl.redraw
-              ),
+              attrs: { 'data-icon': licon.Trash, title: 'Delete' },
+              hook: bind('click', async () => {
+                if (await confirm('Delete ' + authorText(by) + "'s comment?")) {
+                  study.commentForm.delete(chapter.id, ctrl.path, comment.id);
+                  ctrl.redraw();
+                }
+              }),
             })
           : null,
         authorDom(by),
@@ -82,6 +57,6 @@ export function currentComments(ctrl: AnalyseCtrl, includingMine: boolean): VNod
         ': ',
         h('div.text', { hook: richHTML(comment.text) }),
       ]);
-    })
+    }),
   );
 }

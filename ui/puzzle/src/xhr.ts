@@ -1,43 +1,46 @@
-import * as xhr from 'common/xhr';
-import PuzzleStreak from './streak';
-import throttle from 'common/throttle';
-import { defined } from 'common';
-import { PuzzleReplay, PuzzleResult, ThemeKey } from './interfaces';
+import { defined } from 'lib';
+import { json as xhrJson, form as xhrForm } from 'lib/xhr';
 
-export function complete(
+import type { PuzzleReplay, PuzzleResult, ThemeKey } from './interfaces';
+import type PuzzleStreak from './streak';
+
+export const complete = (
   puzzleId: string,
   theme: ThemeKey,
   win: boolean,
+  rated: boolean,
   replay?: PuzzleReplay,
-  streak?: PuzzleStreak
-): Promise<PuzzleResult | undefined> {
-  return xhr.json(`/training/complete/${theme}/${puzzleId}`, {
+  streak?: PuzzleStreak,
+  color?: Color,
+): Promise<PuzzleResult> =>
+  xhrJson(`/training/complete/${theme}/${puzzleId}`, {
     method: 'POST',
-    body: xhr.form({
+    body: xhrForm({
       win,
       ...(replay ? { replayDays: replay.days } : {}),
       ...(streak ? { streakId: streak.nextId(), streakScore: streak.data.index } : {}),
+      rated,
+      color,
     }),
   });
-}
 
-export function vote(puzzleId: string, vote: boolean): Promise<void> {
-  return xhr.json(`/training/${puzzleId}/vote`, {
+export const vote = (puzzleId: string, vote: boolean): Promise<void> =>
+  xhrJson(`/training/${puzzleId}/vote`, {
     method: 'POST',
-    body: xhr.form({ vote }),
+    body: xhrForm({ vote }),
   });
-}
 
-export function voteTheme(puzzleId: string, theme: ThemeKey, vote: boolean | undefined): Promise<void> {
-  return xhr.json(`/training/${puzzleId}/vote/${theme}`, {
+export const voteTheme = (puzzleId: string, theme: ThemeKey, vote: boolean | undefined): Promise<void> =>
+  xhrJson(`/training/${puzzleId}/vote/${theme}`, {
     method: 'POST',
-    body: defined(vote) ? xhr.form({ vote }) : undefined,
+    body: defined(vote) ? xhrForm({ vote }) : undefined,
   });
-}
 
-export const setZen = throttle(1000, zen =>
-  xhr.text('/pref/zen', {
-    method: 'post',
-    body: xhr.form({ zen: zen ? 1 : 0 }),
-  })
-);
+// should be kept in sync with `PuzzleForm.report` in scala
+const maxReportLength = 2000;
+
+export const report = (puzzleId: string, reason: string): Promise<void> =>
+  xhrJson(`/training/${puzzleId}/report`, {
+    method: 'POST',
+    body: xhrForm({ reason: reason.slice(0, maxReportLength) }),
+  });

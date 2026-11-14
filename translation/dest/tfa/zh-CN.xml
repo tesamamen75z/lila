@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="twoFactorAuth">双重认证</string>
-  <string name="twoFactorHelp">双重认证能增加您的账号的安全性。</string>
-  <string name="twoFactorApp">下载一个双重认证 app，例如 %1$s 端的 andOPT 或者 %2$s 端的 Google Authenticator。</string>
-  <string name="scanTheCode">用 app 扫描 QR 码。</string>
-  <string name="enterPassword">请输入您的账号密码和由 app 生成的验证码而完成设置。您将在每次登录时都需要新的验证码。</string>
-  <string name="ifYouCannotScanEnterX">如果您不能扫描二维码，请把密码 %s 输入到您的 APP 中。</string>
-  <string name="authenticationCode">授权码</string>
-  <string name="ifYouLoseAccess">注意：如果您无法访问您的双重验证码，您可以通过电邮请求重置密码。</string>
+  <string name="twoFactorHelp">双重认证为您的账户增加了一层额外的安全保障。</string>
+  <string name="twoFactorAppRecommend">请下载一个双重认证应用程序。我们推荐以下应用：</string>
+  <string name="scanTheCode">使用该应用扫描此二维码。</string>
+  <string name="enterPassword">输入您的密码以及该应用生成的身份验证码以完成设置。此后每次登录时，您都需要一个身份验证码。</string>
+  <string name="ifYouCannotScanEnterX">如果您无法扫描二维码，请将此密钥 %s 输入到您的应用中。</string>
+  <string name="authenticationCode">身份验证码</string>
+  <string name="ifYouLoseAccessTwoFactor">注意：如果您丢失了双重认证码，可以通过电子邮件进行 %s。</string>
   <string name="enableTwoFactor">启用双重认证</string>
   <string name="disableTwoFactor">禁用双重认证</string>
-  <string name="twoFactorEnabled">双重验证已开启</string>
-  <string name="twoFactorDisable">如果想要禁用双重认证，您需要您的账号密码和 app 生成的验证码。
-如果您无法访问您的验证码，您可以通过电邮请求重置密码。</string>
-  <string name="openTwoFactorApp">打开您设备上的双重认证应用以查看您的双重认证码并识别您的身份</string>
+  <string name="twoFactorEnabled">双重认证已启用</string>
+  <string name="twoFactorToDisable">您需要提供密码以及来自认证器应用的身份验证码，才能禁用双重认证。</string>
+  <string name="openTwoFactorApp">请在您的设备上打开双重认证应用，查看您的身份验证码以验证身份。</string>
+  <string name="setupReminder">为了保护您的账户安全，请访问 https://lichess.org/account/twofactor 启用双重认证。
+您收到此信息是因为您的账户拥有特殊职责，例如拥有头衔的棋手、团队领袖、教练、教师或主播。</string>
 </resources>

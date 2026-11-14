@@ -5,7 +5,7 @@
     flex: 1 1 7em;
     margin-top: $block-gap;
 
-    @include breakpoint($mq-col2) {
+    @include mq-at-least-col2 {
       min-height: inherit;
     }
   }
@@ -13,9 +13,8 @@
   .tour__prize {
     @extend %box-radius;
 
-    padding: 1em;
-    background: mix($c-error, $c-bg-box, 10%);
-    border: 1px solid $c-error;
+    padding: 1em 2vmin;
+    background: $c-bg-zebra;
     margin-bottom: 1em;
     font-size: 0.9em;
   }
@@ -25,7 +24,7 @@
   @extend %box-neat-force;
 
   background: $c-bg-box;
-  padding: #{$block-gap * 0.6} $block-gap;
+  padding: 1.5rem $block-gap;
 
   section {
     margin-bottom: $block-gap;
@@ -36,7 +35,7 @@
 
     &::before {
       font-size: 3rem;
-      margin-right: 4%;
+      margin-inline-end: 4%;
     }
 
     p {
@@ -91,7 +90,7 @@
   overflow: visible;
 
   /* fixes invisible spectators on firefox, col2 */
-  @include breakpoint($mq-col1) {
+  @include mq-is-col1 {
     margin: 0 $block-gap;
   }
 }

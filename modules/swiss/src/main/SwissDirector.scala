@@ -1,35 +1,35 @@
 package lila.swiss
 
-import chess.{ Black, Color, White }
-import org.joda.time.DateTime
-import scala.util.chaining._
+import chess.ByColor
+import monocle.syntax.all.*
 
-import lila.db.dsl._
-import lila.game.Game
-import lila.user.User
+import lila.db.dsl.{ *, given }
+import lila.mon.extensions.*
 
 final private class SwissDirector(
-    colls: SwissColls,
+    mongo: SwissMongo,
     pairingSystem: PairingSystem,
-    gameRepo: lila.game.GameRepo,
-    onStart: Game.ID => Unit
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    idGenerator: lila.game.IdGenerator
-) {
-  import BsonHandlers._
+    manualPairing: SwissManualPairing,
+    gameRepo: lila.core.game.GameRepo,
+    newPlayer: lila.core.game.NewPlayer,
+    onStart: lila.core.game.OnStart
+)(using
+    ec: Executor,
+    idGenerator: lila.core.game.IdGenerator
+):
+  import BsonHandlers.given
 
   // sequenced by SwissApi
   private[swiss] def startRound(from: Swiss): Fu[Option[Swiss]] =
-    pairingSystem(from)
+    (manualPairing(from) | pairingSystem(from))
       .flatMap { pendings =>
         val pendingPairings = pendings.collect { case Right(p) => p }
-        if (pendingPairings.isEmpty) fuccess(none) // terminate
-        else {
+        if pendingPairings.isEmpty then fuccess(none) // terminate
+        else
           val swiss = from.startRound
-          for {
+          for
             players <- SwissPlayer.fields { f =>
-              colls.player.list[SwissPlayer]($doc(f.swissId -> swiss.id))
+              mongo.player.list[SwissPlayer](bdoc(f.swissId -> swiss.id))
             }
             ids <- idGenerator.games(pendingPairings.size)
             pairings = pendingPairings.zip(ids).map { case (SwissPairing.Pending(w, b), id) =>
@@ -43,70 +43,61 @@ final private class SwissDirector(
               )
             }
             _ <-
-              colls.swiss.update
+              mongo.swiss.update
                 .one(
-                  $id(swiss.id),
-                  $unset("nextRoundAt") ++ $set(
-                    "round"       -> swiss.round,
-                    "nbOngoing"   -> pairings.size,
-                    "lastRoundAt" -> DateTime.now
+                  bid(swiss.id),
+                  unset("nextRoundAt", "settings.mp") ++ set(
+                    "round" -> swiss.round,
+                    "nbOngoing" -> pairings.size,
+                    "lastRoundAt" -> nowInstant
                   )
                 )
                 .void
-            date = DateTime.now
             byes = pendings.collect { case Left(bye) => bye.player }
             _ <- SwissPlayer.fields { f =>
-              colls.player.update
-                .one($doc(f.userId $in byes, f.swissId -> swiss.id), $addToSet(f.byes -> swiss.round))
+              mongo.player.update
+                .one(
+                  bdoc(f.userId.in(byes), f.swissId -> swiss.id),
+                  addToSet(f.byes -> swiss.round),
+                  multi = true
+                )
                 .void
             }
-            _ <- colls.pairing.insert.many(pairings).void
-            games = pairings.map(makeGame(swiss, SwissPlayer.toMap(players)))
-            _ <- lila.common.Future.applySequentially(games) { game =>
-              gameRepo.insertDenormalized(game) >>- onStart(game.id)
-            }
-          } yield swiss.some
-        }
+            _ <- mongo.pairing.insert.many(pairings).void
+            games = pairings.map(makeGame(swiss, players.mapBy(_.userId)))
+            _ <- games.sequentiallyVoid: game =>
+              for _ <- gameRepo.insertDenormalized(game) yield onStart.exec(game.id)
+          yield swiss.some
       }
       .recover { case PairingSystem.BBPairingException(msg, input) =>
-        if (msg contains "The number of rounds is larger than the reported number of rounds.") none
-        else {
+        if msg.contains("The number of rounds is larger than the reported number of rounds.") then none
+        else
           logger.warn(s"BBPairing ${from.id} $msg")
           logger.info(s"BBPairing ${from.id} $input")
           from.some
-        }
       }
-      .monSuccess(_.swiss.startRound)
+      .monSuccess(lila.mon.swiss.startRound)
 
-  private def makeGame(swiss: Swiss, players: Map[User.ID, SwissPlayer])(
-      pairing: SwissPairing
-  ): Game =
-    Game
-      .make(
-        chess = chess.Game(
-          variantOption = Some {
-            if (swiss.settings.position.isEmpty) swiss.variant
-            else chess.variant.FromPosition
-          },
-          fen = swiss.settings.position
-        ) pipe { g =>
-          val turns = g.player.fold(0, 1)
-          g.copy(
-            clock = swiss.clock.toClock.some,
-            turns = turns,
-            startedAtTurn = turns
+  private def makeGame(swiss: Swiss, players: Map[UserId, SwissPlayer])(pairing: SwissPairing): Game =
+    lila.core.game
+      .newGame(
+        chess = chess
+          .Game(
+            variant =
+              if swiss.settings.position.isEmpty then swiss.variant
+              else chess.variant.FromPosition,
+            fen = swiss.settings.position
           )
-        },
-        whitePlayer = makePlayer(White, players get pairing.white err s"Missing pairing white $pairing"),
-        blackPlayer = makePlayer(Black, players get pairing.black err s"Missing pairing black $pairing"),
-        mode = chess.Mode(swiss.settings.rated),
-        source = lila.game.Source.Swiss,
+          .copy(clock = swiss.clock.toClock.some),
+        players = ByColor: c =>
+          val player = players.get(pairing(c)).err(s"Missing pairing $c $pairing")
+          newPlayer(c, player.userId, player.rating, player.provisional)
+        ,
+        rated = swiss.settings.rated,
+        source = lila.core.game.Source.Swiss,
         pgnImport = None
       )
       .withId(pairing.gameId)
-      .withSwissId(swiss.id.value)
+      .focus(_.metadata.swissId)
+      .replace(swiss.id.some)
       .start
-
-  private def makePlayer(color: Color, player: SwissPlayer) =
-    lila.game.Player.make(color, player.userId, player.rating, player.provisional)
-}

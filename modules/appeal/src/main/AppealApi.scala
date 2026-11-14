@@ -1,102 +1,152 @@
 package lila.appeal
 
-import org.joda.time.DateTime
-
-import lila.db.dsl._
-import lila.user.{ Holder, NoteApi, User, UserRepo }
+import lila.appeal.Appeal.Id as AppealId
+import lila.core.userId.ModId
+import lila.db.dsl.{ *, given }
 
 final class AppealApi(
     coll: Coll,
-    userRepo: UserRepo,
-    noteApi: NoteApi,
     snoozer: lila.memo.Snoozer[Appeal.SnoozeKey]
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  import BsonHandlers._
+  import BsonHandlers.given
 
-  def mine(me: User): Fu[Option[Appeal]] = coll.byId[Appeal](me.id)
+  def byTopic[U: UserIdOf](u: U): Fu[UserAppeals] = UserAppeals.from:
+    findAll(u).map(_.groupBy(_.topic).view.mapValues(_.head).toMap)
 
-  def get(user: User) = coll.byId[Appeal](user.id)
+  def latestBy[U: UserIdOf](u: U): Fu[Option[Appeal]] =
+    findAll(u).map(_.headOption)
 
-  def byUserIds(userIds: List[User.ID]) = coll.byIds[Appeal](userIds)
+  def find[U: UserIdOf](u: U, topic: AppealTopic): Fu[Option[Appeal]] =
+    coll.find(bdoc("user" -> u.id, "topic" -> topic)).one[Appeal]
 
-  def byId(appealId: User.ID) = coll.byId[Appeal](appealId)
+  def findAll[U: UserIdOf](u: U): Fu[List[Appeal]] =
+    coll.find(bdoc("user" -> u.id)).sort(sort.desc("updatedAt")).cursor[Appeal]().listAll()
 
-  def exists(user: User) = coll.exists($id(user.id))
+  def byUserIds(userIds: List[UserId]): Fu[List[Appeal]] =
+    coll.find(bdoc("user".in(userIds))).cursor[Appeal]().listAll()
 
-  def post(text: String, me: User) =
-    mine(me) flatMap {
+  def exists(user: User) = coll.exists(bid(user.id))
+
+  def post(topic: AppealTopic, data: AppealForm.Data, appeals: UserAppeals)(using me: Me) =
+    appeals.get(topic) match
       case None =>
-        val appeal =
-          Appeal(
-            _id = me.id,
-            msgs = Vector(
-              AppealMsg(
-                by = me.id,
-                text = text,
-                at = DateTime.now
-              )
-            ),
-            status = Appeal.Status.Unread,
-            createdAt = DateTime.now,
-            updatedAt = DateTime.now,
-            firstUnrepliedAt = DateTime.now
-          )
-        coll.insert.one(appeal) inject appeal
+        val appeal = Appeal.make(topic, data.text, data.accounts)
+        coll.insert.one(appeal).inject(appeal)
       case Some(prev) =>
-        val appeal = prev.post(text, me)
-        coll.update.one($id(appeal.id), appeal) inject appeal
-    }
+        val appeal = prev.post(data.text, me, appeals.muted)
+        coll.update.one(bid(appeal.id), appeal).inject(appeal)
 
-  def reply(text: String, prev: Appeal, mod: Holder, preset: Option[String]) = {
-    val appeal = prev.post(text, mod.user)
-    coll.update.one($id(appeal.id), appeal) >> {
-      preset ?? { note =>
-        userRepo.byId(appeal.id) flatMap {
-          _ ?? { noteApi.write(_, s"Appeal reply: $note", mod.user, modOnly = true, dox = false) }
-        }
-      }
-    } inject appeal
-  }
+  def withdraw(appeal: Appeal): Funit = update(appeal.withdraw).void
 
-  def countUnread = coll.countSel($doc("status" -> Appeal.Status.Unread.key))
+  def modReply(text: String, prev: Appeal)(using me: MyId) =
+    val appeal = prev.post(text, me, muted = false)
+    for _ <- coll.update.one(bid(appeal.id), appeal) yield appeal
 
-  def queueOf(mod: User) = queue(snoozer snoozedKeysOf mod.id map (_.appealId))
+  def countUnread = coll.secondary.countSel(bdoc("status" -> Appeal.Status.unread))
 
-  private def queue(exceptIds: Iterable[User.ID]): Fu[List[Appeal]] =
+  def countUnreadByTopic: Fu[Map[AppealTopic, Int]] =
     coll
-      .find($doc("status" -> Appeal.Status.Unread.key) ++ {
-        exceptIds.nonEmpty ?? $doc("_id" $nin exceptIds)
-      })
-      .sort($doc("firstUnrepliedAt" -> 1))
+      .aggregateList(50, _.sec): framework =>
+        import framework.*
+        Match(bdoc("status" -> Appeal.Status.unread)) ->
+          List(PipelineOperator(bdoc("$sortByCount" -> "$topic")))
+      .map: docs =>
+        for
+          doc <- docs
+          topic <- doc.getAsOpt[AppealTopic]("_id")
+          count <- doc.int("count")
+        yield topic -> count
+      .map(_.toMap)
+
+  def logsOf(since: Instant, mod: ModId): Fu[List[(UserId, AppealMsg)]] =
+    coll
+      .aggregateList(maxDocs = 50, _.sec): framework =>
+        import framework.*
+        Match(bdoc("msgs.by" -> mod)) -> List(
+          Project(bdoc("msgs" -> 1)),
+          Unwind("msgs"),
+          Match(bdoc("msgs.by" -> mod, "msgs.at".gt(since))),
+          Sort(Descending("msgs.at")),
+          Limit(50)
+        )
+      .map: docs =>
+        for
+          doc <- docs
+          userId <- doc.getAsOpt[UserId]("user")
+          msg <- doc.getAsOpt[AppealMsg]("msgs")
+        yield userId -> msg
+
+  def myQueue(topic: Option[AppealTopic], nb: Int = 50)(using me: Me): Fu[List[Appeal]] =
+    val snoozedIds = snoozer.snoozedKeysOf(me.userId).map(_.appealId)
+    val selector =
+      bdoc("status" -> Appeal.Status.unread) ++
+        snoozedIds.nonEmpty.so(bdoc("_id".nin(snoozedIds))) ++
+        topic.so(t => bdoc("topic" -> t))
+    coll
+      .find(selector)
+      .sort(sort.asc("firstUnrepliedAt"))
       .cursor[Appeal]()
-      .list(30) flatMap { unreads =>
-      coll
-        .find($doc("status" $ne Appeal.Status.Unread.key))
-        .sort($doc("firstUnrepliedAt" -> -1))
-        .cursor[Appeal]()
-        .list(40 - unreads.size) map {
-        unreads ::: _
-      }
-    }
+      .list(nb * 2)
+      .map(_.sortBy(a => (!a.participated(me.userId), a.firstUnrepliedAt)))
+      .map(_.take(nb))
 
-  def setRead(appeal: Appeal) =
-    coll.update.one($id(appeal.id), appeal.read).void
+  def setReadIfUnread(user: UserId, topic: AppealTopic) =
+    coll
+      .updateField(
+        bdoc("user" -> user, "topic" -> topic, "status" -> Appeal.Status.unread),
+        "status",
+        Appeal.Status.read
+      )
+      .void
 
-  def setUnread(appeal: Appeal) =
-    coll.update.one($id(appeal.id), appeal.unread).void
+  private def update(appeal: Appeal): Fu[Appeal] =
+    coll.update.one(bid(appeal.id), appeal).inject(appeal)
 
-  def toggleMute(appeal: Appeal) =
-    coll.update.one($id(appeal.id), appeal.toggleMute).void
+  def toggleClosed(appeal: Appeal, v: Boolean, sleepMonths: Int) =
+    for
+      a2 <- update(appeal.toggleClosed(v))
+      _ <- (v && sleepMonths > 0).so:
+        update(a2.sleep(sleepMonths.some)).void
+    yield ()
 
-  def setReadById(userId: User.ID) =
-    byId(userId) flatMap { _ ?? setRead }
+  def toggleRead(appeal: Appeal, v: Boolean) = update(appeal.toggleRead(v)).void
 
-  def setUnreadById(userId: User.ID) =
-    byId(userId) flatMap { _ ?? setUnread }
+  def toggleClosed(user: UserId, topic: AppealTopic, v: Boolean, sleepMonths: Int = 0): Funit =
+    find(user, topic).flatMapz(toggleClosed(_, v, sleepMonths))
+
+  def toggleClosedAllOf(user: UserId, v: Boolean): Funit =
+    findAll(user).flatMap(_.sequentiallyVoid(toggleClosed(_, v, 0)))
+
+  // just one muted appeal makes all user appeals muted
+  def toggleMute(user: UserId, v: Boolean): Funit =
+    if v then
+      coll.update
+        .one(
+          bdoc("user" -> user),
+          set("muted" -> true, "status" -> Appeal.Status.read),
+          multi = true
+        )
+        .void
+    else coll.update.one(bdoc("user" -> user), unset("muted"), multi = true).void
+
+  def setReadById(userId: UserId) = for
+    appeals <- findAll(userId)
+    _ <- appeals.sequentiallyVoid: appeal =>
+      setReadIfUnread(userId, appeal.topic)
+  yield ()
+
+  def setUnreadBy(userId: UserId, topic: AppealTopic): Funit =
+    find(userId, topic).flatMapz: a =>
+      update(a.unread).void
 
   def onAccountClose(user: User) = setReadById(user.id)
 
-  def snooze(mod: User, appealId: User.ID, duration: String): Unit =
-    snoozer.set(Appeal.SnoozeKey(mod.id, appealId), duration)
-}
+  def snooze(appealId: AppealId, duration: String)(using mod: Me): Unit =
+    snoozer.set(Appeal.SnoozeKey(mod.userId, appealId), duration)
+
+  private[appeal] def reopenPausedAppeals(): Funit = for
+    appeals <- coll.list[Appeal]("closedUntil".lt(nowInstant), 20)
+    _ <- appeals.sequentiallyVoid: appeal =>
+      update(appeal.toggleClosed(false))
+  yield ()

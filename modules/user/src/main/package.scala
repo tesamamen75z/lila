@@ -1,8 +1,7 @@
-package lila
+package lila.user
 
-package object user extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.rating.UserWithPerfs
 
-  private[user] def logger = lila.log("user")
-
-  type Trophies = List[Trophy]
-}
+case class LightCount(user: lila.core.LightUser, count: Int)

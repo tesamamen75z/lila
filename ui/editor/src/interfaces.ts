@@ -1,19 +1,61 @@
-import { Role } from 'chessground/types';
-
 export type CastlingToggle = 'K' | 'Q' | 'k' | 'q';
+export type CastlingToggles<T> = Record<CastlingToggle, T>;
+export type Redraw = () => void;
+export type Selected = 'pointer' | 'trash' | [Color, Role];
 
 export const CASTLING_TOGGLES: CastlingToggle[] = ['K', 'Q', 'k', 'q'];
 
-export type CastlingToggles<T> = {
-  [side in CastlingToggle]: T;
-};
-
-export interface EditorState {
-  fen: string;
-  legalFen: string | undefined;
-  playable: boolean;
+export interface VisionPlacement {
+  boardFen: FEN;
+  orientation: Color;
 }
 
-export type Redraw = () => void;
+export interface EditorState {
+  fen: FEN;
+  legalFen?: FEN;
+  playable: boolean;
+  enPassantOptions: string[];
+}
 
-export type Selected = 'pointer' | 'trash' | [Color, Role];
+export interface LichessEditor {
+  getFen(): FEN;
+  setFen(fen: FEN): void;
+  setOrientation(o: Color): void;
+  setVariant(variant: VariantKey): void;
+  close(): void;
+}
+
+export interface Config {
+  el: HTMLElement;
+  baseUrl: string;
+  fen?: FEN;
+  options?: Options;
+  is3d: boolean;
+  animation: {
+    duration: number;
+  };
+  embed: boolean;
+  positions?: OpeningPosition[];
+  endgamePositions?: EndgamePosition[];
+}
+
+export interface Options {
+  orientation?: Color;
+  onChange?: (fen: string) => void;
+  inlineCastling?: boolean;
+  coordinates?: boolean;
+  bindHotkeys?: boolean; // defaults to true
+}
+
+export interface OpeningPosition {
+  eco?: string;
+  name: string;
+  fen: FEN;
+  epd?: string;
+}
+
+export interface EndgamePosition {
+  name: string;
+  fen: FEN;
+  epd?: string;
+}

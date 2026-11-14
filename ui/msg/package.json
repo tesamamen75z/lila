@@ -1,19 +1,11 @@
 {
   "name": "msg",
-  "version": "2.0.0",
   "private": true,
-  "description": "lichess.org msg",
-  "author": "Thibault Duplessis",
-  "license": "AGPL-3.0-or-later",
-  "devDependencies": {
-    "@build/rollupProject": "2.0.0",
-    "@types/lichess": "2.0.0"
-  },
+  "type": "module",
   "dependencies": {
-    "snabbdom": "^3.0.1"
+    "lib": "workspace:*"
   },
-  "scripts": {
-    "dev": "rollup --config",
-    "prod": "rollup --config --config-prod"
+  "build": {
+    "bundle": "src/msg.ts"
   }
 }

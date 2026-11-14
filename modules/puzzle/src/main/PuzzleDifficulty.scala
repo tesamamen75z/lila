@@ -1,23 +1,21 @@
 package lila.puzzle
 
-import lila.i18n.{ I18nKey, I18nKeys => trans }
+import lila.core.i18n.I18nKey
 
-sealed abstract class PuzzleDifficulty(val ratingDelta: Int, val name: I18nKey) {
-
+enum PuzzleDifficulty(val ratingDelta: Int, val name: I18nKey):
   lazy val key = toString.toLowerCase
-}
+  case Easiest extends PuzzleDifficulty(-600, I18nKey.puzzle.easiest)
+  case Easier extends PuzzleDifficulty(-300, I18nKey.puzzle.easier)
+  case Normal extends PuzzleDifficulty(0, I18nKey.puzzle.normal)
+  case Harder extends PuzzleDifficulty(300, I18nKey.puzzle.harder)
+  case Hardest extends PuzzleDifficulty(600, I18nKey.puzzle.hardest)
 
-object PuzzleDifficulty {
-  case object Easiest extends PuzzleDifficulty(-600, trans.puzzle.easiest)
-  case object Easier  extends PuzzleDifficulty(-300, trans.puzzle.easier)
-  case object Normal  extends PuzzleDifficulty(0, trans.puzzle.normal)
-  case object Harder  extends PuzzleDifficulty(300, trans.puzzle.harder)
-  case object Hardest extends PuzzleDifficulty(600, trans.puzzle.hardest)
-
-  val all     = List(Easiest, Easier, Normal, Harder, Hardest)
-  val default = Normal
-
+object PuzzleDifficulty:
+  val all = values.toList
+  val default: PuzzleDifficulty = Normal
   def isExtreme(d: PuzzleDifficulty) = d == Easiest || d == Hardest
-
   def find(str: String) = all.find(_.key == str)
-}
+  def orDefault(str: String) = find(str) | default
+
+  def fromReqSession(req: Req): Option[PuzzleDifficulty] =
+    req.session.get(difficultyCookie).flatMap(PuzzleDifficulty.find)

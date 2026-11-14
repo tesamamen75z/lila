@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="learnChess">দাবা দক্ষতা অর্জন করুন</string>
+  <string name="learnChess">দাবা খেলা শিখুন</string>
   <string name="byPlaying">খেলার দ্বারা!</string>
   <string name="menu">মেনু</string>
   <string name="progressX">অগ্রগতি: %s</string>
-  <string name="resetMyProgress">আমার অগ্রগতি পুনারয় বসান</string>
+  <string name="resetMyProgress">আমার অগ্রগতি রিসেট হোক</string>
   <string name="youWillLoseAllYourProgress">আপনি আপনার সকল অগ্রগতি হারাবেন!</string>
   <string name="play">খেলুন!</string>
-  <string name="chessPieces">দাবার টুকরা</string>
-  <string name="theRook">দাবার নৌকা</string>
-  <string name="itMovesInStraightLines">এটা সোজা রেখা গুলোতে সরান</string>
+  <string name="chessPieces">দাবার ঘুটি</string>
+  <string name="theRook">নৌকা</string>
+  <string name="itMovesInStraightLines">এটা সোজাসুজি (সোজা রেখার মতো) যায়</string>
   <string name="rookIntro">দাবার নৌকা হয় একটি শক্তিশালী টুকরা. এটাকে নির্দেশ দিতে আপনি কি প্রস্তুত?</string>
   <string name="rookGoal">তারায় নিয়ে আসতে নৌকায় ক্লিক করুন!</string>
   <string name="grabAllTheStars">সকল তারা দখল করুন!</string>
@@ -129,6 +129,7 @@
 অবিরত রাখার জন্য যে কোন চাল তৈরি করে.</string>
   <string name="boardSetupComplete">অভিনন্দন! আপনি জানেন কিভাবে দাবার বোর্ড সেটাপ করতে হয়.</string>
   <string name="castling">কাস্টেলিং</string>
+  <string name="enPassant">এন পাসান্ত</string>
   <string name="theSpecialKingMove">বিশেষ রাজাকে সরান</string>
   <string name="castlingIntro">রাজাকে নিরাপদে নিয়ে আসুন, এবং আপনার নৌকাকে স্থাপন করুন হামলার জন্য!</string>
   <string name="castleKingSide">আপনার রাজাকে দুই বর্গ সরান 
@@ -152,7 +153,6 @@
   <string name="findAWayToCastleQueenSide">প্রসাদ রানীর পাশে
 একটি উপায় খুজুন!</string>
   <string name="castlingComplete">অভিনন্দন! আপনাকে প্রায় সবসময় খেলায় প্রসাদ করা উচিত.</string>
-  <string name="enPassant">এন পাসান্ত</string>
   <string name="theSpecialPawnMove">বিশেষ গুটি সরান</string>
   <string name="enPassantIntro">যখন প্রতিদ্বন্দ্বী গুটি দুই বর্গ সরে, আপনি এটা নিতে পারবেন যেমন এটা যদি এক বর্গে সরে.</string>
   <string name="blackJustMovedThePawnByTwoSquares">শুধু কালো গুটি দুই বর্গ সরেছে!
@@ -229,8 +229,8 @@
   <string name="nailedIt">দৃঢ়ভাবে ধরুন.</string>
   <string name="rightOn">ঠিক উপরে!</string>
   <string name="stageXComplete">সম্পূর্ণ %s ধাপ</string>
-  <string name="yourScore">আপনার স্কোর</string>
   <string name="next">পরবর্তী</string>
+  <string name="nextX">এরপরঃ %s</string>
   <string name="backToMenu">মেনুতে ফিরে যান</string>
   <string name="puzzleFailed">ধাঁধা ব্যর্থ!</string>
   <string name="retry">পুনারয় চেষ্টা করুন</string>

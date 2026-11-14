@@ -1,213 +1,224 @@
 package controllers
+package report
 
+import play.api.data.*
 import play.api.mvc.{ AnyContentAsFormUrlEncoded, Result }
-import views._
 
-import lila.api.{ BodyContext, Context }
-import lila.app._
+import lila.app.{ *, given }
 import lila.common.HTTPRequest
-import lila.report.{ Room, Report => ReportModel, Mod => AsMod, Reporter, Suspect }
-import lila.user.{ User => UserModel, Holder }
+import lila.core.id.ReportId
+import lila.report.Room.Scores
+import lila.report.ui.PendingCounts
+import lila.report.{ Mod as AsMod, Report as ReportModel, Reporter, Room, Suspect }
 
-import play.api.data._
+final class Report(env: Env, userC: => User, modC: => Mod) extends LilaController(env):
 
-final class Report(
-    env: Env,
-    userC: => User,
-    modC: => Mod
-) extends LilaController(env) {
+  import env.report.api
 
-  private def api = env.report.api
+  private given Conversion[Me, AsMod] = me => AsMod(me)
 
-  implicit private def asMod(holder: Holder) = AsMod(holder.user)
+  def list = Secure(_.SeeReport) { _ ?=> me ?=>
+    if env.streamer.liveApi.isStreaming(me.userId) && !getBool("force")
+    then Forbidden.page(views.site.message.streamingMod)
+    else renderList(env.report.modFilters.get.fold("all")(_.key))
+  }
 
-  def list =
-    Secure(_.SeeReport) { implicit ctx => me =>
-      if (env.streamer.liveStreamApi.isStreaming(me.user.id) && !getBool("force"))
-        fuccess(Forbidden(html.site.message.streamingMod))
-      else renderList(me, env.report.modFilters.get(me).fold("all")(_.key))
+  def listWithFilter(room: String) = Secure(_.SeeReport) { _ ?=> _ ?=>
+    env.report.modFilters.set(Room(room))
+    Room(room).forall(Room.isGranted).so(renderList(room))
+  }
+
+  protected[controllers] def getScores: Future[(Scores, PendingCounts)] = (
+    api.maxScores,
+    env.streamer.repo.countRequests,
+    env.appeal.api.countUnread,
+    env.title.api.countPending,
+    env.memo.picfitApi.countFlagged
+  ).mapN: (scores, streamers, appeals, titles, images) =>
+    (scores, PendingCounts(streamers, appeals, titles, images))
+
+  private def renderList(room: String)(using Context, Me) =
+    api.openAndRecentWithFilter(12, Room(room)).zip(getScores).flatMap { case (reports, (scores, pending)) =>
+      env.user.lightUserApi.preloadMany(reports.flatMap(_.report.userIds)) >>
+        Ok.page:
+          val filteredReports = reports.filter(r => lila.report.Room.isGranted(r.report.room))
+          views.report.list(filteredReports, room, scores, pending)
     }
 
-  def listWithFilter(room: String) =
-    Secure(_.SeeReport) { implicit ctx => me =>
-      env.report.modFilters.set(me, Room(room))
-      if (Room(room).fold(true)(Room.isGrantedFor(me))) renderList(me, room)
-      else notFound
-    }
+  def inquiry(reportOrAppealId: String) = Secure(_.SeeReport) { _ ?=> me ?=>
+    for
+      (prev, next) <- api.inquiries.toggle(reportOrAppealId, onlyOpen = getBool("onlyOpen"))
+      appeal = prev.flatMap(p => p.appealTopic.map(p.user -> _))
+    yield next.fold(
+      Redirect(if appeal.isDefined then routes.Appeal.modQueue else routes.Report.list)
+    )(onInquiryStart)
+  }
 
-  protected[controllers] def getScores =
-    api.maxScores zip env.streamer.api.approval.countRequests zip env.appeal.api.countUnread
-
-  private def renderList(me: Holder, room: String)(implicit ctx: Context) =
-    api.openAndRecentWithFilter(asMod(me), 12, Room(room)) zip getScores flatMap {
-      case (reports, ((scores, streamers), appeals)) =>
-        (env.user.lightUserApi preloadMany reports.flatMap(_.report.userIds)) inject
-          Ok(
-            html.report
-              .list(
-                reports.filter(r => lila.report.Reason.isGrantedFor(me)(r.report.reason)),
-                room,
-                scores,
-                streamers,
-                appeals
-              )
-          )
-    }
-
-  def inquiry(id: String) =
-    Secure(_.SeeReport) { _ => me =>
-      api.inquiries.toggle(me, id) flatMap { case (prev, next) =>
-        prev.filter(_.isAppeal).map(_.user).??(env.appeal.api.setUnreadById) inject
-          next.fold(
-            Redirect {
-              if (prev.exists(_.isAppeal)) routes.Appeal.queue
-              else routes.Report.list
-            }
-          )(onInquiryStart)
-      }
-    }
-
-  private def onInquiryStart(inquiry: ReportModel): Result =
-    if (inquiry.isRecentComm) Redirect(routes.Mod.communicationPrivate(inquiry.user))
-    else if (inquiry.isComm) Redirect(routes.Mod.communicationPublic(inquiry.user))
+  private def onInquiryStart(inquiry: ReportModel)(using Req): Result =
+    if inquiry.isRecentComm then Redirect(routes.Mod.communicationPrivate(inquiry.user))
+    else if inquiry.is(_.Comm) then Redirect(routes.Mod.communicationPublic(inquiry.user))
     else modC.redirect(inquiry.user)
 
-  protected[controllers] def onInquiryClose(
-      inquiry: Option[ReportModel],
-      me: Holder,
-      goTo: Option[Suspect],
-      force: Boolean = false
-  )(implicit ctx: BodyContext[_]): Fu[Result] =
-    goTo.ifTrue(HTTPRequest isXhr ctx.req) match {
-      case Some(suspect) => userC.renderModZoneActions(suspect.user.username)
-      case None =>
-        inquiry match {
-          case None =>
-            goTo.fold(Redirect(routes.Report.list).fuccess) { s =>
-              userC.modZoneOrRedirect(me, s.user.username)
-            }
-          case Some(prev) if prev.isSpontaneous => Redirect(modC.userUrl(prev.user, mod = true)).fuccess
-          case Some(prev) =>
-            val dataOpt = ctx.body.body match {
-              case AnyContentAsFormUrlEncoded(data) => data.some
-              case _                                => none
-            }
-            def thenGoTo =
-              dataOpt.flatMap(_ get "then").flatMap(_.headOption) flatMap {
-                case "profile" => modC.userUrl(prev.user, mod = true).some
-                case url       => url.some
-              }
-            thenGoTo match {
-              case Some(url) => Redirect(url).fuccess
-              case _ =>
-                def redirectToList = Redirect(routes.Report.listWithFilter(prev.room.key))
-                if (prev.isAppeal) Redirect(routes.Appeal.queue).fuccess
-                else if (dataOpt.flatMap(_ get "next").exists(_.headOption contains "1"))
-                  api.inquiries.toggleNext(me, prev.room) map {
-                    _.fold(redirectToList)(onInquiryStart)
-                  }
-                else if (force) userC.modZoneOrRedirect(me, prev.user)
-                else
-                  api.inquiries.toggle(me, prev.id) map { case (prev, next) =>
-                    next
-                      .fold(
-                        if (prev.exists(_.isAppeal)) Redirect(routes.Appeal.queue)
-                        else redirectToList
-                      )(onInquiryStart)
-                  }
-            }
-        }
-    }
+  protected[controllers] def onModAction(goTo: Suspect)(using ctx: BodyContext[?], me: Me): Fu[Result] =
+    if HTTPRequest.isXhr(ctx.req) then userC.renderModZoneActions(goTo.user.username)
+    else
+      api.inquiries
+        .ofModId(me.id)
+        .flatMap(_.fold(userC.modZoneOrRedirect(goTo.user.username))(onInquiryAction(_)))
 
-  def process(id: String) =
-    SecureBody(_.SeeReport) { implicit ctx => me =>
-      api byId id flatMap { inquiry =>
-        inquiry.filter(_.isAppeal).map(_.user).??(env.appeal.api.setReadById) >>
-          api.process(me, id) >>
-          onInquiryClose(inquiry, me, none, force = true)
-      }
-    }
-
-  def xfiles(id: String) =
-    Secure(_.SeeReport) { _ => _ =>
-      api.moveToXfiles(id) inject Redirect(routes.Report.list)
-    }
-
-  def snooze(id: String, dur: String) =
-    SecureBody(_.SeeReport) { implicit ctx => me =>
-      api.snooze(me, id, dur) map {
-        _.fold(Redirect(routes.Report.list))(onInquiryStart)
-      }
-    }
-
-  def currentCheatInquiry(username: String) =
-    Secure(_.Hunter) { implicit ctx => me =>
-      OptionFuResult(env.user.repo named username) { user =>
-        api.currentCheatReport(lila.report.Suspect(user)) flatMap {
-          _ ?? { report =>
-            api.inquiries.toggle(me, report.id).void
-          } inject modC.redirect(username, mod = true)
-        }
-      }
-    }
-
-  def form =
-    Auth { implicit ctx => _ =>
-      get("username") ?? env.user.repo.named flatMap { user =>
-        if (user.map(_.id) has UserModel.lichessId) Redirect(routes.Main.contact).fuccess
-        else
-          env.report.forms.createWithCaptcha map { case (form, captcha) =>
-            val filledForm: Form[lila.report.ReportSetup] = (user, get("postUrl")) match {
-              case (Some(u), Some(pid)) =>
-                form.fill(lila.report.ReportSetup(user = u.light, "", text = pid, "", ""))
-              case _ => form
-            }
-            Ok(html.report.form(filledForm, user, captcha))
-          }
-      }
-    }
-
-  def create =
-    AuthBody { implicit ctx => implicit me =>
-      implicit val req = ctx.body
-      env.report.forms.create
-        .bindFromRequest()
-        .fold(
-          err =>
-            get("username") ?? env.user.repo.named flatMap { user =>
-              env.report.forms.anyCaptcha map { captcha =>
-                BadRequest(html.report.form(err, user, captcha))
-              }
-            },
-          data =>
-            if (data.user.id == me.id) notFound
+  protected[controllers] def onInquiryAction(
+      inquiry: ReportModel,
+      processed: Boolean = false
+  )(using ctx: BodyContext[?], me: Me): Fu[Result] =
+    val dataOpt = ctx.body.body match
+      case AnyContentAsFormUrlEncoded(data) => data.some
+      case _ => none
+    def thenGoTo: Option[String] =
+      dataOpt
+        .flatMap(_.get("then"))
+        .flatMap(_.headOption)
+        .flatMap:
+          case "profile" => modC.userUrl(inquiry.user, mod = true).some
+          case url => url.some
+        .orElse(env.web.referrerRedirect.fromQueryParam.map(_.value))
+    def process() = (!processed).so(api.process(inquiry))
+    thenGoTo match
+      case Some(url) => process().inject(Redirect(url))
+      case _ =>
+        if inquiry.isAppeal then process() >> Redirect(routes.Appeal.modQueue)
+        else if dataOpt.flatMap(_.get("next")).exists(_.headOption contains "1") then
+          process() >> {
+            if inquiry.isSpontaneous
+            then Redirect(modC.userUrl(inquiry.user, mod = true))
             else
-              api.create(data, Reporter(me)) inject
-                Redirect(routes.Report.thanks(data.user.name))
-        )
-    }
+              api.inquiries
+                .toggleNext(inquiry.room)
+                .map:
+                  case Some(next) => onInquiryStart(next)
+                  case _ => Redirect(routes.Report.listWithFilter(inquiry.room.key))
+          }
+        else if processed then userC.modZoneOrRedirect(inquiry.user)
+        else onInquiryStart(inquiry)
 
-  def flag =
-    AuthBody { implicit ctx => implicit me =>
-      implicit val req = ctx.body
-      env.report.forms.flag
-        .bindFromRequest()
-        .fold(
-          _ => BadRequest.fuccess,
-          data =>
-            env.user.repo named data.username flatMap {
-              _ ?? { user =>
-                if (user == me) BadRequest.fuccess
-                else api.commFlag(Reporter(me), Suspect(user), data.resource, data.text) inject Ok
-              }
-            }
-        )
-    }
+  def process(id: ReportId) = SecureBody(_.SeeReport) { _ ?=> me ?=>
+    api
+      .byId(id)
+      .flatMap:
+        _.fold(Redirect(routes.Report.list).toFuccess): inquiry =>
+          for
+            _ <- inquiry.appealTopic.so(env.appeal.api.setReadIfUnread(inquiry.user.id, _))
+            _ <- api.process(inquiry)
+            result <- onInquiryAction(inquiry, processed = true)
+          yield result
+  }
 
-  def thanks(reported: String) =
-    Auth { implicit ctx => me =>
-      env.relation.api.fetchBlocks(me.id, reported) map { blocked =>
-        html.report.thanks(reported, blocked)
-      }
+  def xfiles(id: ReportId) = SecureBody(_.SeeReport) { _ ?=> _ ?=>
+    api
+      .byId(id)
+      .flatMap:
+        _.fold(Redirect(routes.Report.list).toFuccess): inquiry =>
+          api.moveToXfiles(id) >> onInquiryAction(inquiry, processed = true)
+  }
+
+  def snooze(id: ReportId, dur: String) = SecureBody(_.SeeReport) { _ ?=> _ ?=>
+    api
+      .snooze(id, dur)
+      .map:
+        _.fold(Redirect(routes.Report.list))(onInquiryStart)
+  }
+
+  def currentCheatInquiry(username: UserStr) = Secure(_.CheatHunter) { _ ?=> me ?=>
+    Found(env.user.repo.byId(username)): user =>
+      Found(api.currentCheatReport(lila.report.Suspect(user))): report =>
+        api.inquiries.toggle(Left(report.id)).inject(NoContent)
+  }
+
+  def form = Auth { _ ?=> _ ?=>
+    getUserStr("username").so(env.user.repo.byId).flatMap { user =>
+      if user.exists(_.is(UserId.lichess)) then Redirect(routes.Main.contact)
+      else
+        Ok.async:
+          val form = env.report.forms.create
+          val filledForm: Form[lila.report.ReportSetup] = (user, get("postUrl")) match
+            case (Some(u), Some(pid)) =>
+              form.fill(lila.report.ReportSetup(u.light, reason = ~get("reason"), text = s"$pid\n\n"))
+            case _ => form
+          views.report.ui.form(filledForm, user, get("from"))
     }
-}
+  }
+
+  private val reportRateLimit =
+    env.security.ipTrust.rateLimit(30, 3.hours, "report.create", _.proxyMultiplier(3))
+
+  def create = AuthOrScopedBody(_.Web.Mobile) { ctx ?=> me ?=>
+    bindForm(env.report.forms.create)(
+      err =>
+        negotiate(
+          html =
+            for
+              user <- getUserStr("username").so(env.user.repo.byId)
+              page <- renderPage(views.report.ui.form(err, user, none))
+            yield BadRequest(page),
+          json = jsonFormError(err)
+        ),
+      data =>
+        if me.is(data.user.id) then BadRequest("You cannot report yourself")
+        else
+          reportRateLimit(rateLimited):
+            for
+              _ <- api.create(data, Reporter(me), Nil)
+              _ <- api.isAutoBlock(data).so(env.relation.api.block(me, data.user.id))
+              res <- negotiate(
+                Redirect(routes.Report.thanks).flashing("reported" -> data.user.name.value),
+                jsonOkResult
+              )
+            yield res
+    )
+  }
+
+  private def inboxFormPage(user: lila.core.user.User, form: Form[?])(using Context, Me) = for
+    msgs <- env.msg.api.msgsToReport(user.id)
+    page <- renderPage(views.report.ui.inbox(form, user, msgs))
+  yield (msgs, page)
+
+  def inboxForm(username: UserStr) = Auth { _ ?=> _ ?=>
+    Found(env.user.repo.byId(username)): user =>
+      inboxFormPage(user, env.report.forms.create).map: (msgs, page) =>
+        if msgs.nonEmpty then Ok(page)
+        else Redirect(s"${routes.Report.form}?username=${user.username}")
+  }
+
+  def inboxCreate(username: UserStr) = AuthBody { _ ?=> me ?=>
+    Found(env.user.repo.byId(username)): user =>
+      bindForm(env.report.forms.create)(
+        err => inboxFormPage(user, err).map((_, page) => BadRequest(page)),
+        data =>
+          for
+            msgs <- env.msg.api.msgsToReport(data.user.id, data.msgs.some)
+            _ <- api.create(data, Reporter(me), msgs.map(_.text))
+            _ <- api.isAutoBlock(data).so(env.relation.api.block(me, data.user.id))
+          yield Redirect(routes.Report.thanks).flashing("reported" -> data.user.name.value)
+      )
+  }
+
+  def flag = AuthOrScopedBody(_.Web.Mobile) { _ ?=> me ?=>
+    bindForm(env.report.forms.flag)(
+      _ => BadRequest,
+      data =>
+        Found(env.user.repo.byId(data.username)): user =>
+          if user == me then BadRequest
+          else api.commFlag(Reporter(me), Suspect(user), data.resource, data.text).inject(jsonOkResult)
+    )
+  }
+
+  def thanks = Auth { ctx ?=> me ?=>
+    ctx.req.flash
+      .get("reported")
+      .flatMap(UserStr.read)
+      .fold(Redirect("/").toFuccess): reported =>
+        Ok.async:
+          env.relation.api
+            .fetchBlocks(me, reported.id)
+            .map:
+              views.report.ui.thanks(reported.id, _)
+  }

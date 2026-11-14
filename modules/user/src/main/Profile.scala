@@ -1,58 +1,29 @@
 package lila.user
 
-case class Profile(
-    country: Option[String] = None,
-    location: Option[String] = None,
-    bio: Option[String] = None,
-    firstName: Option[String] = None,
-    lastName: Option[String] = None,
-    fideRating: Option[Int] = None,
-    uscfRating: Option[Int] = None,
-    ecfRating: Option[Int] = None,
-    rcfRating: Option[Int] = None,
-    cfcRating: Option[Int] = None,
-    dsbRating: Option[Int] = None,
-    links: Option[String] = None
-) {
+import lila.core.user.{ Flag, Profile }
 
-  def nonEmptyRealName =
-    List(ne(firstName), ne(lastName)).flatten match {
-      case Nil   => none
-      case names => (names mkString " ").some
-    }
+object Profile:
 
-  def countryInfo = country flatMap Countries.info
+  extension (p: Profile)
+    def flagInfo: Option[Flag] = p.flag.flatMap(Flags.info)
 
-  def nonEmptyLocation = ne(location)
+    def officialRating: Option[OfficialRating] =
+      import p.*
+      fideRating
+        .map(OfficialRating("fide", _))
+        .orElse(uscfRating.map(OfficialRating("uscf", _)))
+        .orElse(ecfRating.map(OfficialRating("ecf", _)))
+        .orElse(rcfRating.map(OfficialRating("rcf", _)))
+        .orElse(cfcRating.map(OfficialRating("cfc", _)))
+        .orElse(dsbRating.map(OfficialRating("dsb", _)))
 
-  def nonEmptyBio = ne(bio)
+    def filterTroll(troll: Boolean): Profile = p.copy(
+      bio = p.bio.ifFalse(troll),
+      realName = p.realName.ifFalse(troll),
+      location = p.location.ifFalse(troll),
+      links = p.links.ifFalse(troll)
+    )
 
-  def isEmpty = completionPercent == 0
-
-  def completionPercent: Int =
-    100 * List(country, bio, firstName, lastName).count(_.isDefined) / 4
-
-  def actualLinks: List[Link] = links ?? Links.make
-
-  import Profile.OfficialRating
-
-  def officialRating: Option[OfficialRating] =
-    fideRating.map { OfficialRating("fide", _) } orElse
-      uscfRating.map { OfficialRating("uscf", _) } orElse
-      ecfRating.map { OfficialRating("ecf", _) } orElse
-      rcfRating.map { OfficialRating("rcf", _) } orElse
-      cfcRating.map { OfficialRating("cfc", _) } orElse
-      dsbRating.map { OfficialRating("dsb", _) }
-
-  private def ne(str: Option[String]) = str.filter(_.nonEmpty)
-}
-
-object Profile {
+    def actualLinks: List[Link] = p.links.so(Links.make)
 
   case class OfficialRating(name: String, rating: Int)
-
-  val default = Profile()
-
-  import reactivemongo.api.bson.Macros
-  private[user] val profileBSONHandler = Macros.handler[Profile]
-}

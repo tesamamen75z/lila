@@ -12,6 +12,7 @@ import subprocess
 import time
 import textwrap
 import contextlib
+import datetime
 
 try:
     import requests
@@ -20,6 +21,7 @@ except ImportError:
     print("* Arch: pacman -S python-requests")
     print("* Debian: apt install python3-requests")
     print("* Pip: pip install requests")
+    print("* Fedora: dnf install python3-requests")
     print()
     raise
 
@@ -30,6 +32,7 @@ except ImportError:
     print("* Arch: pacman -S python-gitpython")
     print("* Debian: apt install python3-git")
     print("* Pip: pip install GitPython")
+    print("* Fedora: dnf install python3-GitPython")
     print()
     raise
 
@@ -39,7 +42,7 @@ ASSETS_FILES = [
     "public",
     "ui",
     "package.json",
-    "yarn.lock",
+    "pnpm-lock.yaml",
 ]
 
 SERVER_FILES = [
@@ -50,57 +53,65 @@ SERVER_FILES = [
     "project",
     "translation",
     "build.sbt",
-    "lila",
+    "lila.sh",
     "conf/application.conf.default",
     ".sbtopts.default",
 ]
 
-ASSETS_BUILD_URL = "https://api.github.com/repos/ornicar/lila/actions/workflows/assets.yml/runs"
+ASSETS_BUILD_URL = "https://api.github.com/repos/lichess-org/lila/actions/workflows/assets.yml/runs?per_page=100"
 
-SERVER_BUILD_URL = "https://api.github.com/repos/ornicar/lila/actions/workflows/server.yml/runs"
+SERVER_BUILD_URL = "https://api.github.com/repos/lichess-org/lila/actions/workflows/server.yml/runs?per_page=100"
 
 ARTIFACT_DIR = "/home/lichess-artifacts"
 
 
-def curl_cli(command, *, url="https://lichess.org/cli"):
-    return f"curl --fail -X POST --data {shlex.quote(command)} {shlex.quote(url)} -H @.lila-cli"
+def curl_cli(command, *, url="https://lichess.org/run/cli", token_file=".lila-cli"):
+    return f"curl --fail -X POST --data {shlex.quote(command)} {shlex.quote(url)} -H @{token_file}"
 
 
 def asset_profile(ssh, *,
-                  deploy_dir="/home/lichess-deploy",
+                  deploy_dir="/home/lichess/deploy",
                   post=curl_cli("change asset version"),
-                  stage=False):
+                  stage=False,
+                  user="lichess"):
     return {
         "ssh": ssh,
         "deploy_dir": deploy_dir,
         "files": ASSETS_FILES,
         "workflow_url": ASSETS_BUILD_URL,
         "artifact_name": "lila-assets",
-        "symlinks": ["public"],
         "post": post,
         "stage": stage,
+        "user": user
     }
 
 def server_profile(ssh, *,
-                   deploy_dir="/home/lichess-deploy",
-                   post="systemctl restart lichess",
-                   stage=False):
+                   deploy_dir="/home/lichess/deploy",
+                   post="echo 'All set.'",
+                   stage=False,
+                   user="lichess"):
     return {
         "ssh": ssh,
         "deploy_dir": deploy_dir,
         "files": SERVER_FILES,
         "workflow_url": SERVER_BUILD_URL,
         "artifact_name": "lila-server",
-        "symlinks": ["lib", "bin"],
         "post": post,
         "stage": stage,
+        "user": user,
     }
 
 PROFILES = {
-    "khiaw-assets": asset_profile("root@khiaw.lichess.ovh", post=curl_cli("change asset version", url="https://lichess.dev/cli"), stage=True),
-    "khiaw-server": server_profile("root@khiaw.lichess.ovh", post="systemctl restart lichess-stage", stage=True),
-    "ocean-server": server_profile("root@ocean.lichess.ovh", deploy_dir="/home/lichess"),
-    "ocean-assets": asset_profile("root@ocean.lichess.ovh", deploy_dir="/home/lichess"),
+    "http3-assets": asset_profile("root@http3.lichess.ovh", post=curl_cli("change asset version", url="https://lichess.dev/run/cli"), stage=True),
+    "http3-server": server_profile("root@http3.lichess.ovh", post="systemctl restart lichess-stage", stage=True),
+    "snafu-assets": asset_profile("root@snafu.lichess.ovh", post=curl_cli("change asset version", url="https://lichess.dev/run/cli"), stage=True),
+    "snafu-server": server_profile("root@snafu.lichess.ovh", post="systemctl restart lichess-stage", stage=True),
+    "testy-assets": asset_profile("root@snafu.lichess.ovh", deploy_dir="/home/testy/deploy", post=curl_cli("change asset version", url="https://testy.lichess.dev/run/cli", token_file="/home/testy/.testy-cli"), stage=True, user="testy"),
+    "testy-server": server_profile("root@snafu.lichess.ovh", deploy_dir="/home/testy/deploy", post="systemctl restart testy", stage=True, user="testy"),
+    "manta-server": server_profile("root@manta.lichess.ovh", post="systemctl restart lichess"),
+    "manta-assets": asset_profile("root@manta.lichess.ovh"),
+    "starr-server": server_profile("root@starr.lichess.ovh", post="systemctl restart lichess"),
+    "starr-assets": asset_profile("root@starr.lichess.ovh"),
 }
 
 
@@ -171,7 +182,7 @@ def update_workflow_run_db(db, session, workflow_url, *, silent=False):
 
         if "next" not in res.links:
             break
-        url = res.links["next"]["url"]
+        url = res.links["last"]["url"]
 
     if not silent:
         print(f"Added/updated {new} workflow run(s).")
@@ -191,10 +202,10 @@ def find_workflow_run(repo, session, workflow_url, wanted_commits, *, stage):
                 if run["head_commit"]["id"] not in wanted_commits or run["_workflow_url"] != workflow_url:
                     continue
 
-                if run["event"] == "pull_request" and not stage:
+                if run["event"] in ("pull_request", "workflow_dispatch") and not stage:
                     # Not accepted in production, because pull request builds
                     # do not have access to the secret store. Hence no ab.
-                    print(f"- {run['html_url']} PULL REQUEST (no ab)")
+                    print(f"- {run['html_url']} NOT PROD-ELIGIBLE ({run['event']})")
                 elif run["status"] != "completed":
                     print(f"- {run['html_url']} PENDING (waiting {backoff}s)")
                     pending = True
@@ -227,8 +238,13 @@ def artifact_url(session, run, name):
     for artifact in session.get(run["artifacts_url"]).json()["artifacts"]:
         if artifact["name"] == name:
             if artifact["expired"]:
-                print("Artifact expired.")
-            return artifact["archive_download_url"]
+                raise DeployError("Artifact expired.")
+
+            # Will redirect to URL containing a short-lived authorization
+            # token.
+            resolved = session.head(artifact["archive_download_url"], allow_redirects=False)
+            resolved.raise_for_status()
+            return resolved.headers["Location"]
 
     raise DeployError(f"Did not find artifact {name}.")
 
@@ -245,36 +261,58 @@ def tmux(ssh, script, *, dry_run=False):
 
 
 def deploy_script(profile, session, run, url):
-    auth_header = f"Authorization: {session.headers['Authorization']}"
     ua_header = f"User-Agent: {session.headers['User-Agent']}"
     deploy_dir = profile["deploy_dir"]
+    user_group = f"{profile['user']}:{profile['user']}"
+    commit = run["head_commit"]["id"]
     artifact_unzipped = f"{ARTIFACT_DIR}/{profile['artifact_name']}-{run['id']:d}"
     artifact_zip = f"{artifact_unzipped}.zip"
     deploy_prompt = f"read -n 1 -p {shlex.quote('PRESS ENTER TO RUN: ' + profile['post'])}"
 
-    return [
+    commands = [
         "echo \\# Downloading ...",
         f"mkdir -p {ARTIFACT_DIR}",
-        f"mkdir -p {deploy_dir}/application.home_IS_UNDEFINED/logs",
-        f"[ -f {artifact_zip} ] || wget --header={shlex.quote(auth_header)} --header={shlex.quote(ua_header)} --no-clobber -O {artifact_zip} {shlex.quote(url)}",
+        f"mkdir -p {deploy_dir}/logs",
+        f"[ -f {artifact_zip} ] || wget --header={shlex.quote(ua_header)} --no-clobber -O {artifact_zip} {shlex.quote(url)}",
         "echo",
         "echo \\# Unpacking ...",
         f"unzip -q -o {artifact_zip} -d {artifact_unzipped}",
         f"mkdir -p {artifact_unzipped}/d",
-        f"tar -xf {artifact_unzipped}/*.tar.xz -C {artifact_unzipped}/d",
+        f"tar -xf {artifact_unzipped}/*.tar.zst -C {artifact_unzipped}/d",
         f"cat {artifact_unzipped}/d/commit.txt",
-        f"chown -R lichess:lichess {ARTIFACT_DIR}",
         "echo",
-        "echo \\# Installing ...",
-    ] + [
-        f"echo \"{artifact_unzipped}/d/{symlink} -> {deploy_dir}/{symlink}\";ln -f --no-target-directory -s {artifact_unzipped}/d/{symlink} {deploy_dir}/{symlink}"
-        for symlink in profile["symlinks"]
-    ] + [
-        f"chown -R lichess:lichess {deploy_dir}",
-        f"chmod -f +x {deploy_dir}/bin/lila || true",
+        f"echo \\# chown -R {user_group} {artifact_unzipped}",
+        f"chown -R {user_group} {artifact_unzipped}",
+        "echo",
+    ]
+
+    if profile["artifact_name"] == "lila-assets":
+        commands += [
+            f"echo '\n# git -c {deploy_dir} fetch origin {commit}'",
+            f"git -C {deploy_dir} fetch origin {commit}",
+            f"echo '\n# git -C {deploy_dir} checkout {commit}'",
+            f"git -C {deploy_dir} checkout {commit}",
+            f"git -C {deploy_dir} lfs pull",
+            f"make -C {deploy_dir}/public/lifat/nnue -j4",
+            f"make -C {deploy_dir}/public/lifat/maia -j4",
+            f"echo '\n# rsync -a {artifact_unzipped}/d/public {deploy_dir}/'",
+            f"rsync -a {artifact_unzipped}/d/public {deploy_dir}/",
+        ]
+    else:
+        commands += [
+            f"rsync -a {artifact_unzipped}/d/bin/ {deploy_dir}/bin/",
+            f"rm -rf {deploy_dir}/lib~",
+            f"mv {deploy_dir}/lib {deploy_dir}/lib~ || true",
+            f"mv {artifact_unzipped}/d/lib {deploy_dir}/",
+            f"chmod -f +x {deploy_dir}/bin/lila || true",
+        ]
+
+    return commands + [
+        f"chown -R {user_group} {deploy_dir}",
         f"echo \"SSH: {profile['ssh']}\"",
         f"echo {shlex.quote('Running: ' + profile['post'])}" if profile["stage"] else f"/bin/bash -c {shlex.quote(deploy_prompt)}",
         profile["post"],
+        f"rm -rf {artifact_unzipped}",
         "echo",
         f"echo \\# Done.",
     ]
@@ -285,12 +323,12 @@ def deploy(profile, repo, commit, github_api_token, dry_run):
 
     session = requests.Session()
     session.headers["Authorization"] = f"token {github_api_token}"
-    session.headers["User-Agent"] = "ornicar/lila"
+    session.headers["User-Agent"] = "lichess-org/lila"
 
     try:
         wanted_hash = hash_files(commit.tree, profile["files"])
-    except KeyError:
-        raise DeployError("Commit is missing a required file.")
+    except KeyError as e:
+        raise DeployError(f"Commit is missing a required file: {e}")
 
     wanted_commits = set(find_commits(commit, profile["files"], wanted_hash))
     print(f"Found {len(wanted_commits)} matching commits.")

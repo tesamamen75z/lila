@@ -24,21 +24,20 @@
     border-bottom: $border;
     min-height: 3.5em;
 
-    i {
-      @extend %flex-center;
+    icon {
+      @extend %flex-center-center;
 
       flex: 0 0 1.8em;
       font-size: 1.8em;
       opacity: 0.7;
-      justify-content: center;
     }
 
     &.clickable:hover {
       cursor: pointer;
       background: $c-primary;
-      color: $c-primary-over;
+      color: $c-over;
 
-      i {
+      icon {
         opacity: 0.9;
       }
     }
@@ -51,12 +50,12 @@
     }
   }
 
-  .todo i {
+  .todo icon {
     background: $c-bad;
-    color: $c-bad-over;
+    color: $c-over;
   }
 
-  .done i {
+  .done icon {
     background: $c-good;
   }
 }

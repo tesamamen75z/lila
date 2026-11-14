@@ -1,106 +1,134 @@
-import * as control from './control';
-import * as xhr from 'common/xhr';
-import AnalyseCtrl from './ctrl';
-import { h, VNode } from 'snabbdom';
-import { snabModal } from 'common/modal';
-import { spinner } from './util';
+import { pubsub } from 'lib/pubsub';
+import { domDialog } from 'lib/view';
+import * as xhr from 'lib/xhr';
+
+import type AnalyseCtrl from './ctrl';
+
+export const keyToMouseEvent = (key: string, eventName: string, selector: string) =>
+  window.site.mousetrap.bind(key, () =>
+    $(selector).each(function (this: HTMLElement) {
+      this.dispatchEvent(new MouseEvent(eventName));
+    }),
+  );
 
 export const bind = (ctrl: AnalyseCtrl) => {
-  const kbd = window.Mousetrap;
-  if (!kbd) return;
+  if (location.hash === '#keyboard') showHelp(ctrl);
+  addModifierKeyListeners(ctrl);
+  const kbd = window.site.mousetrap;
   kbd
     .bind(['left', 'k'], () => {
-      control.prev(ctrl);
-      ctrl.redraw();
-    })
-    .bind(['shift+left', 'shift+k'], () => {
-      control.exitVariation(ctrl);
+      ctrl.navigate.prev();
       ctrl.redraw();
     })
     .bind(['right', 'j'], () => {
-      if (!ctrl.fork.proceed()) control.next(ctrl);
+      ctrl.navigate.next();
       ctrl.redraw();
     })
-    .bind(['shift+right', 'shift+j'], () => {
-      control.enterVariation(ctrl);
+    .bind(['up', '0', 'home'], e => {
+      if (e.key === 'ArrowUp' && ctrl.fork.select('prev')) ctrl.setAutoShapes();
+      else ctrl.navigate.first();
       ctrl.redraw();
     })
-    .bind(['up', '0'], () => {
-      if (!ctrl.fork.prev()) control.first(ctrl);
-      ctrl.redraw();
-    })
-    .bind(['down', '$'], () => {
-      if (!ctrl.fork.next()) control.last(ctrl);
+    .bind(['down', '$', 'end'], e => {
+      if (e.key === 'ArrowDown' && ctrl.fork.select('next')) ctrl.setAutoShapes();
+      else ctrl.navigate.last();
       ctrl.redraw();
     })
     .bind('shift+c', () => {
       ctrl.showComments = !ctrl.showComments;
-      ctrl.autoScroll();
+      ctrl.treeView.requestAutoScroll('smooth');
       ctrl.redraw();
     })
-    .bind('shift+i', () => {
-      ctrl.treeView.toggle();
-      ctrl.redraw();
-    });
-
-  if (ctrl.embed) return;
-
+    .bind('shift+i', () => ctrl.settings.set('inline', !ctrl.settings.inline));
   kbd.bind('space', () => {
     const gb = ctrl.gamebookPlay();
     if (gb) gb.onSpace();
-    else if (ctrl.studyPractice) return;
-    else if (ctrl.ceval.enabled()) ctrl.playBestMove();
-    else ctrl.toggleCeval();
+    else if (ctrl.practice || ctrl.study?.practice || ctrl.retro?.isSolving()) return undefined;
+    else if (ctrl.cevalEnabled()) ctrl.playBestMove();
+    else if (ctrl.isCevalAllowed() && ctrl.ceval.analysable) ctrl.cevalEnabled(!ctrl.cevalEnabled());
+    return undefined;
   });
 
-  if (ctrl.studyPractice) return;
+  if (ctrl.study?.practice) return;
 
   kbd
+    .bind('h', () => {
+      ctrl.toggleActionMenu();
+      ctrl.redraw();
+    })
     .bind('f', ctrl.flip)
-    .bind('?', () => {
-      ctrl.keyboardHelp = !ctrl.keyboardHelp;
-      ctrl.redraw();
+    .bind('b', () => window.location.assign(ctrl.boardEditorUrl()))
+    .bind('?', () => showHelp(ctrl))
+    .bind('l', () => {
+      if (ctrl.isCevalAllowed() && ctrl.ceval.analysable) ctrl.cevalEnabled(!ctrl.cevalEnabled());
     })
-    .bind('l', ctrl.toggleCeval)
-    .bind('a', () => {
-      ctrl.toggleAutoShapes(!ctrl.showAutoShapes());
-      ctrl.redraw();
-    })
-    .bind('x', ctrl.toggleThreatMode)
+    .bind('z', () => ctrl.settings.set('showMainlineAnalysis', !ctrl.settings.showMainlineAnalysis))
+    .bind('a', () => ctrl.settings.set('showBestMoveArrows', !ctrl.settings.showBestMoveArrows))
+    .bind('v', () => ctrl.settings.set('showVariationArrows', !ctrl.settings.showVariationArrows))
+    .bind('x', () => ctrl.toggleThreatMode())
     .bind('e', () => {
       ctrl.toggleExplorer();
       ctrl.redraw();
     });
-  if (ctrl.study) {
-    const keyToMousedown = (key: string, selector: string) => {
-      kbd.bind(key, () => {
-        $(selector).each(function (this: HTMLElement) {
-          this.dispatchEvent(new Event('mousedown'));
-        });
-      });
-    };
-    keyToMousedown('d', '.study__buttons .comments');
-    keyToMousedown('g', '.study__buttons .glyphs');
+  kbd
+    .bind(['shift+left', 'shift+k'], () => {
+      ctrl.navigate.previousBranch();
+      ctrl.redraw();
+    })
+    .bind(['shift+right', 'shift+j'], () => {
+      ctrl.navigate.nextBranch();
+      ctrl.redraw();
+    })
+    .bind('shift+down', () => {
+      ctrl.userJumpIfCan(ctrl.idbTree.stepLine(ctrl.path, 'next'), true);
+      ctrl.redraw();
+    })
+    .bind('shift+up', () => {
+      ctrl.userJumpIfCan(ctrl.idbTree.stepLine(ctrl.path, 'prev'), true);
+      ctrl.redraw();
+    });
 
-    // navigation for next and prev chapters
-    kbd.bind('p', ctrl.study.goToPrevChapter);
-    kbd.bind('n', ctrl.study.goToNextChapter);
-  }
+  //First explorer move
+  kbd.bind('shift+space', () => {
+    const move = document
+      .querySelector('.explorer-box:not(.loading) tbody tr[data-uci]')
+      ?.getAttribute('data-uci');
+    if (move) ctrl.explorerMove(move);
+  });
 };
 
-export function view(ctrl: AnalyseCtrl): VNode {
-  return snabModal({
-    class: 'keyboard-help',
-    onInsert($wrap: Cash) {
-      lichess.loadCssPath('analyse.keyboard');
-      xhr.text(xhr.url('/analysis/help', { study: !!ctrl.study })).then(html => {
-        $wrap.find('.scrollable').html(html);
-      });
-    },
-    onClose() {
-      ctrl.keyboardHelp = false;
-      ctrl.redraw();
-    },
-    content: [h('div.scrollable', spinner())],
+export const showHelp = (ctrl: AnalyseCtrl) => {
+  pubsub.emit('analysis.closeAll');
+  return domDialog({
+    closeButton: true,
+    class: 'help.keyboard-help',
+    htmlUrl: xhr.url('/analysis/help', { study: !!ctrl.study }),
+    modal: true,
+    show: true,
+    easyClose: 'clickOutside',
+  });
+};
+
+function addModifierKeyListeners(ctrl: AnalyseCtrl) {
+  let modifierOnly = false;
+
+  window.addEventListener('mousedown', () => (modifierOnly = false), { capture: true });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Shift' || e.key === 'Control') modifierOnly = !modifierOnly;
+    else modifierOnly = false;
+  });
+
+  document.addEventListener('keyup', e => {
+    if (!modifierOnly) return;
+
+    modifierOnly = false;
+    if (document.querySelector<HTMLElement>('dialog:modal')) return;
+
+    const isShift = e.key === 'Shift' && !document.activeElement?.classList.contains('mchat__say');
+
+    if (isShift && ctrl.fork.select('next')) ctrl.setAutoShapes();
+    else if (e.key === 'Control') ctrl.toggleDiscloseOf();
+    ctrl.redraw();
   });
 }

@@ -1,38 +1,26 @@
 {
   "name": "site",
-  "version": "2.0.0",
   "private": true,
-  "description": "lichess.org website",
-  "author": "Thibault Duplessis",
-  "license": "AGPL-3.0-or-later",
-  "devDependencies": {
-    "@build/rollupProject": "2.0.0",
-    "@rollup/plugin-replace": "^2.3.4",
-    "@types/fnando__sparkline": "^0.3.2",
-    "@types/yaireo__tagify": "^4.0.1",
-    "@types/zxcvbn": "^4.4.0",
-    "rollup-plugin-copy": "^3.3.0"
-  },
+  "type": "module",
   "dependencies": {
-    "@fnando/sparkline": "^0.3.10",
-    "@yaireo/tagify": "^4.0.5",
-    "apexcharts": "^3.27.1",
+    "@juggle/resize-observer": "^3.4.0",
+    "@types/debounce-promise": "^3.1.9",
+    "bits": "workspace:*",
+    "dasher": "workspace:*",
     "debounce-promise": "^3.1.2",
-    "flatpickr": "^4.6.9",
-    "highcharts": "=4.2.5",
-    "hopscotch": "^0.3.1",
-    "stockfish-mv.wasm": "^0.6.1",
-    "stockfish-nnue.wasm": "0.0.2",
-    "stockfish.js": "^10.0.2",
-    "stockfish.wasm": "^0.10.0",
-    "tablesort": "^5.1",
-    "zxcvbn": "^4.4.2"
+    "dialog-polyfill": "0.5.6",
+    "lib": "workspace:*"
   },
-  "scripts": {
-    "deps": "cat ../../public/javascripts/vendor/cash.min.js ./dep/powertip.min.js ./dep/howler.min.js ./dep/mousetrap.min.js > ../../public/compiled/deps.min.js",
-    "dev": "yarn run deps && rollup --config",
-    "prod": "yarn run deps && rollup --config --config-prod && cat ../../public/compiled/deps.min.js ../../public/compiled/site.min.js > ../../public/compiled/lichess.min.js",
-    "plugin-dev": "rollup --config --config-plugin",
-    "plugin-prod": "rollup --config --config-prod --config-plugin"
+  "build": {
+    "sync": {
+      "node_modules/dialog-polyfill/dist/dialog-polyfill.esm.js": "/public/npm"
+    },
+    "bundle": [
+      "src/site.*Embed.ts",
+      {
+        "module": "src/site.ts",
+        "inline": "src/site.inline.ts"
+      }
+    ]
   }
 }

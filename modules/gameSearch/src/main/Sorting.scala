@@ -1,19 +1,20 @@
 package lila.gameSearch
 
+import lila.core.i18n.{ I18nKey as trans, Translate }
+
 case class Sorting(f: String, order: String)
 
-object Sorting {
+object Sorting:
 
-  val fields = List(
-    Fields.date          -> "Date",
-    Fields.turns         -> "Moves",
-    Fields.averageRating -> "Rating"
+  def fields(using Translate) = List(
+    Fields.date -> trans.search.date.txt(),
+    Fields.turns -> trans.search.nbTurns.txt(),
+    Fields.averageRating -> trans.site.rating.txt()
   )
 
-  val orders = List(
-    "desc" -> "Descending",
-    "asc"  -> "Ascending"
+  def orders(using Translate) = List(
+    "desc" -> trans.search.descending.txt(),
+    "asc" -> trans.search.ascending.txt()
   )
 
   val default = Sorting(Fields.date, "desc")
-}

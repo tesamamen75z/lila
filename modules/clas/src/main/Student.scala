@@ -1,64 +1,70 @@
 package lila.clas
 
-import lila.user.User
+import reactivemongo.api.bson.Macros.Annotations.Key
 
-import org.joda.time.DateTime
-
-import lila.common.SecureRandom
+import lila.core.id.{ ClasId, StudentId }
+import lila.core.perf.{ UserPerfs, UserWithPerfs }
+import lila.core.security.ClearPassword
 
 case class Student(
-    _id: Student.Id, // userId:clasId
-    userId: User.ID,
-    clasId: Clas.Id,
-    realName: String,
+    @Key("_id") id: StudentId, // userId:clasId
+    userId: UserId,
+    clasId: ClasId,
+    realName: Student.RealName,
     notes: String,
     managed: Boolean, // created for the class by the teacher
     created: Clas.Recorded,
     archived: Option[Clas.Recorded]
-) {
-
-  def id = _id
-
-  def is(user: User)     = userId == user.id
+):
   def is(other: Student) = id == other.id
 
   def isArchived = archived.isDefined
-  def isActive   = !isArchived
-}
+  def isActive = !isArchived
 
-object Student {
+object Student:
 
-  def id(userId: User.ID, clasId: Clas.Id) = Id(s"$userId:$clasId")
+  given UserIdOf[Student] = _.userId
 
-  def make(user: User, clas: Clas, teacherId: User.ID, realName: String, managed: Boolean) =
+  opaque type RealName = String
+  object RealName extends OpaqueString[RealName]
+
+  private[clas] val idSeparator = ":"
+
+  def makeId(userId: UserId, clasId: ClasId) = StudentId(s"$userId$idSeparator$clasId")
+
+  def make(user: User, clas: Clas, teacherId: UserId, realName: RealName, managed: Boolean) =
     Student(
-      _id = id(user.id, clas.id),
+      id = makeId(user.id, clas.id),
       userId = user.id,
       clasId = clas.id,
       realName = realName,
       notes = "",
       managed = managed,
-      created = Clas.Recorded(teacherId, DateTime.now),
+      created = Clas.Recorded(teacherId, nowInstant),
       archived = none
     )
 
-  case class Id(value: String) extends AnyVal with StringValue
+  trait WithUserLike:
+    val student: Student
+    val user: User
+  case class WithUser(student: Student, user: User) extends WithUserLike:
+    def withPerfs(perfs: UserPerfs) = WithUserPerfs(student, user, perfs)
+  case class WithUserPerf(student: Student, user: User, perf: Perf) extends WithUserLike
+  case class WithUserPerfs(student: Student, user: User, perfs: UserPerfs) extends WithUserLike:
+    def withPerfs = UserWithPerfs(user, perfs)
 
-  case class WithUser(student: Student, user: User)
+  case class WithUserAndManagingClas(withUser: WithUserPerfs, managingClas: Option[Clas]):
+    export withUser.*
 
-  case class WithPassword(student: Student, password: User.ClearPassword)
+  case class WithPassword(student: Student, password: ClearPassword)
 
   case class ManagedInfo(createdBy: User, clas: Clas)
 
-  private[clas] object password {
+  private[clas] object password:
 
-    private val chars      = ('2' to '9') ++ (('a' to 'z').toSet - 'l') mkString
-    private val nbChars    = chars.length
-    private def secureChar = chars(SecureRandom nextInt nbChars)
+    private val chars = (('2' to '9') ++ (('a' to 'z').toSet - 'l')).mkString
+    private val nbChars = chars.length
+    private def secureChar = chars(scalalib.SecureRandom.nextInt(nbChars))
 
-    def generate =
-      User.ClearPassword {
-        new String(Array.fill(7)(secureChar))
-      }
-  }
-}
+    def generate(length: Int = 7) = ClearPassword:
+      String(Array.fill(length)(secureChar))

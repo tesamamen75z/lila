@@ -1,67 +1,57 @@
 package lila.study
 
-import BSONHandlers._
-import Node.Children
+import chess.format.UciPath
 
-import lila.common.Chronometer
-import lila.db.dsl._
+import lila.db.dsl.*
+import lila.mon.Chronometer.syncMon
+import lila.tree.{ Branch, Branches, Root }
 
-private object StudyFlatTree {
+import BSONHandlers.{ readBranch, writeBranch }
 
-  private case class FlatNode(path: Path, data: Bdoc) {
-    val depth = path.ids.size
+private object StudyFlatTree:
 
-    def toNodeWithChildren(children: Option[Children]): Option[Node] =
-      readNode(data, path.ids.last) map {
-        _.copy(children = children | Node.emptyChildren)
-      }
-  }
+  private case class FlatNode(path: UciPath, data: Bdoc):
+    val depth = path.depth
 
-  object reader {
+    def toNodeWithChildren(children: Option[Branches]): Option[Branch] =
+      readBranch(data).map:
+        _.copy(children = children | Branches.empty)
 
-    def rootChildren(flatTree: Bdoc): Children =
-      Chronometer.syncMon(_.study.tree.read) {
-        traverse {
+  object reader:
+
+    def rootChildren(flatTree: Bdoc): Branches =
+      syncMon(lila.mon.study.tree.read):
+        traverse:
           flatTree.elements.toList
-            .collect {
-              case el if el.name != Path.rootDbKey =>
-                FlatNode(Path.fromDbKey(el.name), el.value.asOpt[Bdoc].get)
-            }
+            .collect:
+              case el if el.name != UciPathDb.rootDbKey =>
+                FlatNode(UciPathDb.decodeDbKey(el.name), el.value.asOpt[Bdoc].get)
             .sortBy(-_.depth)
-        }
-      }
 
-    private def traverse(children: List[FlatNode]): Children =
+    private def traverse(children: List[FlatNode]): Branches =
       children
-        .foldLeft(Map.empty[Path, Children]) { case (allChildren, flat) =>
-          update(allChildren, flat)
+        .foldLeft(Map.empty[UciPath, Branches]) { (roots, flat) =>
+          flat
+            .toNodeWithChildren(roots.get(flat.path))
+            .fold(roots): node =>
+              roots
+                .removed(flat.path)
+                .updatedWith(flat.path.parent):
+                  case None => Branches(List(node)).some
+                  case Some(siblings) => siblings.addNode(node).some
         }
-        .get(Path.root) | Node.emptyChildren
+        .get(UciPath.root) | Branches.empty
 
-    // assumes that node has a greater depth than roots (sort beforehand)
-    private def update(roots: Map[Path, Children], flat: FlatNode): Map[Path, Children] = {
-      flat.toNodeWithChildren(roots get flat.path).fold(roots) { node =>
-        roots.removed(flat.path).updatedWith(flat.path.parent) {
-          case None           => Children(Vector(node)).some
-          case Some(siblings) => siblings.addNode(node).some
-        }
-      }
-    }
-  }
+  object writer:
 
-  object writer {
+    def rootChildren(root: Root): List[(String, Bdoc)] =
+      syncMon(lila.mon.study.tree.write):
+        root.children.toList.flatMap(traverse(_, UciPath.root))
 
-    def rootChildren(root: Node.Root): Vector[(String, Bdoc)] =
-      Chronometer.syncMon(_.study.tree.write) {
-        root.children.nodes.flatMap { traverse(_, Path.root) }
-      }
-
-    private def traverse(node: Node, parentPath: Path): Vector[(String, Bdoc)] =
-      (parentPath.depth < Node.MAX_PLIES) ?? {
+    private def traverse(node: Branch, parentPath: UciPath): List[(String, Bdoc)] =
+      (parentPath.depth < Node.MAX_PLIES).so:
         val path = parentPath + node.id
-        node.children.nodes.flatMap {
-          traverse(_, path)
-        } appended (Path.encodeDbKey(path) -> writeNode(node))
-      }
-  }
-}
+        node.children.toList
+          .flatMap:
+            traverse(_, path)
+          .appended(UciPathDb.encodeDbKey(path) -> writeBranch(node))

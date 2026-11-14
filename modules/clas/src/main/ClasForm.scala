@@ -1,151 +1,130 @@
 package lila.clas
 
-import play.api.data._
-import play.api.data.Forms._
-import scala.concurrent.duration._
+import play.api.data.*
+import play.api.data.Forms.*
+import play.api.i18n.Lang
 
-import lila.common.Form.{ cleanNonEmptyText, cleanText }
-import lila.user.User
+import lila.clas.Student.RealName
+import lila.common.Form.{ cleanNonEmptyText, cleanText, into }
+import lila.mon.extensions.*
 
 final class ClasForm(
-    lightUserAsync: lila.common.LightUser.Getter,
-    securityForms: lila.security.SecurityForm,
+    lightUserAsync: lila.core.LightUser.Getter,
+    signupForm: lila.core.security.SignupFormFields,
     nameGenerator: NameGenerator
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  import ClasForm._
+  import ClasForm.*
 
-  object clas {
+  object clas:
 
-    val form = Form(
+    val form: Form[ClasData] = Form:
       mapping(
         "name" -> cleanText(minLength = 3, maxLength = 100),
         "desc" -> cleanText(minLength = 0, maxLength = 2000),
         "teachers" -> nonEmptyText.verifying(
           "Invalid teacher list",
-          str => {
+          str =>
             val ids = readTeacherIds(str)
-            ids.nonEmpty && ids.sizeIs <= 10 && ids.forall { id =>
-              blockingFetchUser(id).isDefined
-            }
-          }
-        )
-      )(ClasData.apply)(ClasData.unapply)
-    )
+            ids.nonEmpty && ids.sizeIs <= 10 && ids.forall: id =>
+              blockingFetchUser(id.into(UserStr)).isDefined
+        ),
+        "canMsg" -> boolean,
+        "hasTeam" -> boolean
+      )(ClasData.apply)(unapply)
 
-    def create = form
-
-    def edit(c: Clas) =
-      form fill ClasData(
+    def edit(c: Clas): Form[ClasData] = form.fill:
+      ClasData(
         name = c.name,
         desc = c.desc,
-        teachers = c.teachers.toList mkString "\n"
+        teachers = c.teachers.toList.mkString("\n"),
+        canMsg = ~c.canMsg,
+        hasTeam = ~c.hasTeam
       )
 
-    def wall = Form(single("wall" -> text))
+    def wall = Form(single("wall" -> text(maxLength = 100_000).into[Markdown]))
 
     def notifyText = Form(single("text" -> nonEmptyText(minLength = 10, maxLength = 300)))
-  }
 
-  object student {
+  object student:
 
-    val create: Form[NewStudent] =
-      Form(
-        mapping(
-          "create-username" -> securityForms.signup.username,
-          "create-realName" -> cleanNonEmptyText(maxLength = 100)
-        )(NewStudent.apply)(NewStudent.unapply)
-      )
+    val create: Form[CreateStudent] = Form:
+      mapping(
+        "create-username" -> signupForm.uniqueUsername,
+        "create-realName" -> cleanNonEmptyText(maxLength = 100).into[RealName]
+      )(CreateStudent.apply)(unapply)
 
-    def generate: Fu[Form[NewStudent]] =
-      nameGenerator() map { username =>
-        create fill
-          NewStudent(
-            username = ~username,
-            realName = ""
+    def generate(using Lang): Fu[Form[CreateStudent]] =
+      nameGenerator().map: username =>
+        create.fill:
+          CreateStudent(
+            username = username | UserName(""),
+            realName = RealName("")
           )
-      }
 
-    def invite(c: Clas) =
-      Form(
-        mapping(
-          "username" -> lila.user.UserForm.historicalUsernameField
-            .verifying("Unknown username", { blockingFetchUser(_).exists(!_.isBot) })
-            .verifying("This is a teacher", u => !c.teachers.toList.contains(u.toLowerCase)),
-          "realName" -> cleanNonEmptyText
-        )(NewStudent.apply)(NewStudent.unapply)
-      )
+    def invite(c: Clas) = Form:
+      mapping(
+        "username" -> lila.common.Form.username.historicalField
+          .verifying("Unknown username", blockingFetchUser(_).exists(!_.isBot))
+          .verifying("This is a teacher", u => !c.teachers.contains(u.id)),
+        "realName" -> cleanNonEmptyText.into[RealName]
+      )(InviteStudent.apply)(unapply)
 
-    def edit(s: Student) =
-      Form(
-        mapping(
-          "realName" -> cleanNonEmptyText,
-          "notes"    -> text(maxLength = 20000)
-        )(StudentData.apply)(StudentData.unapply)
-      ) fill StudentData(s.realName, s.notes)
+    val inviteAccept = Form(single("v" -> Forms.boolean))
 
-    def release =
-      Form(
-        single(
-          "email" -> securityForms.signup.emailField
-        )
-      )
+    def edit(s: Student) = Form(
+      mapping(
+        "realName" -> cleanNonEmptyText.into[RealName],
+        "notes" -> text(maxLength = 20000)
+      )(StudentData.apply)(unapply)
+    ).fill(StudentData(s.realName, s.notes))
 
-    def manyCreate(max: Int): Form[ManyNewStudent] =
-      Form(
-        mapping(
-          "realNames" -> cleanNonEmptyText
-        )(ManyNewStudent.apply)(ManyNewStudent.unapply).verifying(
-          s"There can't be more than ${lila.clas.Clas.maxStudents} per class. Split the students into more classes.",
-          _.realNames.lengthIs <= max
-        )
-      )
-  }
+    def release = Form(single("email" -> signupForm.emailField))
 
-  private def blockingFetchUser(username: String) =
-    lightUserAsync(User normalize username).await(1 second, "clasInviteUser")
-}
+  private def blockingFetchUser(username: UserStr) =
+    lightUserAsync(username.id).await(1.second, "clasInviteUser")
 
-object ClasForm {
-
-  private val realNameMaxSize = 100
+object ClasForm:
 
   case class ClasData(
       name: String,
       desc: String,
-      teachers: String
-  ) {
+      teachers: String,
+      canMsg: Boolean,
+      hasTeam: Boolean
+  ):
     def update(c: Clas) =
       c.copy(
         name = name,
         desc = desc,
-        teachers = teacherIds.toNel | c.teachers
+        teachers = teacherIds.toNel | c.teachers,
+        canMsg = some(canMsg),
+        hasTeam = some(hasTeam)
       )
+    def make(teacher: User) =
+      Clas
+        .make(teacher, name, desc)
+        .copy(
+          canMsg = some(canMsg),
+          hasTeam = some(hasTeam)
+        )
 
     def teacherIds = readTeacherIds(teachers)
-  }
 
-  private def readTeacherIds(str: String) =
-    str.linesIterator.map(_.trim).filter(_.nonEmpty).map(User.normalize).distinct.toList
+  val login = Form(single("code" -> nonEmptyText))
 
-  case class NewStudent(
-      username: String,
-      realName: String
-  )
+  private def readTeacherIds(str: String): List[UserId] =
+    str.linesIterator.flatMap(UserStr.read).map(_.id).distinct.toList
+
+  case class InviteStudent(username: UserStr, realName: RealName)
+  case class CreateStudent(username: UserName, realName: RealName)
 
   case class StudentData(
-      realName: String,
+      realName: RealName,
       notes: String
-  ) {
+  ):
     def update(c: Student) =
       c.copy(
         realName = realName,
         notes = notes
       )
-  }
-
-  case class ManyNewStudent(realNamesText: String) {
-    def realNames =
-      realNamesText.linesIterator.map(_.trim take realNameMaxSize).filter(_.nonEmpty).distinct.toList
-  }
-}

@@ -1,64 +1,75 @@
 package lila.msg
 
-case class MsgPreset(name: String, text: String)
+import lila.core.LightUser
+import lila.core.id.ForumCategId
+import lila.core.team.LightTeam
 
-object MsgPreset {
+object MsgPreset:
 
-  type Username = String
+  import lila.core.msg.MsgPreset as Msg
 
-  lazy val sandbagAuto = MsgPreset(
-    name = "Warning: possible sandbagging",
-    text =
-      """You have lost a couple games after a few moves. Please note that you MUST try to win every rated game.
-Losing rated games on purpose is called "sandbagging", and is not allowed on Lichess.
+  private val baseUrl = "https://lichess.org"
 
-Thank you for your understanding."""
-  )
-
-  lazy val boostAuto = MsgPreset(
-    name = "Warning: possible boosting",
-    """In your game history, you have several games where the opponent clearly has intentionally lost against you. Attempts to artificially manipulate your own or someone else's rating are unacceptable.
-
-If this behaviour continues to happen, your account will be restricted."""
-  )
-
-  lazy val sittingAuto = MsgPreset(
-    name = "Warning: leaving games / stalling on time",
-    text =
-      """In your game history, you have several games where you have left the game or just let the time run out instead of playing or resigning.
-This can be very annoying for your opponents. If this behavior continues to happen, we may be forced to terminate your account."""
-  )
-
-  lazy val enableTwoFactor = MsgPreset(
-    name = "Enable two-factor authentication",
-    text =
-      """Please enable two-factor authentication to secure your account at https://lichess.org/account/twofactor.
-You received this message because your account has special responsibilities such as coach, teacher or streamer."""
-  )
-
-  def maxFollow(username: Username, max: Int) =
-    MsgPreset(
+  def maxFollow(username: UserName, max: Max) =
+    Msg(
       name = "Follow limit reached!",
       text = s"""Sorry, you can't follow more than $max players on Lichess.
-To follow new players, you must first unfollow some on https://lichess.org/@/$username/following.
+To follow new players, you must first unfollow some on $baseUrl/@/$username/following.
 
-Thank you for your understanding."""
+Thank you for your understanding.""",
+      mustRead = false
     )
 
-  object forumDeletion {
+  def forumRelocation(title: String, newUrl: String) =
+    s"""A moderator has moved your post "$title" to a different subforum. You can find it here: $baseUrl$newUrl."""
+
+  object forumDeletion:
 
     val presets = List(
       "public shaming",
       "disrespecting other players",
       "spamming",
-      "inappropriate behavior"
+      "inappropriate behavior",
+      "incorrect subforum",
+      "LLM (AI) generated content"
     )
 
-    def byModerator = compose("A moderator") _
+    def byModerator = compose("A moderator")
 
-    def byTeamLeader = compose("A team leader") _
+    def byTeamLeader(forumId: ForumCategId) = compose(s"A team leader of $baseUrl/forum/$forumId")
 
-    private def compose(by: String)(reason: String) =
-      s"""$by deleted one of your posts for this reason: $reason. Please read our Forum-Etiquette: https://lichess.org/page/forum-etiquette"""
-  }
-}
+    def byBlogAuthor(user: UserName) = compose(by = s"The community blog author $user")
+
+    private def compose(by: String)(reason: String, forumPost: String) =
+      s"""$by deleted the following of your posts for this reason: $reason. Please read Lichess' Forum-Etiquette: $baseUrl/page/forum-etiquette
+----
+$forumPost
+    """
+
+  def newPermissions(by: LightUser, team: LightTeam, perms: Iterable[String], teamUrl: Url) =
+    s"""@${by.name} has changed your leader permissions in the team "${team.name}".
+Your new permissions are: ${perms.mkString(", ")}.
+${teamUrl}"""
+
+  def payoutEligible(payoutsUrl: Url, msg: lila.core.msg.PayoutMessages) =
+    import msg.*
+    val deadline = finishedAt.atZone(java.time.ZoneOffset.UTC).toLocalDate.plusMonths(6)
+    Msg(
+      name = "Prize payout",
+      text = s"""Congratulations on your finish in $tourName! $tourUrl
+
+Lichess is offering prizes to top finishers in this tournament, and your performance means you may be eligible for a prize.
+
+Please visit $payoutsUrl to provide the necessary information for payout. The deadline for claiming prizes is $deadline.""",
+      mustRead = true
+    )
+
+  def apiTokenRevoked(url: String) =
+    s"""Your Lichess API token has been found on GitHub
+
+We detected one of your API tokens in a public code repository on GitHub at the following URL:
+
+$url
+
+We have automatically revoked the token to protect your account.
+    """

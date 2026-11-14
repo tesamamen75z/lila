@@ -1,6 +1,6 @@
-var userId = 'shork'.toLowerCase();
+const userId = 'shork'.toLowerCase();
 
-var prev = db.user4.findOne({ _id: userId }).plan;
+const prev = db.user4.findOne({ _id: userId }).plan;
 
 db.user4.update(
   { _id: userId },
@@ -12,7 +12,7 @@ db.user4.update(
         since: prev.since || new Date(),
       },
     },
-  }
+  },
 );
 
 db.plan_patron.update(
@@ -21,5 +21,5 @@ db.plan_patron.update(
     lastLevelUp: new Date(),
     lifetime: true,
   },
-  { upsert: true }
+  { upsert: true },
 );

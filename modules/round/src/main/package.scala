@@ -1,25 +1,13 @@
-package lila
+package lila.round
 
-import lila.game.Event
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.{ GameFullId, GamePlayerId, GameAnyId }
 
-package object round extends PackageObject {
+val logger = lila.log("round")
 
-  private[round] type Events = List[Event]
+private type Events = List[lila.core.game.Event]
 
-  private[round] def logger = lila.log("round")
-}
-
-package round {
-
-  trait BenignError                        extends lila.base.LilaException
-  case class ClientError(message: String)  extends BenignError
-  case class FishnetError(message: String) extends BenignError
-  case class GameIsFinishedError(pov: lila.game.Pov) extends BenignError {
-    val message = s"$pov game is finished"
-  }
-
-  sealed trait OnTv
-
-  case class OnLichessTv(channel: String, flip: Boolean) extends OnTv
-  case class OnUserTv(userId: String)                    extends OnTv
-}
+enum OnTv:
+  case Lichess(channel: String, flip: Boolean)
+  case User(userId: UserId)

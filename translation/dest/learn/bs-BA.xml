@@ -131,6 +131,7 @@ Odmah pored svoje kraljice.</string>
 Napravite bilo koji potez da nastavite.</string>
   <string name="boardSetupComplete">Čestitke! Znate postaviti šahovsku ploču.</string>
   <string name="castling">Rokada</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Poseban potez kralja</string>
   <string name="castlingIntro">Dovedite Vašeg kralja na sigurno, i razvijte topa za napad!</string>
   <string name="castleKingSide">Pomaknite svog kralja za dva polja
@@ -154,7 +155,6 @@ za malu rokadu!</string>
   <string name="findAWayToCastleQueenSide">Pronađite način 
 za veliku rokadu!</string>
   <string name="castlingComplete">Čestitke! Gotovo uvijek biste trebali napraviti rokadu u partiji.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Poseban potez pješaka</string>
   <string name="enPassantIntro">Kada se protivnički pješak pomakne za dva polja, možete ga uzeti kao da se pomaknuo za jedno polje.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Crni je upravo pomaknuo 
@@ -232,8 +232,8 @@ u dva poteza!</string>
   <string name="nailedIt">Točno tako.</string>
   <string name="rightOn">Baš tako!</string>
   <string name="stageXComplete">Nivo %s završen</string>
-  <string name="yourScore">Vaš rezultat</string>
   <string name="next">Sljedeće</string>
+  <string name="nextX">Sljedeće: %s</string>
   <string name="backToMenu">Povratak na meni</string>
   <string name="puzzleFailed">Rješenje problema neispravno!</string>
   <string name="retry">Pokušajte ponovno</string>

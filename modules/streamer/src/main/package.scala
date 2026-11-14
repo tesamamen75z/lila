@@ -1,6 +1,13 @@
-package lila
+package lila.streamer
 
-package object streamer extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[streamer] def logger = lila.log("streamer")
-}
+type Platform = "twitch" | "youtube"
+def platform(str: String): Option[Platform] = str.toLowerCase match
+  case "twitch" => Option("twitch")
+  case "youtube" => Option("youtube")
+  case _ => None
+
+private val streamerPageActivationRoute =
+  routes.Cms.lonePage(lila.core.id.CmsPageKey("streamer-page-activation"))

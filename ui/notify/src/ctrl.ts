@@ -1,82 +1,101 @@
-import { Ctrl, NotifyOpts, NotifyData, Redraw } from './interfaces';
+import { storage } from 'lib/storage';
+import { json as xhrJson, url as xhrUrl, text as xhrText } from 'lib/xhr';
 
-import * as xhr from 'common/xhr';
-import notify from 'common/notification';
-import { asText } from './view';
+import type { Ctrl, NotifyOpts, NotifyData, Redraw } from './interfaces';
 
 export default function makeCtrl(opts: NotifyOpts, redraw: Redraw): Ctrl {
-  let data: NotifyData | undefined,
-    initiating = true,
-    scrolling = false;
+  let data: NotifyData | undefined;
+  let initiating = true;
+  let scrolling = false;
 
-  const readAllStorage = lichess.storage.make('notify-read-all');
+  const readAllStorage = storage.make('notify-read-all');
 
-  readAllStorage.listen(_ => {
-    if (data) {
-      data.unread = 0;
-      opts.setCount(0);
-      redraw();
-    }
-  });
+  readAllStorage.listen(_ => setAllRead(false));
 
-  function update(d: NotifyData, incoming: boolean) {
+  function update(d: NotifyData) {
     data = d;
-    if (data.pager.currentPage === 1 && data.unread && opts.isVisible()) {
-      opts.setNotified();
-      data.unread = 0;
-      readAllStorage.fire();
-    }
+    if (opts.updateUnread(data.unread) && !scrolling) attention();
     initiating = false;
     scrolling = false;
-    opts.setCount(data.unread);
-    if (incoming) notifyNew();
-    redraw();
+    if (opts.isVisible() && data.pager.currentPage === 1) setAllRead();
+    else redraw();
   }
 
-  function notifyNew() {
-    if (!data || data.pager.currentPage !== 1) return;
-    const notif = data.pager.currentPageResults.find(n => !n.read);
-    if (!notif) return;
+  function bumpUnread() {
+    data = undefined; // fetch when the dropdown is opened
+    opts.updateUnread('increment');
+    if (opts.isVisible()) loadPage(1);
+    else attention();
+  }
+
+  function attention() {
+    const id = data?.pager.currentPageResults.find(n => !n.read)?.content.user?.id;
+    const playBell = storage.boolean('playBellSound').getOrDefault(true);
+    if ((!site.quietMode || id === 'lichess') && playBell) site.sound.playOnce('newPM');
     opts.pulse();
-    if (!lichess.quietMode || notif.content.user.id == 'lichess') lichess.sound.play('newPM');
-    const text = asText(notif, lichess.trans(data.i18n));
-    const pushSubsribed = parseInt(lichess.storage.get('push-subscribed') || '0', 10) + 86400000 >= Date.now(); // 24h
-    if (!pushSubsribed && text) notify(text);
   }
 
   const loadPage = (page: number) =>
-    xhr.json(xhr.url('/notify', { page: page || 1 })).then(
-      d => update(d, false),
-      _ => lichess.announce({ msg: 'Failed to load notifications' })
+    xhrJson<NotifyData>(xhrUrl('/notify', { page: page || 1 })).then(
+      d => update(d),
+      _ => site.announce({ msg: 'Failed to load notifications' }),
     );
 
   function nextPage() {
-    if (!data || !data.pager.nextPage) return;
+    if (!data?.pager.nextPage) return;
     scrolling = true;
     loadPage(data.pager.nextPage);
     redraw();
   }
 
   function previousPage() {
-    if (!data || !data.pager.previousPage) return;
+    if (!data?.pager.previousPage) return;
     scrolling = true;
     loadPage(data.pager.previousPage);
     redraw();
   }
 
-  function setVisible() {
+  function onShow() {
     if (!data || data.pager.currentPage === 1) loadPage(1);
   }
 
+  function setAllRead(notifyOthers = true) {
+    if (notifyOthers) {
+      readAllStorage.fire();
+      opts.setNotified();
+    }
+    if (data) data.unread = 0;
+    opts.updateUnread(0);
+    redraw();
+  }
+
   function setMsgRead(user: string) {
-    if (data)
-      data.pager.currentPageResults.forEach(n => {
-        if (n.type == 'privateMessage' && n.content.user.id == user && !n.read) {
-          n.read = true;
-          data!.unread = Math.max(0, data!.unread - 1);
-          opts.setCount(data!.unread);
-        }
-      });
+    data?.pager.currentPageResults.forEach(n => {
+      if (n.type === 'privateMessage' && n.content.user?.id === user && !n.read) {
+        n.read = true;
+        data!.unread = Math.max(0, data!.unread - 1);
+        opts.updateUnread(data!.unread);
+      }
+    });
+  }
+
+  const emptyNotifyData = {
+    pager: {
+      currentPage: 1,
+      maxPerPage: 1,
+      currentPageResults: [],
+      nbResults: 0,
+      nbPages: 1,
+    },
+    unread: 0,
+    i18n: {},
+  };
+
+  function clear() {
+    xhrText('/notify/clear', { method: 'post' }).then(
+      _ => update(emptyNotifyData),
+      _ => site.announce({ msg: 'Failed to clear notifications' }),
+    );
   }
 
   return {
@@ -84,10 +103,13 @@ export default function makeCtrl(opts: NotifyOpts, redraw: Redraw): Ctrl {
     initiating: () => initiating,
     scrolling: () => scrolling,
     update,
+    bumpUnread,
     nextPage,
     previousPage,
     loadPage,
-    setVisible,
+    onShow,
     setMsgRead,
+    setAllRead,
+    clear,
   };
 }

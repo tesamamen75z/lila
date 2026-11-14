@@ -1,29 +1,31 @@
 package lila.mailer
 
-import akka.actor._
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
+import org.apache.pekko.actor.*
 import play.api.Configuration
-import scala.concurrent.duration._
 
-import lila.common.config._
-import lila.common.Strings
-import lila.memo.SettingStore.Strings._
-import lila.user.UserRepo
+import lila.common.Bus
+import lila.core.config.RouteUrl
 
 @Module
 final class Env(
     appConfig: Configuration,
-    net: NetConfig,
-    userRepo: UserRepo,
-    settingStore: lila.memo.SettingStore.Builder
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    scheduler: Scheduler
-) {
-  import net.baseUrl
+    userApi: lila.core.user.UserApi,
+    settingStore: lila.memo.SettingStore.Builder,
+    lightUser: lila.core.user.LightUserApi,
+    routeUrl: RouteUrl
+)(using Executor, ActorSystem, Scheduler, lila.core.i18n.Translator):
 
-  private val config = appConfig.get[Mailer.Config]("mailer")(Mailer.configLoader)
+  import Mailer.given
+
+  private val config = appConfig.get[Mailer.Config]("mailer")
+
+  lazy val canSendEmailsSetting = settingStore[Boolean](
+    "canSendEmails",
+    default = true,
+    text = "Lila can send emails. Toggle off when the email service is unavailable.".some
+  ).taggedWith[CanSendEmails]
 
   lazy val mailerSecondaryPermilleSetting = settingStore[Int](
     "mailerSecondaryPermille",
@@ -31,25 +33,31 @@ final class Env(
     text = "Permille of mails to send using secondary SMTP configuration".some
   )
 
-  lazy val mailer = new Mailer(
+  lazy val mailer = Mailer(
     config,
+    canSendEmails = canSendEmailsSetting,
     getSecondaryPermille = () => mailerSecondaryPermilleSetting.get()
   )
 
   lazy val automaticEmail = wire[AutomaticEmail]
 
-  lila.common.Bus.subscribeFuns(
-    "fishnet" -> { case lila.hub.actorApi.fishnet.NewKey(userId, key) =>
-      automaticEmail.onFishnetKey(userId, key).unit
-    },
-    "planStart" -> {
-      case lila.hub.actorApi.plan.PlanStart(userId) =>
-        automaticEmail.onPatronNew(userId).unit
-      case lila.hub.actorApi.plan.PlanGift(from, to, lifetime) =>
-        automaticEmail.onPatronGift(from, to, lifetime).unit
-    },
-    "planExpire" -> { case lila.hub.actorApi.plan.PlanExpire(userId) =>
-      automaticEmail.onPatronStop(userId).unit
-    }
-  )
-}
+  wire[MailerCli]
+
+  Bus.sub[lila.core.fishnet.NewKey]:
+    case lila.core.fishnet.NewKey(userId, key) =>
+      automaticEmail.onFishnetKey(userId, key)
+
+  Bus.sub[lila.core.plan.PlanStart]: plan =>
+    automaticEmail.onPatronNew(plan.userId)
+
+  Bus.sub[lila.core.plan.PlanGift]:
+    case lila.core.plan.PlanGift(from, to, lifetime) =>
+      automaticEmail.onPatronGift(from, to, lifetime)
+
+  Bus.sub[lila.core.plan.PlanExpire]: plan =>
+    automaticEmail.onPatronStop(plan.userId)
+
+  Bus.sub[lila.core.misc.mailer.CorrespondenceOpponents]: game =>
+    automaticEmail.dailyCorrespondenceNotice(game.userId, game.opponents)
+
+trait CanSendEmails

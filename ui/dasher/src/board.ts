@@ -1,105 +1,202 @@
-import { h, VNode } from 'snabbdom';
-import { Redraw, Close, bind, header } from './util';
-import debounce from 'common/debounce';
-import * as xhr from 'common/xhr';
+import { type Toggle, toggle } from 'lib';
+import { licon } from 'lib/licon';
+import { pubsub } from 'lib/pubsub';
+import { bind, hl, onInsert, type VNode } from 'lib/view';
+import { text as xhrText, form as xhrForm } from 'lib/xhr';
 
-export interface BoardCtrl {
-  data: BoardData;
-  trans: Trans;
-  setIs3d(v: boolean): void;
-  readZoom(): number;
-  setZoom(v: number): void;
-  close(): void;
-}
+import type { DasherCtrl } from '@/ctrl';
 
-export interface BoardData {
-  is3d: boolean;
-}
+import { type Dimension, PaneCtrl, type Range } from './interfaces';
+import { header, moreButton } from './util';
 
-export type PublishZoom = (v: number) => void;
+export class BoardCtrl extends PaneCtrl {
+  sliderKey: number = Date.now(); // changing the value attribute doesn't always flush to DOM.
+  featured: Record<Dimension, string[]> = { d2: [], d3: [] };
+  more: Toggle;
 
-export function ctrl(data: BoardData, trans: Trans, redraw: Redraw, close: Close): BoardCtrl {
-  const readZoom = () => parseInt(getComputedStyle(document.body).getPropertyValue('--zoom')) + 100;
+  constructor(root: DasherCtrl) {
+    super(root);
+    this.more = toggle(false, root.redraw);
+    for (const dim of ['d2', 'd3'] as Dimension[]) {
+      this.featured[dim] = this.data[dim].list.filter(t => t.featured).map(t => t.name);
+    }
+  }
 
-  const saveZoom = debounce(
-    () =>
-      xhr
-        .text('/pref/zoom?v=' + readZoom(), { method: 'post' })
-        .catch(() => lichess.announce({ msg: 'Failed to save zoom' })),
-    1000
-  );
+  get boardList(): string[] {
+    const all = this.data[this.dimension].list.map(t => t.name);
+    const visible = this.featured[this.dimension].slice();
+    if (!visible.includes(this.current)) visible.push(this.current);
+    return this.more() ? all : visible;
+  }
 
-  return {
-    data,
-    trans,
-    setIs3d(v: boolean) {
-      data.is3d = v;
-      xhr
-        .text('/pref/is3d', {
-          body: xhr.form({ is3d: v }),
-          method: 'post',
-        })
-        .then(lichess.reload, _ => lichess.announce({ msg: 'Failed to save geometry  preference' }));
-      redraw();
-    },
-    readZoom,
-    setZoom(v: number) {
-      document.body.setAttribute('style', '--zoom:' + (v - 100));
-      window.dispatchEvent(new Event('resize'));
-      redraw();
-      saveZoom();
-    },
-    close,
+  render = (): VNode =>
+    hl(`div.sub.board.${this.dimension}`, [
+      header(i18n.site.board, this.close),
+      hl('div.selector.large', [
+        hl(
+          'button.text',
+          {
+            class: { active: !this.is3d },
+            attrs: { 'data-icon': licon.Checkmark, type: 'button' },
+            hook: bind('click', () => this.set3d(false)),
+          },
+          '2D',
+        ),
+        hl(
+          'button.text',
+          {
+            class: { active: this.is3d },
+            attrs: { 'data-icon': licon.Checkmark, type: 'button' },
+            hook: bind('click', () => this.set3d(true)),
+          },
+          '3D',
+        ),
+      ]),
+      this.propSliders(),
+      this.showReset() &&
+        hl(
+          'button.text.reset',
+          {
+            attrs: { 'data-icon': licon.Back, type: 'button' },
+            hook: bind('click', this.reset),
+          },
+          i18n.site.boardReset,
+        ),
+      hl(
+        'div.list',
+        this.boardList.map((t: string) =>
+          hl(
+            'button',
+            {
+              key: t,
+              hook: bind('click', () => this.setBoard(t)),
+              attrs: { title: t, type: 'button' },
+              class: { active: this.current === t },
+            },
+            hl('span.preview', hl('span.' + t)),
+          ),
+        ),
+      ),
+      moreButton(this.more),
+    ]);
+
+  private get data() {
+    return this.root.data.board;
+  }
+
+  private get current() {
+    return this.data[this.dimension].current;
+  }
+
+  private set current(t: string) {
+    this.data[this.dimension].current = t;
+  }
+
+  private readonly setBoard = (t: string) => {
+    this.apply(t);
+    const field = `theme${this.is3d ? '3d' : ''}`;
+    xhrText(`/pref/${field}`, { body: xhrForm({ [field]: t }), method: 'post' }).catch(() =>
+      site.announce({ msg: 'Failed to save theme preference' }),
+    );
+    this.redraw();
   };
-}
 
-export function view(ctrl: BoardCtrl): VNode {
-  const domZoom = ctrl.readZoom();
+  private readonly reset = () => {
+    this.defaults
+      .filter(([prop, v]) => this.getVar(prop) !== v)
+      .forEach(([prop, v], i) => {
+        this.setVar(prop, v);
+        setTimeout(() => this.postPref(prop), i * 1100); // hack around debounce
+      });
+    this.showReset(false);
+    this.sliderKey = Date.now();
+    document.body.classList.add('simple-board');
+    this.redraw();
+  };
 
-  return h('div.sub.board', [
-    header(ctrl.trans.noarg('boardGeometry'), ctrl.close),
-    h('div.selector.large', [
-      h(
-        'a.text',
-        {
-          class: { active: !ctrl.data.is3d },
-          attrs: { 'data-icon': '' },
-          hook: bind('click', () => ctrl.setIs3d(false)),
-        },
-        '2D'
+  private readonly setVar = (prop: string, v: number) => {
+    this.showReset(this.showReset() || !this.isDefault());
+    document.body.style.setProperty(`---${prop}`, v.toString());
+    document.body.classList.toggle('simple-board', this.isDefault());
+    if (prop === 'zoom') window.dispatchEvent(new Event('resize'));
+  };
+
+  private readonly set3d = async (v: boolean) => {
+    if (this.is3d === v) return;
+    this.data.is3d = v;
+    xhrText('/pref/is3d', { body: xhrForm({ is3d: v }), method: 'post' }).catch(() =>
+      site.announce({ msg: 'Failed to save preference' }),
+    );
+
+    if (v) await site.asset.loadCss({ key: 'lib.board-3d' });
+    else site.asset.removeCss({ key: 'lib.board-3d' });
+    $('#main-wrap')
+      .removeClass(v ? 'is2d' : 'is3d')
+      .addClass(v ? 'is3d' : 'is2d');
+    this.apply();
+    this.redraw();
+  };
+
+  private readonly apply = (t: string = this.current) => {
+    this.current = t;
+    document.body.dataset[this.is3d ? 'board3d' : 'board'] = t;
+    pubsub.emit('board.change', this.is3d);
+    this.root?.piece.apply();
+  };
+
+  private readonly defaults: [string, number][] = [
+    ['board-opacity', 100],
+    ['board-brightness', 100],
+    ['board-contrast', 100],
+    ['board-hue', 0],
+  ];
+
+  private readonly isDefault = () => this.defaults.every(([prop, v]) => this.getVar(prop) === v);
+  private readonly showReset = toggle(!this.isDefault());
+
+  private readonly propSliders = () => {
+    const sliders = [];
+    if (!Number.isNaN(this.getVar('zoom')))
+      sliders.push(this.propSlider('zoom', i18n.site.size, { min: 0, max: 100, step: 1 }));
+    if (document.body.dataset.theme?.includes('transp'))
+      sliders.push(this.propSlider('board-opacity', i18n.site.opacity, { min: 0, max: 100, step: 1 }));
+    sliders.push(
+      this.propSlider('board-brightness', i18n.site.brightness, { min: 20, max: 140, step: 1 }),
+      this.propSlider('board-contrast', i18n.site.contrast, { min: 40, max: 200, step: 2 }),
+      this.propSlider(
+        'board-hue',
+        i18n.site.hue,
+        { min: 0, max: 100, step: 1 },
+        v => `+ ${Math.round(v * 3.6)}°`,
       ),
-      h(
-        'a.text',
-        {
-          class: { active: ctrl.data.is3d },
-          attrs: { 'data-icon': '' },
-          hook: bind('click', () => ctrl.setIs3d(true)),
-        },
-        '3D'
-      ),
-    ]),
-    h(
-      'div.zoom',
-      isNaN(domZoom)
-        ? [h('p', 'No board to zoom here!')]
-        : [
-            h('p', [ctrl.trans.noarg('boardSize'), ': ', domZoom - 100, '%']),
-            h('input.range', {
-              attrs: {
-                type: 'range',
-                min: 100,
-                max: 200,
-                step: 1,
-                value: ctrl.readZoom(),
-              },
-              hook: {
-                insert(vnode) {
-                  const input = vnode.elm as HTMLInputElement;
-                  $(input).on('input', () => ctrl.setZoom(parseInt(input.value)));
-                },
-              },
-            }),
-          ]
-    ),
-  ]);
+    );
+    return sliders;
+  };
+
+  private readonly propSlider = (prop: string, label: string, range: Range, title?: (v: number) => string) =>
+    hl(
+      `div.${prop}`,
+      { attrs: { title: title ? title(this.getVar(prop)) : `${Math.round(this.getVar(prop))}%` } },
+      [
+        hl('label', label),
+        hl('input.range', {
+          key: this.sliderKey + prop,
+          attrs: { ...range, type: 'range', value: this.getVar(prop) },
+          hook: onInsert<HTMLInputElement>(input => {
+            const setAndSave = (v: number) => {
+              if (v < range.min || v > range.max) return;
+              this.setVar(prop, v);
+              this.redraw();
+              this.postPref(prop);
+            };
+            $(input)
+              .on('input', () => setAndSave(parseInt(input.value)))
+              .on('wheel', e => {
+                e.preventDefault();
+                setAndSave(this.getVar(prop) + (e.deltaY > 0 ? -range.step : range.step));
+              });
+          }),
+        }),
+      ],
+    );
 }

@@ -1,7 +1,15 @@
-import { h, VNode } from 'snabbdom';
-import { Redraw, Close, bind, header } from './util';
-import throttle from 'common/throttle';
-import * as xhr from 'common/xhr';
+import { h, type VNode } from 'snabbdom';
+
+import { throttle, throttlePromiseDelay } from 'lib/async';
+import { isSafari } from 'lib/device';
+import { licon } from 'lib/licon';
+import { bind, dataIcon, onInsert, snabDialog } from 'lib/view';
+import { text as xhrText, form as xhrForm } from 'lib/xhr';
+
+import type { DasherCtrl } from '@/ctrl';
+
+import { PaneCtrl } from './interfaces';
+import { header } from './util';
 
 type Key = string;
 
@@ -12,107 +20,159 @@ export interface SoundData {
   list: Sound[];
 }
 
-export interface SoundCtrl {
-  makeList(): Sound[];
-  api: SoundI;
-  set(k: Key): void;
-  volume(v: number): void;
-  redraw: Redraw;
-  trans: Trans;
-  close: Close;
-}
+export class SoundCtrl extends PaneCtrl {
+  private readonly list: Sound[];
 
-export function ctrl(raw: string[], trans: Trans, redraw: Redraw, close: Close): SoundCtrl {
-  const list: Sound[] = raw.map(s => s.split(' '));
+  constructor(root: DasherCtrl) {
+    super(root);
+    this.list = this.root.data.sound.list.map(s => s.split(' '));
+  }
 
-  const api = lichess.sound;
-
-  const postSet = (set: string) =>
-    xhr
-      .text('/pref/soundSet', {
-        body: xhr.form({ set }),
-        method: 'post',
-      })
-      .catch(() => lichess.announce({ msg: 'Failed to save sound preference' }));
-
-  return {
-    makeList() {
-      const canSpeech = window.speechSynthesis?.getVoices().length;
-      return list.filter(s => s[0] != 'speech' || canSpeech);
-    },
-    api,
-    set(k: Key) {
-      api.speech(k == 'speech');
-      lichess.pubsub.emit('speech.enabled', api.speech());
-      if (api.speech()) {
-        api.changeSet('standard');
-        postSet('standard');
-        api.say('Speech synthesis ready');
-      } else {
-        api.changeSet(k);
-        api.play('genericNotify');
-        postSet(k);
-      }
-      redraw();
-    },
-    volume(v: number) {
-      api.setVolume(v);
-      // plays a move sound if speech is off
-      api.sayOrPlay('move', 'knight F 7');
-    },
-    redraw,
-    trans,
-    close,
-  };
-}
-
-export function view(ctrl: SoundCtrl): VNode {
-  const current = ctrl.api.speech() ? 'speech' : ctrl.api.soundSet;
-
-  return h(
-    'div.sub.sound.' + current,
-    {
-      hook: {
-        insert() {
-          if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = ctrl.redraw;
+  render = (): VNode => {
+    return h(
+      'div.sub.sound.' + site.sound.theme,
+      {
+        hook: {
+          insert: () => {
+            if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = this.redraw;
+          },
         },
       },
-    },
-    [
-      header(ctrl.trans('sound'), ctrl.close),
-      h('div.content', [
-        h('input', {
-          attrs: {
-            type: 'range',
-            min: 0,
-            max: 1,
-            step: 0.01,
-            value: ctrl.api.getVolume(),
-            orient: 'vertical',
-          },
-          hook: {
-            insert(vnode) {
-              const input = vnode.elm as HTMLInputElement,
-                setVolume = throttle(150, ctrl.volume);
-              $(input).on('input', () => setVolume(parseFloat(input.value)));
+      [
+        header(i18n.site.sound, this.close),
+        h('div.content.force-ltr', [
+          h('input', {
+            attrs: {
+              type: 'range',
+              min: 0,
+              max: 1,
+              step: 0.01,
+              value: site.sound.getVolume(),
+              orient: 'vertical',
+              style: isSafari({ below: '18' }) ? 'appearance: slider-vertical' : '',
             },
-          },
-        }),
-        h('div.selector', ctrl.makeList().map(soundView(ctrl, current))),
-      ]),
-    ]
-  );
-}
-
-function soundView(ctrl: SoundCtrl, current: Key) {
-  return (s: Sound) =>
-    h(
-      'a.text',
-      {
-        hook: bind('click', () => ctrl.set(s[0])),
-        class: { active: current === s[0] },
-        attrs: { 'data-icon': '' },
-      },
-      s[1]
+            hook: onInsert<HTMLInputElement>(input => {
+              const setVolume = throttle(150, this.volume);
+              $(input).on('input', () => setVolume(parseFloat(input.value)));
+            }),
+          }),
+          h(
+            'div.selector',
+            this.makeList().map(s =>
+              h(
+                'button.text',
+                {
+                  hook: bind('click', () => this.set(s[0])),
+                  class: { active: site.sound.theme === s[0] },
+                  attrs: { ...dataIcon(licon.Checkmark), type: 'button' },
+                },
+                [s[1], s[0] === 'speech' ? '...' : ''],
+              ),
+            ),
+          ),
+        ]),
+      ],
     );
+  };
+
+  private readonly voiceSelectionDialog = () => {
+    if (!site.sound.getVoiceMap().size) return undefined;
+    return snabDialog({
+      closeButton: true,
+      class: 'voice-selection',
+      show: true,
+      modal: true,
+      easyClose: 'clickOutside',
+      render: redraw => this.renderVoiceSelection(redraw),
+      onShow: dlg => {
+        dlg.view.querySelector('.active')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      },
+    });
+  };
+
+  private readonly setVoiceRate = (v: string) => {
+    localStorage.setItem('speech.rate', v);
+    if (this.rateInput) this.rateInput.value = v;
+    site.sound.say('Speech synthesis ready');
+  };
+  private rateInput?: HTMLInputElement;
+
+  private renderVoiceSelection(redraw: Redraw): VNode[] {
+    const selectedVoice = site.sound.getVoice();
+    const voiceMap = site.sound.getVoiceMap();
+    const rate = Number(localStorage.getItem('speech.rate')) || 1;
+    return [
+      h('div.rate', [
+        'Speech rate',
+        h('input.rate', {
+          attrs: { ...site.sound.voiceRateRange, step: 0.05, type: 'range', value: rate },
+          hook: onInsert<HTMLInputElement>(el => {
+            this.rateInput = el;
+            el.onchange = () => this.setVoiceRate(el.value);
+          }),
+        }),
+        h('button', {
+          attrs: { type: 'button', ...dataIcon(licon.Back) },
+          hook: bind('click', () => this.setVoiceRate('1')),
+        }),
+      ]),
+      h(
+        'div.selector',
+        [...voiceMap.keys()]
+          .sort((a, b) => a.localeCompare(b))
+          .map(name =>
+            h(
+              'button.text',
+              {
+                hook: bind('click', event => {
+                  const target = event.target as HTMLElement;
+                  site.sound.setVoice(voiceMap.get(target.textContent)!);
+                  site.sound.say('Speech synthesis ready');
+                  redraw();
+                }),
+                class: { active: name === selectedVoice?.name },
+                attrs: {
+                  ...(name === selectedVoice?.name ? dataIcon(licon.Checkmark) : {}),
+                  type: 'button',
+                },
+              },
+              name,
+            ),
+          ),
+      ),
+    ];
+  }
+
+  private readonly postSet = throttlePromiseDelay(
+    () => 1000,
+    (soundSet: string) =>
+      xhrText('/pref/soundSet', { body: xhrForm({ soundSet }), method: 'post' }).catch(() =>
+        site.announce({ msg: 'Failed to save sound preference' }),
+      ),
+  );
+
+  private readonly makeList = () => {
+    const canSpeech = window.speechSynthesis?.getVoices().length;
+    return this.list.filter(s => s[0] !== 'speech' || canSpeech);
+  };
+
+  private readonly set = (k: Key) => {
+    if (k === 'speech') {
+      this.voiceSelectionDialog();
+      site.sound.say('Speech synthesis ready');
+      site.sound.changeSet('speech');
+      this.postSet('speech');
+    } else {
+      site.sound.changeSet(k);
+      site.sound.play('genericNotify');
+      this.postSet(k);
+    }
+    this.redraw();
+  };
+
+  private readonly volume = (v: number) => {
+    site.sound.setVolume(v);
+    // plays a move sound if speech is off
+    site.sound.sayOrPlay('move', 'knight F 7', true);
+  };
 }

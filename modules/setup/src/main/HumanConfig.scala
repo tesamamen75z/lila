@@ -1,17 +1,9 @@
 package lila.setup
 
-import chess.Mode
+import chess.Rated
 
-private[setup] trait HumanConfig extends Config {
+private[setup] trait HumanConfig extends Config:
 
-  // casual or rated
-  val mode: Mode
-}
+  val rated: Rated
 
-private[setup] trait BaseHumanConfig extends BaseConfig {
-
-  val modes = Mode.all map (_.id)
-  val modeChoices = Mode.all map { e =>
-    e.id.toString -> e.toString
-  }
-}
+  def isRatedUnlimited = rated.yes && !hasClock && makeDaysPerTurn.isEmpty

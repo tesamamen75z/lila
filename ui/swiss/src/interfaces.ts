@@ -1,9 +1,3 @@
-import { VNode } from 'snabbdom';
-
-export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
-export type Redraw = () => void;
-
 export interface SwissOpts {
   data: SwissData;
   userId?: string;
@@ -12,8 +6,8 @@ export interface SwissOpts {
   $side: Cash;
   socketSend: SocketSend;
   chat: any;
-  i18n: I18nDict;
   classes: string | null;
+  showRatings: boolean;
 }
 
 export interface SwissData {
@@ -84,6 +78,8 @@ export interface Standing {
 
 export type Outcome = 'absent' | 'late' | 'bye';
 
+export type Sheet = (PairingBase | Outcome)[];
+
 export interface BasePlayer {
   user: LightUser;
   rating: number;
@@ -96,13 +92,13 @@ export interface BasePlayer {
 }
 
 export interface PodiumPlayer extends BasePlayer {
-  engine?: boolean;
+  lame?: boolean;
 }
 
 export interface Player extends BasePlayer {
   rank: number;
   sheetMin: string;
-  sheet: (PairingBase | Outcome)[];
+  sheet: Sheet;
 }
 
 export interface Board {
@@ -123,29 +119,14 @@ export interface BoardPlayer extends BasePlayer {
   rank: number;
 }
 
-export interface PerfType {
-  icon: string;
-  name: string;
-}
-
 export interface Clock {
   limit: number;
   increment: number;
 }
 
-export interface Pager {
-  nbResults: number;
-  nbPages: number;
-  from: number;
-  to: number;
-  currentPageResults: Page;
-}
-
 export type Page = Player[];
 
-export interface Pages {
-  [n: number]: Page;
-}
+export type Pages = Record<number, Page>;
 
 export interface PlayerExt extends Player {
   sheet: (PairingExt | Outcome)[];

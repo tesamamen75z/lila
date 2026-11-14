@@ -1,60 +1,101 @@
 package lila.mailer
 
-import akka.actor.ActorSystem
-import io.methvin.play.autoconfig._
-import play.api.i18n.Lang
+import org.apache.commons.mail.EmailException
+import org.apache.pekko.actor.ActorSystem
+import play.api.ConfigLoader
 import play.api.libs.mailer.{ Email, SMTPConfiguration, SMTPMailer }
-import scala.concurrent.duration.{ span => _, _ }
-import scala.concurrent.{ blocking, Future }
-import scalatags.Text.all.{ html => htmlTag, _ }
-import scalatags.Text.tags2.{ title => titleTag }
+import scalatags.Text.all.{ html as htmlTag, * }
+import scalatags.Text.tags2.title as titleTag
 
-import lila.common.String.html.{ nl2br }
-import lila.common.{ Chronometer, EmailAddress, ThreadLocalRandom }
-import lila.i18n.I18nKeys.{ emails => trans }
+import scala.concurrent.blocking
+
+import lila.common.String.html.nl2br
+import lila.common.autoconfig.*
+import lila.core.i18n.I18nKey.emails as trans
+import lila.core.i18n.Translate
+import lila.mon.extensions.*
 
 final class Mailer(
     config: Mailer.Config,
+    canSendEmails: lila.memo.SettingStore[Boolean],
     getSecondaryPermille: () => Int
-)(implicit system: ActorSystem) {
+)(using system: ActorSystem, scheduler: Scheduler):
 
-  implicit private val blockingExecutionContext = system.dispatchers.lookup("blocking-smtp-dispatcher")
+  private given blockingExecutor: Executor =
+    system.dispatchers.lookup("blocking-smtp-dispatcher")
 
-  private val primaryClient   = new SMTPMailer(config.primary.toClientConfig)
-  private val secondaryClient = new SMTPMailer(config.secondary.toClientConfig)
+  enum Client(val mailer: SMTPMailer, val config: Mailer.Smtp):
+    case primary extends Client(SMTPMailer(config.primary.toClientConfig), config.primary)
+    case secondary extends Client(SMTPMailer(config.secondary.toClientConfig), config.secondary)
 
-  private def randomClient(): (SMTPMailer, Mailer.Smtp) =
-    if (ThreadLocalRandom.nextInt(1000) < getSecondaryPermille()) (secondaryClient, config.secondary)
-    else (primaryClient, config.primary)
+  private[mailer] def getClient(name: String): Option[Client] = name.toLowerCase match
+    case "primary" => Client.primary.some
+    case "secondary" => Client.secondary.some
+    case _ => none
 
-  def send(msg: Mailer.Message): Funit =
-    if (msg.to.isNoReply) {
+  private def randomClientFor(recipient: EmailAddress): Client =
+    // Stick to one mailer for each recipient, because each mailer may have its
+    // own supression list.
+    if recipient.normalize.value.hashCode.abs % 1000 < getSecondaryPermille()
+    then Client.secondary
+    else Client.primary
+
+  def canSend = canSendEmails.get()
+
+  def sendOrFail(msg: Mailer.Message): Funit = send(msg, orFail = true, retry = Mailer.Retry(3))
+  def sendOrSkip(msg: Mailer.Message): Funit = send(msg, orFail = false, retry = Mailer.Retry(0))
+
+  def sendTest(msg: Mailer.Message, client: Client): Funit =
+    send(msg, orFail = true, retry = Mailer.Retry(0), forceClient = client.some)
+
+  private def send(
+      msg: Mailer.Message,
+      orFail: Boolean,
+      retry: Mailer.Retry,
+      forceClient: Option[Client] = None
+  ): Funit =
+    if !canSend then
+      logger.warn("Can't send any emails due to live setting")
+      funit
+    else if msg.to.isNoReply then
       logger.warn(s"Can't send ${msg.subject} to noreply email ${msg.to}")
       funit
-    } else
-      Future {
-        Chronometer.syncMon(_.email.send.time) {
-          blocking {
-            val (client, config) = randomClient()
-            client
-              .send(
-                Email(
-                  subject = msg.subject,
-                  from = config.sender,
-                  to = Seq(msg.to.value),
-                  bodyText = msg.text.some,
-                  bodyHtml = msg.htmlBody map { body => Mailer.html.wrap(msg.subject, body).render }
-                )
-              )
-              .unit
-          }
-        }
-      }
-}
+    else
+      val client = forceClient.getOrElse(randomClientFor(msg.to))
+      Future:
+        val email = Email(
+          subject = msg.subject,
+          from = client.config.sender,
+          to = Seq(msg.to.value),
+          bodyText = msg.text.some,
+          bodyHtml = msg.htmlBody.map(body => Mailer.html.wrap(msg.subject, body).render)
+        )
+        blocking:
+          client.mailer.send(email)
+      .monSuccess(lila.mon.email.send.time(client.toString))
+        .recoverWith:
+          case _: EmailException if msg.to.normalize.value != msg.to.value =>
+            logger.warn(s"Email ${msg.to} is invalid, trying ${msg.to.normalize}")
+            send(msg.copy(to = msg.to.normalize.into(EmailAddress)), orFail, retry, forceClient)
+          case e: Exception =>
+            retry.again match
+              case None if orFail => throw e
+              case None =>
+                logger.warn(s"Couldn't send email via ${client.toString} to ${msg.to}: ${e.getMessage}")
+                funit
+              case Some(nextTry) =>
+                logger.info:
+                  s"Will retry to send email via ${client.toString} to ${msg.to} after: ${e.getMessage}"
+                scheduler.scheduleOnce(nextTry.delay)(send(msg, orFail, nextTry, forceClient))
+                funit
+        .void
 
-object Mailer {
+object Mailer:
 
-  private val timeout = 5 seconds
+  private val timeout = 5.seconds
+
+  case class Retry(times: Int, delay: FiniteDuration = 20.seconds):
+    def again = Option.when(times > 0)(Retry(times - 1, delay * 2))
 
   case class Smtp(
       mock: Boolean,
@@ -64,7 +105,7 @@ object Mailer {
       user: String,
       sender: String,
       password: String
-  ) {
+  ):
     def toClientConfig = SMTPConfiguration(
       host = host,
       port = port,
@@ -74,14 +115,10 @@ object Mailer {
       mock = mock,
       timeout = Mailer.timeout.toMillis.toInt.some
     )
-  }
-  implicit val smtpLoader = AutoConfig.loader[Smtp]
+  given ConfigLoader[Smtp] = AutoConfig.loader[Smtp]
 
-  case class Config(
-      primary: Smtp,
-      secondary: Smtp
-  )
-  implicit val configLoader = AutoConfig.loader[Config]
+  case class Config(primary: Smtp, secondary: Smtp)
+  given ConfigLoader[Config] = AutoConfig.loader[Config]
 
   case class Message(
       to: EmailAddress,
@@ -90,30 +127,30 @@ object Mailer {
       htmlBody: Option[Frag] = none
   )
 
-  object txt {
+  object txt:
 
-    private def serviceNote(implicit lang: Lang): String = s"""
+    private def serviceNote(using Translate): String = s"""
 ${trans.common_note("https://lichess.org").render}
 
 ${trans.common_contact("https://lichess.org/contact").render}"""
 
-    def addServiceNote(body: String)(implicit lang: Lang) = s"""$body
+    def addServiceNote(body: String)(using Translate) = s"""$body
 
 $serviceNote"""
-  }
 
-  object html {
+  object html:
 
     private val itemscope = attr("itemscope").empty
-    private val itemtype  = attr("itemtype")
-    private val itemprop  = attr("itemprop")
+    private val itemtype = attr("itemtype")
+    private val itemprop = attr("itemprop")
 
     val emailMessage = div(itemscope, itemtype := "http://schema.org/EmailMessage")
-    val pDesc        = p(itemprop := "description")
+    val pDesc = p(itemprop := "description")
+    val loginCode = div(itemprop := "identifier", itemscope, itemtype := "http://schema.org/ViewAction")
     val potentialAction =
       div(itemprop := "potentialAction", itemscope, itemtype := "http://schema.org/ViewAction")
     def metaName(cont: String) = meta(itemprop := "name", content := cont)
-    val publisher              = div(itemprop := "publisher", itemscope, itemtype := "http://schema.org/Organization")
+    val publisher = div(itemprop := "publisher", itemscope, itemtype := "http://schema.org/Organization")
     val noteContact = a(itemprop := "url", href := "https://lichess.org/contact")(
       span(itemprop := "name")("lichess.org/contact")
     )
@@ -123,32 +160,32 @@ $serviceNote"""
       href := "https://lichess.org/"
     )(span(itemprop := "name")("lichess.org"))
 
-    def serviceNote(implicit lang: Lang) =
+    def serviceNote(using Translate) =
       publisher(
         small(
           trans.common_note(Mailer.html.noteLink),
           " ",
           trans.common_contact(noteContact),
           " ",
-          lila.i18n.I18nKeys.readAboutOur(
+          lila.core.i18n.I18nKey.site.readAboutOur(
             a(href := "https://lichess.org/privacy")(
-              lila.i18n.I18nKeys.privacyPolicy()
+              lila.core.i18n.I18nKey.site.privacyPolicy()
             )
           )
         )
       )
 
-    def standardEmail(body: String)(implicit lang: Lang): Frag =
+    def standardEmail(body: String)(using Translate): Frag =
       emailMessage(
         pDesc(nl2br(body)),
         serviceNote
       )
 
-    def url(u: String)(implicit lang: Lang) =
+    def url(u: Url, clickOrPaste: Boolean = true)(using Translate) =
       frag(
-        meta(itemprop := "url", content := u),
-        p(a(itemprop := "target", href := u)(u)),
-        p(trans.common_orPaste(lang))
+        meta(itemprop := "url", content := u.value),
+        p(a(itemprop := "target", href := u.value)(u.value)),
+        clickOrPaste.option(p(trans.common_linkNotWorking()))
       )
 
     private[Mailer] def wrap(subject: String, htmlBody: Frag): Frag =
@@ -163,5 +200,3 @@ $serviceNote"""
           body(htmlBody)
         )
       )
-  }
-}

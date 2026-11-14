@@ -6,19 +6,44 @@
     <item quantity="other">%s สมาชิก</item>
   </plurals>
   <string name="allTeams">ทีมทั้งหมด</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">ทีมผู้นำ</string>
   <string name="newTeam">ทีมใหม่</string>
   <string name="myTeams">ทีมของฉัน</string>
   <string name="noTeamFound">ไม่พบทีมใด</string>
   <string name="joinTeam">เข้าร่วมทีม</string>
   <string name="quitTeam">ออกจากทีม</string>
-  <string name="teamBestPlayers">ผู้เล่นที่ดีที่สุด</string>
-  <string name="teamRecentMembers">สมาชิกล่าสุดของทีม</string>
-  <string name="kickSomeone">เตะบางคนออกจากทีม</string>
-  <string name="whoToKick">คุณต้องการเตะใครออกจากทีม?</string>
-  <plurals name="xJoinRequests">
-    <item quantity="other">%s คำขอเข้าร่วม</item>
+  <plurals name="teamLeaders">
+    <item quantity="other">ผู้นำของทีม</item>
   </plurals>
+  <string name="teamRecentMembers">สมาชิกล่าสุดของทีม</string>
   <string name="willBeReviewed">คำขอเข้าร่วมของคุณจะถูกพิจารณาโดยผู้นำทีม</string>
   <string name="beingReviewed">คำขอเข้าร่วมของคุณกำลังถูกพิจารณาโดยผู้นำทีม</string>
+  <string name="requestDeclined">การข้อเข้าร่วมทีมถูกปฏิเสธโดยผู้นำทีม</string>
   <string name="teamBattle">การสู้เป็นทีม</string>
+  <string name="teamBattleOverview">การแข่งขันแบบหลายทีม ผู้เล่นแต่ละคนจะต้องทำคะแนนเพื่อทีมของตัวเอง</string>
+  <string name="teamTournament">ทัวร์นาเมนต์ทีม</string>
+  <string name="teamTournamentOverview">สังเวียนทัวร์นาเมนต์ที่สมาชิกในทีมคุณเท่านั้นที่จะเข้าร่วมได้</string>
+  <string name="swissTournamentOverview">ทัวร์นาเมนต์สวิสที่สมาชิกในทีมคุณเท่านั้นที่จะเข้าร่วมได้</string>
+  <string name="teamUpdates">อัปเดตของทีม</string>
+  <string name="subToTeamUpdates">ติดตามข่าวสารอัปเดตจากทีม</string>
+  <string name="teamEvents">รายการแข่งขันของทีม</string>
+  <string name="upcomingTeamEvents">รายการแข่งขันของทีมในเร็วๆ นี้</string>
+  <string name="teamsIlead">ทีมที่ฉันเป็นผู้นำ</string>
+  <string name="leadersChat">ผู้นำของแชท</string>
+  <string name="introduction">บทนำ</string>
+  <string name="entryCode">หรัสเข้าทีม</string>
+  <string name="entryCodeDescriptionForLeader">(เป็นตัวเลือก) เป็นรหัสที่ผู้เล่นใหม่ต้องรู้เพื่อเข้าร่วมทีม</string>
+  <string name="incorrectEntryCode">รหัสเข้าร่วมไม่ถูกต้อง</string>
+  <string name="forumLabel">กระทู้ของทีม</string>
+  <string name="teamAlreadyExists">ทีมนี้มีอยู่แล้ว</string>
+  <string name="upcomingTournaments">ทัวร์นาเมนต์ที่กำลังจะมา</string>
+  <string name="completedTourns">ทัวร์นาเมนต์ที่เสร็จสมบูรณ์</string>
+  <string name="joinLichessVariantTeam">เข้าร่วมทีม %s เพื่อดูข่าวและเหตุการณ์สำคัญ</string>
+  <string name="innerTeam">ทีมอินเนอร์</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="other">การแข่งขันของ %s ทีม</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="other">%s ผู้นำต่อทีม</item>
+  </plurals>
 </resources>

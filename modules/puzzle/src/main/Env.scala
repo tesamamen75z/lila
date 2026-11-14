@@ -1,11 +1,11 @@
 package lila.puzzle
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import scala.concurrent.duration._
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
+import lila.core.i18n.Translate
 import lila.db.AsyncColl
 
 @Module
@@ -19,70 +19,107 @@ private class PuzzleConfig(
 @Module
 final class Env(
     appConfig: Configuration,
-    renderer: lila.hub.actors.Renderer,
-    historyApi: lila.history.HistoryApi,
-    lightUserApi: lila.user.LightUserApi,
+    historyApi: lila.core.history.HistoryApi,
+    lightUserApi: lila.core.user.LightUserApi,
+    userApi: lila.core.user.UserApi,
     cacheApi: lila.memo.CacheApi,
-    gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
+    mongoCacheApi: lila.memo.MongoCache.Api,
+    gameRepo: lila.core.game.GameRepo,
+    myEngines: lila.core.misc.analysis.MyEnginesAsJson,
     mongo: lila.db.Env
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
+)(using
+    Executor,
+    org.apache.pekko.actor.ActorSystem,
+    org.apache.pekko.stream.Materializer,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+)(using
+    scheduler: Scheduler,
     mode: play.api.Mode
-) {
+):
 
-  private val config = appConfig.get[PuzzleConfig]("puzzle")(AutoConfig.loader)
+  private val config = appConfig.get[PuzzleConfig]("puzzle")(using AutoConfig.loader)
 
-  private lazy val db = mongo.asyncDb("puzzle", config.mongoUri)
+  private val db = mongo.asyncDb("puzzle", config.mongoUri)
 
-  lazy val colls = new PuzzleColls(
+  val colls = PuzzleColls(
     puzzle = db(config.puzzleColl),
     round = db(config.roundColl),
     path = db(config.pathColl)
   )
 
-  private lazy val gameJson: GameJson = wire[GameJson]
+  private val gameJson: GameJson = wire[GameJson]
 
-  lazy val jsonView = wire[JsonView]
+  val jsonView = wire[JsonView]
 
-  private lazy val pathApi = wire[PuzzlePathApi]
+  private val pathApi = wire[PuzzlePathApi]
 
-  private lazy val trustApi = wire[PuzzleTrustApi]
+  private val trustApi = wire[PuzzleTrustApi]
 
-  private lazy val countApi = wire[PuzzleCountApi]
+  val opening = wire[PuzzleOpeningApi]
 
-  lazy val api: PuzzleApi = wire[PuzzleApi]
+  private val countApi = wire[PuzzleCountApi]
 
-  lazy val session: PuzzleSessionApi = wire[PuzzleSessionApi]
+  val api: PuzzleApi = wire[PuzzleApi]
 
-  lazy val anon: PuzzleAnon = wire[PuzzleAnon]
+  val session: PuzzleSessionApi = wire[PuzzleSessionApi]
 
-  lazy val batch: PuzzleBatch = wire[PuzzleBatch]
+  val anon: PuzzleAnon = wire[PuzzleAnon]
 
-  lazy val finisher = wire[PuzzleFinisher]
+  val selector: PuzzleSelector = wire[PuzzleSelector]
 
-  lazy val forms = PuzzleForm
+  val batch: PuzzleBatch = wire[PuzzleBatch]
 
-  lazy val daily = wire[DailyPuzzle]
+  val finisher = wire[PuzzleFinisher]
 
-  lazy val activity = wire[PuzzleActivity]
+  val forms = PuzzleForm
 
-  lazy val dashboard = wire[PuzzleDashboardApi]
+  val daily = wire[DailyPuzzle]
 
-  lazy val replay = wire[PuzzleReplayApi]
+  val activity = wire[PuzzleActivity]
 
-  lazy val history = wire[PuzzleHistoryApi]
+  val dashboard = wire[PuzzleDashboardApi]
 
-  lazy val streak = wire[PuzzleStreakApi]
+  val replay = wire[PuzzleReplayApi]
 
-  if (mode == play.api.Mode.Prod)
-    system.scheduler.scheduleAtFixedRate(1 hour, 1 hour) { () =>
-      pathApi.isStale foreach { stale =>
-        if (stale) logger.error("Puzzle paths appear to be stale! check that the regen cron is up")
+  val history = wire[PuzzleHistoryApi]
+
+  val streak = wire[PuzzleStreakApi]
+
+  val complete = wire[PuzzleComplete]
+
+  private val tagger = wire[PuzzleTagger]
+
+  val tryDailyPuzzle: lila.puzzle.DailyPuzzle.Try = () =>
+    Future {
+      daily.get
+    }.flatMap(identity)
+      .withTimeoutDefault(50.millis, none)
+      .recover { case e: Exception =>
+        logger.warn("daily", e)
+        none
       }
+
+  def streakJsonAndPuzzle(using Option[Me], Translate) =
+    given Perf = lila.rating.Perf.default
+    streak.apply.flatMapz { case PuzzleStreak(ids, puzzle) =>
+      jsonView.streak(puzzle = puzzle, ids = ids).dmap(some)
     }
-}
+
+  lila.common.Cli.handle():
+    case "puzzle" :: "opening" :: "recompute" :: "all" :: Nil =>
+      opening.recomputeAll
+      fuccess("started in background")
+    case "puzzle" :: "issue" :: id :: issue :: Nil =>
+      api.puzzle.setIssue(PuzzleId(id), issue).map(if _ then "done" else "not found")
+
+  scheduler.scheduleAtFixedRate(10.minutes, 1.day): () =>
+    tagger.addAllMissing
+
+  if mode.isProd then
+    scheduler.scheduleAtFixedRate(10.minutes, 10.minutes): () =>
+      pathApi.isStale.foreach: stale =>
+        if stale then logger.error("Puzzle paths appear to be stale! check that the regen cron is up")
 
 final class PuzzleColls(
     val puzzle: AsyncColl,

@@ -1,6 +1,9 @@
-package lila
+package lila.insight
 
-package object insight extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[insight] def logger = lila.log("insight")
-}
+private lazy val logger = lila.log("insight")
+
+val maxGames = Max(15_000)
+val minDate = instantOf(2023, 1, 1, 0, 0)

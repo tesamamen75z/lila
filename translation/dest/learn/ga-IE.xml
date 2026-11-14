@@ -131,6 +131,7 @@ Díreach in aice lena bhanríon.</string>
 Déan aon bheart le leanúint.</string>
   <string name="boardSetupComplete">Comhghairdeas! Tá a fhios agat anois leagan amach clár fichille.</string>
   <string name="castling">Caisliú</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Beart speisialta an rí</string>
   <string name="castlingIntro">Cuir do rí chuig sábháilteachta, agus scaoil do caiseal le haghaidh ionsaí!</string>
   <string name="castleKingSide">Bog do rí dhá chearnóg
@@ -154,7 +155,6 @@ caisliú ar taobh an rí!</string>
   <string name="findAWayToCastleQueenSide">Faigh bealach chun
 caisliú ar taobh na mbanríon!</string>
   <string name="castlingComplete">Comhghairdeas! Ba chóir duit caisliú i gcluiche beagnach i gcónaí.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Beart speisialta an ceithearnach</string>
   <string name="enPassantIntro">Nuair a bogann ceithearnach do chéile comhraic dhá chearnóg, tá cead é a mharú mar a bhog sé le cearnóg amháin.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Bog dubh an ceithearnach
@@ -179,7 +179,7 @@ nuair atá do cheithearnach ar an 5ú céim.</string>
   <string name="evaluatePieceStrength">Luacháil láidreacht na píosaí</string>
   <string name="pieceValueIntro">Tá luach níos airde ag píosaí a bhfuil soghluaisteacht ard acu!
 Banríon = 9
-Rook = 5
+Caiseal = 5
 Easpag = 3
 Ridire = 3
 Ceithearnach = 1
@@ -197,7 +197,7 @@ Déan cinnte go bhfuil do bheart dlíthiúil!</string>
 leis an luach is airde!</string>
   <string name="pieceValueComplete">Comhghairdeas! Tá luach na píosaí ar eolas agat!
 Banríon = 9
-Rook = 5
+Caiseal = 5
 Easpag = 3
 Ridire = 3
 Ceithearnach = 1</string>
@@ -234,8 +234,8 @@ i dhá bheart!</string>
   <string name="nailedIt">Ceart.</string>
   <string name="rightOn">Mar sin!</string>
   <string name="stageXComplete">Léibhéal %s críochnaithe</string>
-  <string name="yourScore">Do scór</string>
   <string name="next">Ar Aghaidh</string>
+  <string name="nextX">Ar Aghaidh: %s</string>
   <string name="backToMenu">Ar ais don roghchlár</string>
   <string name="puzzleFailed">Theip ar an bhfadhb!</string>
   <string name="retry">Bain triail as arís</string>

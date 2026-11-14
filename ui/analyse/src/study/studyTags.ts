@@ -1,86 +1,169 @@
-import { h, thunk, VNode } from 'snabbdom';
-import throttle from 'common/throttle';
-import { option, onInsert } from '../util';
-import AnalyseCtrl from '../ctrl';
-import { StudyCtrl, StudyChapter } from './interfaces';
+import { h, thunk, type VNode } from 'snabbdom';
 
-export interface TagsCtrl {
-  submit(type: string): (tag: string) => void;
-  getChapter(): StudyChapter;
-  types: string[];
+import { prop } from 'lib';
+import { throttle } from 'lib/async';
+import type { StatusName } from 'lib/game';
+import { enter, onInsert } from 'lib/view';
+
+import { option } from '../view/util';
+import type { TagArray, TagMap } from './interfaces';
+import { looksLikeLichessGame } from './studyChapters';
+import type StudyCtrl from './studyCtrl';
+
+export const tagsToMap = (tags: TagArray[]): TagMap => {
+  const map = new Map<string, string>();
+  tags.forEach(([k, v]) => map.set(k.toLowerCase(), v));
+  return map;
+};
+
+export class TagsForm {
+  selectedType = prop<string | undefined>(undefined);
+  constructor(
+    private readonly root: StudyCtrl,
+    readonly types: string[],
+  ) {}
+
+  getChapter = () => this.root.data.chapter;
+
+  private readonly makeChange = throttle(500, (name: string, value: string) => {
+    this.root.makeChange('setTag', {
+      chapterId: this.getChapter().id,
+      name,
+      value: value.slice(0, 140),
+    });
+  });
+
+  editable = () => this.root.vm.mode.write;
+
+  submit = (name: string, value: string) => this.editable() && this.makeChange(name, value);
 }
 
-function editable(value: string, submit: (v: string, el: HTMLInputElement) => void): VNode {
-  return h('input', {
+export const tagsResult = (tags: TagArray[]): [Color | undefined, StatusName] => {
+  const r = tags.find(r => r[0] === 'Result')?.[1];
+  return r === '1-0'
+    ? ['white', 'unknownFinish']
+    : r === '0-1'
+      ? ['black', 'unknownFinish']
+      : r === '1/2-1/2'
+        ? [undefined, 'draw']
+        : [undefined, 'created'];
+};
+
+export function view(root: StudyCtrl): VNode {
+  const chapter = root.tags.getChapter();
+  const tagKey = chapter.tags.map(t => t[1]).join(',');
+  const key = chapter.id + root.data.name + chapter.name + root.data.likes + tagKey + root.vm.mode.write;
+  return thunk('div.' + chapter.id, doRender, [root, key]);
+}
+
+const doRender = (root: StudyCtrl): VNode => h('div', renderPgnTags(root.tags, root.data.showRatings));
+
+const editable = (
+  name: string,
+  value: string,
+  submit: (n: string, v: string, el: HTMLInputElement) => void,
+): VNode =>
+  h('input', {
     key: value, // force to redraw on change, to visibly update the input value
-    attrs: {
-      spellcheck: false,
-      value,
-    },
+    attrs: { spellcheck: 'false', ...inputAttrs[name], maxlength: 140, value },
     hook: onInsert<HTMLInputElement>(el => {
-      el.onblur = function () {
-        submit(el.value, el);
-      };
-      el.onkeydown = function (e) {
-        if (e.key === 'Enter') el.blur();
-      };
+      el.onblur = () => el.checkValidity() && submit(name, el.value, el);
+      el.onkeydown = enter(() => el.blur());
     }),
   });
-}
 
-function fixed(text: string) {
-  return h('span', text);
-}
+// Set of titles derived from scalachess' PlayerTitle.scala.
+const titles = 'GM|WGM|IM|WIM|FM|WFM|CM|WCM|NM|WNM|LM|BOT';
+const acceptableTitlePattern = `${titles}|${titles.toLowerCase()}`;
 
-let selectedType: string;
+const inputAttrs: Record<string, Record<string, string>> = (() => {
+  const elo = { pattern: '\\d{3,4}' };
+  const fideId = { pattern: '\\d{2,9}' };
+  const title = { pattern: acceptableTitlePattern };
+  return {
+    Date: {
+      pattern:
+        // Match 1700-2099. or ????.
+        '(?:(?:(?:17|18|19|20)[0-9]{2}\\.)|\\?\\?\\?\\?\\.)' +
+        '(?:' +
+        // Match mm.dd 01-12.01-29
+        '(?:(?:0[1-9]|1[0-2])\\.(?:0[1-9]|1[0-9]|2[0-9])|' +
+        // Match all months except February with 30 days
+        '(?:(?!02)(?:0[1-9]|1[0-2])\\.(?:30))|' +
+        // Match months with 31 days
+        '(?:(?:0[13578]|1[02])\\.31))|' +
+        // Unknown month ??.01-31
+        '(?:\\?\\?\\.(?:0[1-9]|1[0-9]|2[0-9]|30|31))|' +
+        // Unknown day 01-12.??
+        '(?:(?:0[1-9]|1[0-2])\\.\\?\\?)|' +
+        // Unknown month and day ??.??
+        '(?:\\?\\?\\.\\?\\?)' +
+        ')',
+      // PGN specification allows for substition of any numeric value with '?'
+      title: 'yyyy.mm.dd or ????.??.??',
+    },
+    WhiteElo: elo,
+    BlackElo: elo,
+    WhiteFideId: fideId,
+    BlackFideId: fideId,
+    WhiteTitle: title,
+    BlackTitle: title,
+  };
+})();
 
-type TagRow = (string | VNode)[];
+const fixed = ([key, value]: [string, string]) =>
+  key.endsWith('FideId') ? h('a', { attrs: { href: `/fide/${value}/redirect` } }, value) : fixedValue(value);
 
-function renderPgnTags(
-  chapter: StudyChapter,
-  submit: ((type: string) => (tag: string) => void) | false,
-  types: string[],
-  trans: Trans
-): VNode {
-  let rows: TagRow[] = [];
-  if (chapter.setup.variant.key !== 'standard') rows.push(['Variant', fixed(chapter.setup.variant.name)]);
-  rows = rows.concat(chapter.tags.map(tag => [tag[0], submit ? editable(tag[1], submit(tag[0])) : fixed(tag[1])]));
-  if (submit) {
-    const existingTypes = chapter.tags.map(t => t[0]);
+const fixedValue = (value: string) => h('span', value);
+
+function renderPgnTags(tags: TagsForm, showRatings: boolean): VNode {
+  let rows = [];
+  const chapter = tags.getChapter();
+  if (chapter.setup.variant.key !== 'standard')
+    rows.push(['Variant', fixedValue(chapter.setup.variant.name)]);
+  rows = rows.concat(
+    chapter.tags
+      .filter(
+        tag =>
+          tag[0] !== 'Variant' &&
+          (showRatings || !['WhiteElo', 'BlackElo'].includes(tag[0]) || !looksLikeLichessGame(chapter.tags)),
+      )
+      .map(tag => [tag[0], tags.editable() ? editable(tag[0], tag[1], tags.submit) : fixed(tag)]),
+  );
+  if (tags.editable()) {
+    const existingTypes = new Set(chapter.tags.map(t => t[0]));
+    const updateSelectedType = (elem: HTMLSelectElement) => {
+      tags.selectedType(elem.value);
+      const pattern = inputAttrs[elem.value]?.pattern;
+      const input = elem.closest('tr')?.querySelector('input');
+      if (input) {
+        if (pattern) input.setAttribute('pattern', String(pattern));
+        else input.removeAttribute('pattern');
+        input.setAttribute('title', inputAttrs[elem.value]?.title ?? '');
+      }
+      return input;
+    };
     rows.push([
       h(
-        'select',
+        'select.button.button-metal',
         {
           hook: {
-            insert: vnode => {
-              const el = vnode.elm as HTMLInputElement;
-              selectedType = el.value;
-              el.addEventListener('change', _ => {
-                selectedType = el.value;
-                $(el)
-                  .parents('tr')
-                  .find('input')
-                  .each(function (this: HTMLInputElement) {
-                    this.focus();
-                  });
-              });
-            },
-            postpatch: (_, vnode) => {
-              selectedType = (vnode.elm as HTMLInputElement).value;
-            },
+            ...onInsert<HTMLSelectElement>(elem => {
+              updateSelectedType(elem);
+              elem.addEventListener('change', () => updateSelectedType(elem)?.focus());
+            }),
+            postpatch: (_, vnode) => updateSelectedType(vnode.elm as HTMLSelectElement),
           },
         },
         [
-          h('option', trans.noarg('newTag')),
-          ...types.map(t => {
-            if (!existingTypes.includes(t)) return option(t, '', t);
-            return undefined;
-          }),
-        ]
+          h('option', i18n.study.newTag),
+          ...tags.types.map(t => (!existingTypes.has(t) ? option(t, '', t) : undefined)),
+        ],
       ),
-      editable('', (value, el) => {
-        if (selectedType) {
-          submit(selectedType)(value);
+      editable('', '', (_, value, el) => {
+        const tpe = tags.selectedType();
+        if (tpe) {
+          tags.submit(tpe, value);
           el.value = '';
         }
       }),
@@ -91,46 +174,7 @@ function renderPgnTags(
     'table.study__tags.slist',
     h(
       'tbody',
-      rows.map(function (r) {
-        return h(
-          'tr',
-          {
-            key: '' + r[0],
-          },
-          [h('th', [r[0]]), h('td', [r[1]])]
-        );
-      })
-    )
+      rows.map(r => h('tr', { key: r[0].toString() }, [h('th', r[0]), h('td', r[1])])),
+    ),
   );
-}
-
-export function ctrl(root: AnalyseCtrl, getChapter: () => StudyChapter, types: string[]): TagsCtrl {
-  const submit = throttle(500, function (name: string, value: string) {
-    root.study!.makeChange('setTag', {
-      chapterId: getChapter().id,
-      name,
-      value: value.substr(0, 140),
-    });
-  });
-
-  return {
-    submit(name: string) {
-      return (value: string) => submit(name, value);
-    },
-    getChapter,
-    types,
-  };
-}
-function doRender(root: StudyCtrl): VNode {
-  return h(
-    'div',
-    renderPgnTags(root.tags.getChapter(), root.vm.mode.write && root.tags.submit, root.tags.types, root.trans)
-  );
-}
-
-export function view(root: StudyCtrl): VNode {
-  const chapter = root.tags.getChapter() as StudyChapter,
-    tagKey = chapter.tags.map(t => t[1]).join(','),
-    key = chapter.id + root.data.name + chapter.name + root.data.likes + tagKey + root.vm.mode.write;
-  return thunk('div.' + chapter.id, doRender, [root, key]);
 }

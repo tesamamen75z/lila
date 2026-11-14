@@ -131,6 +131,7 @@
 จงทำการเดิน เพื่อดำเนินต่อ</string>
   <string name="boardSetupComplete">ยินดีด้วย! คุณรู้วิธีจัดกระดานหมากรุกแล้ว</string>
   <string name="castling">การเข้าป้อม</string>
+  <string name="enPassant">การกินผ่าน</string>
   <string name="theSpecialKingMove">การเดินคิงแบบพิเศษ</string>
   <string name="castlingIntro">นำคิงของคุณไปที่ปลอดภัย และเคลื่อนเรือของคุณเพื่อการโจมตี!</string>
   <string name="castleKingSide">เดินคิงของคุณสองช่อง
@@ -154,7 +155,6 @@
   <string name="findAWayToCastleQueenSide">จงหาทาง
 เพื่อเข้าป้อมด้านควีน!</string>
   <string name="castlingComplete">ยินดีด้วย! โดยส่วนใหญ่คุณควรเข้าป้อมในเกมเสมอ</string>
-  <string name="enPassant">การกินผ่าน</string>
   <string name="theSpecialPawnMove">การเดินเบี้ยแบบพิเศษ</string>
   <string name="enPassantIntro">เมื่อเบี้ยฝ่ายตรงข้ามเดินครั้งนั้นสองช่อง คุณสามารถปฏิบัติต่อมันเหมือนดั่งมันเดินเพียงช่องเดียว</string>
   <string name="blackJustMovedThePawnByTwoSquares">ดำเพิ่งเดินเบี้ยสองช่อง!
@@ -185,6 +185,12 @@
   <string name="queenOverBishop">จงกินหมาก
 ที่มีค่าสูงสุด!
 ควีน &gt; บิชอป</string>
+  <string name="pieceValueExchange">กินหมากที่มีค่ามากที่สุด
+ ห้ามแลกหมาก
+ หมากที่มีค่ามากกว่าสำหรับตัวที่ค่าน้อยกว่า</string>
+  <string name="pieceValueLegal">กินหมาก
+ที่มีค่าสูงสุด
+ดูให้แน่ใจว่าตาเดินคุฌถูกกฎ</string>
   <string name="takeThePieceWithTheHighestValue">จงกินหมาก
 ที่มีค่าสูงสุด!</string>
   <string name="pieceValueComplete">ยินดีด้วย! คุณรู้ค่าของวัสดุแล้ว!
@@ -226,8 +232,8 @@
   <string name="nailedIt">เป๊ะเลย</string>
   <string name="rightOn">ถูกต้องเลย!</string>
   <string name="stageXComplete">ขั้นที่ %s สมบูรณ์</string>
-  <string name="yourScore">สกอร์ของคุณ</string>
   <string name="next">ถัดไป</string>
+  <string name="nextX">ต่อไป: %s</string>
   <string name="backToMenu">กลับสู่เมนู</string>
   <string name="puzzleFailed">แก้ปริศนาล้มเหลว!</string>
   <string name="retry">ลองใหม่</string>

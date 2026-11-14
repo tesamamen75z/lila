@@ -1,55 +1,47 @@
 package lila.studySearch
 
-import akka.actor._
-import com.softwaremill.macwire._
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import scalalib.paginator.*
 
-import lila.common.Bus
-import lila.common.paginator._
-import lila.hub.actorApi.study.RemoveStudy
-import lila.hub.LateMultiThrottler
-import lila.search._
+import lila.core.study.StudyOrder
+import lila.search.*
+import lila.search.client.SearchClient
+import lila.search.spec.{ Order as SpecOrder, Query, StudySortField, StudySorting }
 import lila.study.Study
-import lila.user.User
+import lila.study.ui.StudyFormat
 
 final class Env(
     studyRepo: lila.study.StudyRepo,
-    chapterRepo: lila.study.ChapterRepo,
     pager: lila.study.StudyPager,
-    makeClient: Index => ESClient
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    mat: akka.stream.Materializer
-) {
-
-  private val client = makeClient(Index("study"))
-
-  private val indexThrottler = LateMultiThrottler(executionTimeout = 3.seconds.some, logger = logger)
+    client: SearchClient
+)(using Executor):
 
   val api: StudySearchApi = wire[StudySearchApi]
 
-  def apply(me: Option[User])(text: String, page: Int) =
+  def apply(text: String, order: StudyOrder, page: Int)(using me: Option[Me])(using format: StudyFormat) =
     Paginator[Study.WithChaptersAndLiked](
-      adapter = new AdapterLike[Study] {
-        def query                           = Query(text, me.map(_.id))
-        def nbResults                       = api count query
+      adapter = new AdapterLike[Study]:
+        def query =
+          Query.study(
+            text.take(100),
+            order.toSpec,
+            me.map(_.userId.value)
+          )
+        def nbResults = api.count(query).dmap(_.toInt)
         def slice(offset: Int, length: Int) = api.search(query, From(offset), Size(length))
-      } mapFutureList pager.withChaptersAndLiking(me),
+      .mapFutureList(pager.withChaptersAndLiking()),
       currentPage = page,
       maxPerPage = pager.maxPerPage
     )
 
-  def cli =
-    new lila.common.Cli {
-      def process = {
-        case "study" :: "search" :: "reset" :: Nil          => api.reset("reset") inject "done"
-        case "study" :: "search" :: "index" :: since :: Nil => api.reset(since) inject "done"
-      }
-    }
-
-  Bus.subscribeFun("study") {
-    case lila.study.actorApi.SaveStudy(study) => api.store(study).unit
-    case RemoveStudy(id, _)                   => client.deleteById(Id(id)).unit
-  }
-}
+  extension (x: StudyOrder)
+    def toSpec: Option[StudySorting] =
+      x.match
+        case StudyOrder.alphabetical => StudySorting(StudySortField.Name, SpecOrder.Asc).some
+        case StudyOrder.hot => StudySorting(StudySortField.Hot, SpecOrder.Desc).some
+        case StudyOrder.newest => StudySorting(StudySortField.CreatedAt, SpecOrder.Desc).some
+        case StudyOrder.oldest => StudySorting(StudySortField.CreatedAt, SpecOrder.Asc).some
+        case StudyOrder.popular => StudySorting(StudySortField.Likes, SpecOrder.Desc).some
+        case StudyOrder.updated => StudySorting(StudySortField.UpdatedAt, SpecOrder.Desc).some
+        case StudyOrder.mine => StudySorting(StudySortField.Likes, SpecOrder.Asc).some
+        case StudyOrder.relevant => none

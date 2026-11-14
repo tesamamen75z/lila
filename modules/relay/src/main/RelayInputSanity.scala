@@ -1,47 +1,38 @@
 package lila.relay
 
-import lila.study._
+import chess.format.Fen
 
-/* Try and detect variant ways for the input to be wrong */
-private object RelayInputSanity {
+/* Try to detect several ways for the input to be wrong */
+private object RelayInputSanity:
 
-  sealed abstract class Fail(val msg: String)
-  case class Missing(pos: Int) extends Fail(s"Missing game for Chapter ${pos + 1}")
-  case class Misplaced(gamePos: Int, chapterPos: Int)
-      extends Fail(s"Game ${gamePos + 1} matches with Chapter ${chapterPos + 1}")
+  def fixGames(games: RelayGames): RelayGames =
+    removeTorneloCountries:
+      fixDgtKingsInTheCenter:
+        removeGamesWithUnknownPlayer(games)
 
-  def apply(chapters: List[Chapter], games: RelayGames): Option[Fail] =
-    if (chapters.isEmpty) none
-    else if (isValidTCEC(chapters, games)) none
-    else {
-      val relayChapters: List[RelayChapter] = chapters.flatMap { chapter =>
-        chapter.relay map chapter.->
-      }
-      detectMissingOrMisplaced(relayChapters, games)
-    }
+  private def removeGamesWithUnknownPlayer(games: RelayGames): RelayGames =
+    games.filterNot: game =>
+      game.hasUnknownPlayer || game.isBye
 
-  private def detectMissingOrMisplaced(chapters: List[RelayChapter], games: Vector[RelayGame]): Option[Fail] =
-    chapters flatMap { case (chapter, relay) =>
-      games.lift(relay.index) match {
-        case None => Missing(relay.index).some
-        case Some(game) if !game.staticTagsMatch(chapter) =>
-          games.zipWithIndex collectFirst {
-            case (otherGame, otherPos) if otherGame staticTagsMatch chapter =>
-              Misplaced(otherPos, relay.index)
+  // DGT puts the kings in the center on game end
+  // and sends it as actual moves if the kings were close to the center
+  // so we need to remove the bogus king moves
+  private def fixDgtKingsInTheCenter(games: RelayGames): RelayGames = games.map: game =>
+    game.copy(
+      root = game.root.takeMainlineWhile: node =>
+        !dgtBoggusKingMoveRegex.matches(node.move.san.value) ||
+          !Fen.read(game.variant, node.fen).forall { sit =>
+            sit.checkOf(!sit.color).yes // the king that moved is in check
           }
-        case _ => None
-      }
-    } headOption
+    )
 
-  // TCEC style has one game per file, and reuses the file for all games
-  private def isValidTCEC(chapters: List[Chapter], games: RelayGames) =
-    games match {
-      case Vector(onlyGame) =>
-        chapters.lastOption.exists { c =>
-          onlyGame staticTagsMatch c.tags
-        }
-      case _ => false
-    }
+  private val dgtBoggusKingMoveRegex = """^K[de][45]""".r
 
-  private type RelayChapter = (Chapter, Chapter.Relay)
-}
+  // tornelo uses non-standard 2-letter country codes, so we remove them to avoid confusion
+  // also chessbase crashes when trying to parse them because some look like roman numerals!
+  private def removeTorneloCountries(games: RelayGames): RelayGames = games.map: game =>
+    if game.tags(_.Site).exists(_.toLowerCase.contains("tornelo")) then
+      val tags = game.tags.map:
+        _.filterNot(t => lila.study.StudyPlayer.country.tagTypes.exists(_ == t.name))
+      game.copy(tags = tags)
+    else game

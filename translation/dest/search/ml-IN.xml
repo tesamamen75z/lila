@@ -2,4 +2,5 @@
 <resources>
   <string name="search">തിരയുക</string>
   <string name="advancedSearch">മികച്ച തിരച്ചില്‍</string>
+  <string name="source">ഉറവിടം</string>
 </resources>

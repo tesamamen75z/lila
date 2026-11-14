@@ -1,34 +1,32 @@
 package lila.memo
 
-import akka.actor.ActorSystem
+import alleycats.Zero
 import com.github.benmanes.caffeine
-import com.github.blemale.scaffeine._
-import play.api.Mode
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
+import com.github.blemale.scaffeine.*
 
-final class CacheApi(
-    mode: Mode
-)(implicit ec: ExecutionContext, system: ActorSystem) {
+import scala.collection.mutable.WeakHashMap
 
-  import CacheApi._
+final class CacheApi(using Executor, Scheduler)(using mode: play.api.Mode):
 
-  def scaffeine: Builder = CacheApi.scaffeine(mode)
+  import CacheApi.*
+
+  private val namedCaches = WeakHashMap[String, caffeine.cache.Cache[?, ?]]()
 
   // AsyncLoadingCache with monitoring
   def apply[K, V](initialCapacity: Int, name: String)(
       build: Builder => AsyncLoadingCache[K, V]
-  ): AsyncLoadingCache[K, V] = {
-    val cache = build {
+  ): AsyncLoadingCache[K, V] =
+    val cache = build:
       scaffeine.recordStats().initialCapacity(actualCapacity(initialCapacity))
-    }
-    monitor(name, cache)
+    register(name, cache)
     cache
-  }
 
   // AsyncLoadingCache for a single entry
-  def unit[V](build: Builder => AsyncLoadingCache[Unit, V]): AsyncLoadingCache[Unit, V] =
-    build(scaffeine initialCapacity 1)
+  def unit[V](name: String)(build: Builder => AsyncLoadingCache[Unit, V]): AsyncLoadingCache[Unit, V] =
+    val cache = build:
+      scaffeine.recordStats().initialCapacity(1)
+    register(name, cache)
+    cache
 
   // AsyncLoadingCache with monitoring and a synchronous getter
   def sync[K, V](
@@ -38,90 +36,92 @@ final class CacheApi(
       default: K => V,
       strategy: Syncache.Strategy,
       expireAfter: Syncache.ExpireAfter
-  ): Syncache[K, V] = {
+  ): Syncache[K, V] =
     val actualCapacity =
-      if (mode != Mode.Prod) math.sqrt(initialCapacity.toDouble).toInt atLeast 1
-      else initialCapacity
+      if mode.isProd then initialCapacity
+      else math.sqrt(initialCapacity.toDouble).toInt.atLeast(1)
     val cache = new Syncache(name, actualCapacity, compute, default, strategy, expireAfter)
-    monitor(name, cache.cache)
+    register(name, cache.cache)
     cache
-  }
 
   def notLoading[K, V](initialCapacity: Int, name: String)(
       build: Builder => AsyncCache[K, V]
-  ): AsyncCache[K, V] = {
-    val cache = build {
+  ): AsyncCache[K, V] =
+    val cache = build:
       scaffeine.recordStats().initialCapacity(actualCapacity(initialCapacity))
-    }
-    monitor(name, cache)
+    register(name, cache)
     cache
-  }
 
   def notLoadingSync[K, V](initialCapacity: Int, name: String)(
       build: Builder => Cache[K, V]
-  ): Cache[K, V] = {
-    val cache = build {
+  ): Cache[K, V] =
+    val cache = build:
       scaffeine.recordStats().initialCapacity(actualCapacity(initialCapacity))
-    }
-    monitor(name, cache)
+    register(name, cache)
     cache
-  }
 
-  def monitor(name: String, cache: AsyncCache[_, _]): Unit =
-    monitor(name, cache.underlying.synchronous)
+  def clearByName(name: String): Option[Int] =
+    namedCaches
+      .get(name)
+      .map: cache =>
+        val size = cache.estimatedSize().toInt
+        cache.invalidateAll()
+        size
 
-  def monitor(name: String, cache: Cache[_, _]): Unit =
-    monitor(name, cache.underlying)
+  def register(name: String, cache: AsyncCache[?, ?]): Unit =
+    register(name, cache.underlying.synchronous)
 
-  def monitor(name: String, cache: caffeine.cache.Cache[_, _]): Unit =
+  private def register(name: String, cache: Cache[?, ?]): Unit =
+    register(name, cache.underlying)
+
+  private def register(name: String, cache: caffeine.cache.Cache[?, ?]): Unit =
     startMonitor(name, cache)
+    if namedCaches.contains(name) then logger.error(s"CacheApi: duplicate cache name '$name'")
+    namedCaches.addOne(name, cache)
 
-  def actualCapacity(c: Int) =
-    if (mode != Mode.Prod) math.sqrt(c.toDouble).toInt atLeast 1
-    else c
-}
+  def actualCapacity(c: Int): Int =
+    if mode.isProd then c
+    else math.cbrt(c.toDouble).toInt.atLeast(1)
 
-object CacheApi {
+object CacheApi:
+
+  export scalalib.cache.{ scaffeine, scaffeineNoScheduler }
 
   private[memo] type Builder = Scaffeine[Any, Any]
 
-  def scaffeine(mode: Mode): Builder = lila.common.LilaCache scaffeine mode
+  extension [K, V](cache: AsyncCache[K, V])
 
-  def scaffeineNoScheduler: Builder = Scaffeine()
+    def invalidate(key: K): Unit = cache.underlying.synchronous.invalidate(key)
+    def invalidateAll(): Unit = cache.underlying.synchronous.invalidateAll()
 
-  implicit def beafedAsync[K, V](cache: AsyncCache[K, V])     = new BeafedAsync[K, V](cache)
-  implicit def beafedAsyncUnit[V](cache: AsyncCache[Unit, V]) = new BeafedAsyncUnit[V](cache)
-  implicit def beafedAsyncLoadingUnit[V](cache: AsyncLoadingCache[Unit, V]) =
-    new BeafedAsyncLoadingUnit[V](cache)
+    def update(key: K, f: V => V): Unit =
+      cache
+        .getIfPresent(key)
+        .foreach: v =>
+          cache.put(key, v.dmap(f))
 
-  private[memo] def startMonitor(
+  extension [V](cache: AsyncCache[Unit, V])
+    def invalidateUnit(): Unit = cache.underlying.synchronous.invalidate {}
+
+  extension [V](cache: AsyncLoadingCache[Unit, V]) def getUnit: Fu[V] = cache.get {}
+
+  extension [K, V](builder: Scaffeine[K, V])
+
+    def buildAsyncTimeout[K1 <: K, V1 <: V](loaderTimeout: FiniteDuration = 10.seconds)(
+        loader: K1 => Future[V1]
+    )(using Scheduler, Executor): AsyncLoadingCache[K1, V1] =
+      builder.buildAsyncFuture: k =>
+        loader(k).withTimeout(loaderTimeout, s"buildAsyncFuture($k)")
+
+    def buildAsyncTimeoutZero[K1 <: K, V1 <: V](loaderTimeout: FiniteDuration = 10.seconds)(
+        loader: K1 => Future[V1]
+    )(using zero: Zero[V1])(using Scheduler, Executor): AsyncLoadingCache[K1, V1] =
+      builder.buildAsyncFuture: k =>
+        loader(k).withTimeoutDefault(loaderTimeout, zero.zero)
+
+  private def startMonitor(
       name: String,
-      cache: caffeine.cache.Cache[_, _]
-  )(implicit ec: ExecutionContext, system: ActorSystem): Unit =
-    system.scheduler
-      .scheduleWithFixedDelay(1 minute, 1 minute) { () =>
-        lila.mon.caffeineStats(cache, name)
-      }
-      .unit
-}
-
-final class BeafedAsync[K, V](val cache: AsyncCache[K, V]) extends AnyVal {
-
-  def invalidate(key: K): Unit = cache.underlying.synchronous invalidate key
-  def invalidateAll(): Unit    = cache.underlying.synchronous.invalidateAll()
-
-  def update(key: K, f: V => V): Unit =
-    cache.getIfPresent(key) foreach { v =>
-      cache.put(key, v dmap f)
-    }
-}
-
-final class BeafedAsyncUnit[V](val cache: AsyncCache[Unit, V]) extends AnyVal {
-
-  def invalidateUnit(): Unit = cache.underlying.synchronous.invalidate {}
-}
-
-final class BeafedAsyncLoadingUnit[V](val cache: AsyncLoadingCache[Unit, V]) extends AnyVal {
-
-  def getUnit: Fu[V] = cache.get {}
-}
+      cache: caffeine.cache.Cache[?, ?]
+  )(using ec: Executor, scheduler: Scheduler): Unit =
+    scheduler.scheduleWithFixedDelay(1.minute, 1.minute): () =>
+      lila.mon.caffeineStats(cache, name)

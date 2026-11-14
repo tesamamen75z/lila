@@ -1,7 +1,7 @@
 @import 'common';
 
-@keyframes rubberBand {
-  from {
+@keyframes rubber-band {
+  0% {
     transform: scale3d(1, 1, 1);
   }
 
@@ -36,33 +36,43 @@
   grid-area: tools;
   justify-content: flex-end;
 
+  @include mq-is-col1 {
+    margin: 2rem $block-gap 0 $block-gap;
+    justify-content: start;
+  }
+
   .comment {
     @extend %flex-column, %box-shadow;
+    @include box-radius;
+    @include backdrop-blur-if-transparent;
 
     font-size: 1.1em;
     background: $c-bg-box;
-    border-radius: 1rem;
     position: relative;
+    border: 1px solid $c-border;
 
     /* fixes firefox overflow when comment is long https://stackoverflow.com/questions/28636832/firefox-overflow-y-not-working-with-nested-flexbox */
     min-height: 0;
 
-    @if $theme-dark {
-      border: 1px solid $c-font-dimmer;
-    }
-
     &::after {
+      @include inline-end(20%);
+      @include backdrop-blur-if-transparent;
+
       position: absolute;
       content: '';
-      bottom: -9px;
-      right: 20%;
+      bottom: -8px;
       width: 15px;
       height: 15px;
       background: $c-bg-box;
-      border-right: 1px solid $c-font-dimmer;
-      border-bottom: 1.5px solid $c-font-dimmer;
+      border-inline-end: 1px solid $c-border;
+      border-bottom: 1.5px solid $c-border;
       transform: skew(45deg) rotate(45deg);
       z-index: 1;
+
+      @include if-transp {
+        clip-path: polygon(100% 0%, 100% 0%, 100% 100%, 0% 100%);
+        opacity: 0.8;
+      }
     }
 
     &.hinted::after {
@@ -76,20 +86,24 @@
       min-height: 2.5em;
     }
 
-    div.hint {
-      padding: 0.8em 1em;
-      background: $c-primary;
-      color: $c-primary-over;
-      border-radius: 0 0 1rem 1rem;
-      cursor: pointer;
-      font-size: 0.9em;
-      z-index: 2;
-    }
+    button {
+      text-align: start;
 
-    a.hint {
-      padding: 0.8em 1em;
-      color: $c-primary;
-      font-size: 1rem;
+      &.hint {
+        padding: 0.8em 1em;
+        color: $c-primary;
+        font-size: 1rem;
+      }
+
+      div.hint {
+        padding: 0.8em 1em;
+        background: $c-primary;
+        color: $c-over;
+        border-radius: 0 0 1rem 1rem;
+        cursor: pointer;
+        font-size: 0.9em;
+        z-index: 2;
+      }
     }
   }
 
@@ -101,7 +115,7 @@
 
   .mascot {
     flex: 0 0 8rem;
-    margin-left: 1em;
+    margin-inline-start: 1em;
   }
 
   .feedback {
@@ -111,6 +125,12 @@
     height: 8rem;
     text-align: center;
     justify-content: center;
+    align-items: center;
+
+    kbd {
+      margin-top: 0.5rem;
+      font-size: 1rem;
+    }
 
     &.info {
       font-size: 1.6em;
@@ -124,7 +144,7 @@
       @extend %box-neat;
 
       font-size: 2em;
-      color: #fff;
+      color: $c-over;
       cursor: pointer;
       opacity: 0.85;
 
@@ -135,7 +155,7 @@
       }
 
       &.com span {
-        animation: rubberBand 7s infinite;
+        animation: rubber-band 7s infinite;
       }
     }
 
@@ -157,7 +177,7 @@
     &.play .no-square {
       flex: 0 0 64px;
       height: 64px;
-      margin-right: 10px;
+      margin-inline-end: 10px;
     }
 
     .instruction > * {
@@ -180,29 +200,32 @@
     }
 
     &.good {
-      background: #639b24 !important;
+      background: #639b24;
       color: #fff;
     }
 
     &.end {
       flex-flow: row;
       font-size: 0.8em;
+      align-items: stretch;
 
-      a {
+      button {
         @extend %flex-column;
+        @include transition;
 
         flex: 1 1 100%;
-        background: mix($c-primary, $c-bg-box, 80%);
-        color: $c-primary-over;
+        background: color-mix(in oklab, $c-primary 80%, $c-bg);
+        color: $c-over;
         font-size: 1.2em;
         align-items: center;
         justify-content: center;
         text-align: center;
         padding: 0.5em;
-        border-left: 1px solid rgba(255, 255, 255, 0.3);
         line-height: 1.2em;
 
-        @include transition;
+        &:not(:first-child) {
+          border-inline-start: 1px solid rgb(255 255 255 / 0.3);
+        }
 
         &::before {
           font-size: 2.2em;
@@ -215,6 +238,10 @@
 
         &:last-child {
           @extend %box-radius-right;
+
+          &:first-child {
+            @extend %box-radius;
+          }
         }
 
         &:hover {
@@ -234,6 +261,6 @@
     @extend %box-radius-top;
 
     padding: 0.2em 0.5em;
-    margin-left: 0.7em;
+    margin-inline-start: 0.7em;
   }
 }

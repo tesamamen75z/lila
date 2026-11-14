@@ -1,58 +1,45 @@
 package lila.swiss
 
-import scala.concurrent.duration._
-
-import lila.hub.actorApi.team.IsLeader
-import lila.hub.LateMultiThrottler
-import lila.hub.LightTeam.TeamID
-import lila.room.RoomSocket.{ Protocol => RP, _ }
-import lila.socket.RemoteSocket.{ Protocol => P, _ }
-import lila.socket.Socket.makeMessage
+import lila.common.LateMultiThrottler
+import lila.core.socket.{ protocol as P, * }
+import lila.core.team.IsLeaderWithCommPerm
+import lila.room.RoomSocket.{ Protocol as RP, * }
 
 final private class SwissSocket(
-    remoteSocketApi: lila.socket.RemoteSocket,
-    chat: lila.chat.ChatApi,
-    teamOf: Swiss.Id => Fu[Option[TeamID]]
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
+    socketKit: SocketKit,
+    chat: lila.core.chat.ChatApi,
+    teamOf: SwissId => Fu[Option[TeamId]]
+)(using Executor, org.apache.pekko.actor.ActorSystem, Scheduler):
 
   private val reloadThrottler = LateMultiThrottler(executionTimeout = none, logger = logger)
 
-  def reload(id: Swiss.Id): Unit =
+  def reload(id: SwissId): Unit =
     reloadThrottler ! LateMultiThrottler.work(
-      id = id.value,
-      run = fuccess {
-        send(RP.Out.tellRoom(RoomId(id.value), makeMessage("reload")))
-      },
+      id = id,
+      run = fuccess:
+        send.exec(RP.Out.tellRoom(id.into(RoomId), makeMessage("reload")))
+      ,
       delay = 1.seconds.some
     )
 
   lazy val rooms = makeRoomMap(send)
 
-  subscribeChat(rooms, _.Swiss)
+  subscribeChat(rooms, _.swiss)
 
-  private lazy val handler: Handler =
+  private lazy val handler: SocketHandler =
     roomHandler(
       rooms,
       chat,
       logger,
-      roomId => _.Swiss(roomId.value).some,
-      localTimeout = Some { (roomId, modId, _) =>
-        teamOf(Swiss.Id(roomId.value)) flatMap {
-          _ ?? { teamId =>
-            lila.common.Bus.ask[Boolean]("teamIsLeader") { IsLeader(teamId, modId, _) }
-          }
-        }
-      },
-      chatBusChan = _.Swiss
+      roomId => _.Swiss(SwissId(roomId.value)).some,
+      localTimeout = Some: (roomId, modId, _) =>
+        teamOf(SwissId(roomId.value)).flatMapz: teamId =>
+          lila.common.Bus.ask[Boolean, IsLeaderWithCommPerm](IsLeaderWithCommPerm(teamId, modId, _)),
+      chatBusChan = _.swiss
     )
 
-  private lazy val send: String => Unit = remoteSocketApi.makeSender("swiss-out").apply _
+  private lazy val send = socketKit.send("swiss-out")
 
-  remoteSocketApi.subscribe("swiss-in", RP.In.reader)(
-    handler orElse remoteSocketApi.baseHandler
-  ) >>- send(P.Out.boot)
-}
+  socketKit
+    .subscribe("swiss-in", RP.In.reader)(handler.orElse(socketKit.baseHandler))
+    .andDo(send.exec(P.Out.boot))

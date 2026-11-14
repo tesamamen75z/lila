@@ -1,183 +1,429 @@
-import * as domData from 'common/data';
-import debounce from 'common/debounce';
-import { bind, spinner } from '../util';
-import { h, VNode } from 'snabbdom';
-import { MaybeVNodes } from '../interfaces';
-import { multiBoard as xhrLoad } from './studyXhr';
-import { opposite } from 'chessground/util';
-import { StudyCtrl, ChapterPreview, ChapterPreviewPlayer, Position } from './interfaces';
+import { Chessground as makeChessground } from '@lichess-org/chessground';
+import { opposite as cgOpposite, uciToMove } from '@lichess-org/chessground/util';
+import type { Color } from 'chessops';
+import { EMPTY_BOARD_FEN } from 'chessops/fen';
+import { h } from 'snabbdom';
+
+import { type Prop, type Toggle, defined, notNull, prop, toggle } from 'lib';
+import { fenColor } from 'lib/game/chess';
+import { otbClockIsRunning, formatMs } from 'lib/game/clock/clockWidget';
+import { licon } from 'lib/licon';
+import { storage, storedBooleanProp } from 'lib/storage';
+import { type MaybeVNode, type VNode, bind, onInsert, hl, requiresI18n, img, dataIcon } from 'lib/view';
+import { cmnToggleWrapProp } from 'lib/view/cmn-toggle';
+import { userTitle } from 'lib/view/userLink';
+
+import { playerFedFlag } from '@/view/util';
+
+import type { ChapterId, ChapterPreview, StudyPlayer } from './interfaces';
+import { type CloudEval, type MultiCloudEval, renderScore } from './multiCloudEval';
+import { playerColoredResult } from './relay/customScoreStatus';
+import type { RelayRound } from './relay/interfaces';
+import type RelayCtrl from './relay/relayCtrl';
+import type RelayPlayerPin from './relay/relayPlayerPin';
+import { type StudyChapters, gameLinkAttrs, gameLinksListener } from './studyChapters';
+import type StudyCtrl from './studyCtrl';
 
 export class MultiBoardCtrl {
-  loading = false;
+  playing: Toggle = toggle(false);
+  pinned: Toggle = toggle(false);
+  showResults: Prop<boolean>;
+  teamSelect: Prop<string> = prop('');
   page = 1;
-  pager?: Paginator<ChapterPreview>;
-  playing = false;
+  maxPerPageStorage = storage.make('study.multiBoard.maxPerPage');
 
-  constructor(readonly studyId: string, readonly redraw: () => void, readonly trans: Trans) {}
+  constructor(
+    readonly chapters: StudyChapters,
+    readonly relay: RelayCtrl | undefined,
+    readonly multiCloudEval: MultiCloudEval | undefined,
+    readonly redraw: Redraw,
+  ) {
+    this.showResults = this.relay ? storedBooleanProp('study.showResults', true) : toggle(true);
+  }
 
-  addNode = (pos: Position, node: Tree.Node) => {
-    const cp = this.pager && this.pager.currentPageResults.find(cp => cp.id == pos.chapterId);
-    if (cp && cp.playing) {
-      cp.fen = node.fen;
-      cp.lastMove = node.uci;
-      this.redraw();
-    }
+  gameTeam = (id: ChapterId): string | undefined => this.chapters.get(id)?.players?.white.team;
+
+  maxPerPage = () => Math.min(32, parseInt(this.maxPerPageStorage.get() || '12'));
+
+  private readonly chapterFilter = (c: ChapterPreview) => {
+    const t = this.teamSelect();
+    return (
+      (!this.playing() || c.playing) &&
+      (!this.relay || !this.pinned() || this.relay.players.pins.isChapterPinned(c)) &&
+      (!t || c.players?.white.team === t || c.players?.black.team === t)
+    );
+  };
+  private readonly chapterTeamPov = (c: ChapterPreview) => {
+    const t = this.teamSelect();
+    return t && c.players?.white.team === t
+      ? 'white'
+      : t && c.players?.black.team === t
+        ? 'black'
+        : undefined;
+  };
+  private readonly chapterSorter = (pins: RelayPlayerPin) => (a: ChapterPreview, b: ChapterPreview) => {
+    const aPinned = pins.isChapterPinned(a);
+    const bPinned = pins.isChapterPinned(b);
+    return aPinned === bPinned ? 0 : aPinned ? -1 : 1;
   };
 
-  reload = (onInsert?: boolean) => {
-    if (this.pager && !onInsert) {
-      this.loading = true;
-      this.redraw();
-    }
-    xhrLoad(this.studyId, this.page, this.playing).then(p => {
-      this.pager = p;
-      if (p.nbPages < this.page) {
-        if (!p.nbPages) this.page = 1;
-        else this.setPage(p.nbPages);
-      }
-      this.loading = false;
-      this.redraw();
-    });
+  setMaxPerPage = (nb: string) => {
+    this.maxPerPageStorage.set(nb);
+    this.page = 1;
+    this.redraw();
   };
 
-  reloadEventually = debounce(this.reload, 1000);
-
+  pager = (): Paginator<ChapterPreview> => {
+    const maxPerPage = this.maxPerPage();
+    const filteredResults = this.chapters.all().filter(this.chapterFilter);
+    const withTeamPOV = filteredResults.map(c => ({
+      ...c,
+      orientation: this.chapterTeamPov(c) ?? c.orientation,
+    }));
+    const sortedResults = this.relay?.players.pins.anyPinned()
+      ? withTeamPOV.sort(this.chapterSorter(this.relay.players.pins))
+      : withTeamPOV;
+    const currentPageResults = sortedResults.slice((this.page - 1) * maxPerPage, this.page * maxPerPage);
+    const nbResults = sortedResults.length;
+    const nbPages = Math.floor((nbResults + maxPerPage - 1) / maxPerPage);
+    return {
+      currentPage: this.page,
+      maxPerPage,
+      currentPageResults,
+      nbResults,
+      previousPage: this.page > 1 ? this.page - 1 : undefined,
+      nextPage: this.page < nbPages && currentPageResults.length ? this.page + 1 : undefined,
+      nbPages,
+    };
+  };
   setPage = (page: number) => {
-    if (this.page != page) {
+    if (this.page !== page) {
       this.page = page;
-      this.reload();
+      this.redraw();
     }
   };
   nextPage = () => this.setPage(this.page + 1);
   prevPage = () => this.setPage(this.page - 1);
-  lastPage = () => {
-    if (this.pager) this.setPage(this.pager.nbPages);
-  };
+  lastPage = () => this.setPage(this.pager().nbPages);
 
-  setPlaying = (v: boolean) => {
-    this.playing = v;
-    this.reload();
+  computeTeamList = () => {
+    const teams = new Set<string>();
+    this.chapters.all().forEach(c => {
+      if (c.players?.white.team) teams.add(c.players.white.team);
+      if (c.players?.black.team) teams.add(c.players.black.team);
+    });
+    return Array.from(teams).sort();
   };
 }
 
-export function view(ctrl: MultiBoardCtrl, study: StudyCtrl): VNode | undefined {
-  const chapterIds = study.chapters
-    .list()
-    .map(c => c.id)
-    .join('');
-  return h(
-    'div.study__multiboard',
-    {
-      class: { loading: ctrl.loading, nopager: !ctrl.pager },
-      hook: {
-        insert(vnode: VNode) {
-          ctrl.reload(true);
-          vnode.data!.chapterIds = chapterIds;
-        },
-        postpatch(old: VNode, vnode: VNode) {
-          if (old.data!.chapterIds !== chapterIds) ctrl.reloadEventually();
-          vnode.data!.chapterIds = chapterIds;
-        },
+export function view(ctrl: MultiBoardCtrl, study: StudyCtrl): MaybeVNode {
+  const pager = ctrl.pager();
+  const cloudEval = ctrl.multiCloudEval?.thisIfShowEval();
+  const baseUrl = study.relay?.roundPath() || study.baseUrl();
+  return h('div.study__multiboard', [
+    h('div.study__multiboard__top', [
+      renderPagerNav(pager, ctrl),
+      hl('div.study__multiboard__options', [
+        ctrl.relay &&
+          cmnToggleWrapProp({
+            id: 'multiboard-playing',
+            name: i18n.study.playing,
+            prop: ctrl.playing,
+            redraw: ctrl.redraw,
+          }),
+        ctrl.relay &&
+          cmnToggleWrapProp({
+            id: 'multiboard-pinned',
+            name: 'Pinned',
+            prop: ctrl.pinned,
+            redraw: ctrl.redraw,
+          }),
+        ctrl.multiCloudEval &&
+          cmnToggleWrapProp({
+            id: 'multiboard-eval',
+            name: i18n.study.showEvalBar,
+            prop: ctrl.multiCloudEval.showEval,
+          }),
+        ctrl.relay &&
+          cmnToggleWrapProp({
+            id: 'multiboard-results',
+            name: i18n.study.showResults,
+            prop: ctrl.showResults,
+            redraw: ctrl.redraw,
+          }),
+      ]),
+    ]),
+    !ctrl.showResults()
+      ? h(
+          'div.empty-boards-note.text',
+          { attrs: dataIcon(licon.InfoCircle) },
+          i18n.broadcast.sinceHideResults,
+        )
+      : undefined,
+    h(
+      'div.now-playing',
+      {
+        hook: onInsert(gameLinksListener(study.chapterSelect)),
       },
-    },
-    ctrl.pager ? renderPager(ctrl.pager, study) : [spinner()]
-  );
-}
-
-function renderPager(pager: Paginator<ChapterPreview>, study: StudyCtrl): MaybeVNodes {
-  const ctrl = study.multiBoard;
-  return [
-    h('div.top', [renderPagerNav(pager, ctrl), renderPlayingToggle(ctrl)]),
-    h('div.now-playing', pager.currentPageResults.map(makePreview(study))),
-  ];
-}
-
-function renderPlayingToggle(ctrl: MultiBoardCtrl): VNode {
-  return h('label.playing', [
-    h('input', {
-      attrs: { type: 'checkbox' },
-      hook: bind('change', e => {
-        ctrl.setPlaying((e.target as HTMLInputElement).checked);
-      }),
-    }),
-    ctrl.trans.noarg('playing'),
+      makePreviews(
+        pager.currentPageResults,
+        baseUrl,
+        study.vm.chapterId,
+        cloudEval,
+        ctrl.showResults(),
+        study.relay?.round,
+        study.relay?.players.pins,
+      ),
+    ),
+    ctrl.pinned()
+      ? h(
+          'div.go-to-pinned',
+          h(
+            'a',
+            {
+              on: {
+                click: () => ctrl.relay?.openTab('players'),
+              },
+            },
+            'Pin broadcast players to show only their games here',
+          ),
+        )
+      : undefined,
   ]);
 }
 
 function renderPagerNav(pager: Paginator<ChapterPreview>, ctrl: MultiBoardCtrl): VNode {
-  const page = ctrl.page,
-    from = Math.min(pager.nbResults, (page - 1) * pager.maxPerPage + 1),
-    to = Math.min(pager.nbResults, page * pager.maxPerPage);
-  return h('div.pager', [
-    pagerButton(ctrl.trans.noarg('first'), '', () => ctrl.setPage(1), page > 1, ctrl),
-    pagerButton(ctrl.trans.noarg('previous'), '', ctrl.prevPage, page > 1, ctrl),
+  const page = ctrl.page;
+  const from = Math.min(pager.nbResults, (page - 1) * pager.maxPerPage + 1);
+  const to = Math.min(pager.nbResults, page * pager.maxPerPage);
+  const max = ctrl.maxPerPage();
+  return h('div.study__multiboard__pager', [
+    pagerButton(licon.JumpFirst, () => ctrl.setPage(1), page > 1, ctrl),
+    pagerButton(licon.JumpPrev, ctrl.prevPage, page > 1, ctrl),
     h('span.page', `${from}-${to} / ${pager.nbResults}`),
-    pagerButton(ctrl.trans.noarg('next'), '', ctrl.nextPage, page < pager.nbPages, ctrl),
-    pagerButton(ctrl.trans.noarg('last'), '', ctrl.lastPage, page < pager.nbPages, ctrl),
+    pagerButton(licon.JumpNext, ctrl.nextPage, page < pager.nbPages, ctrl),
+    pagerButton(licon.JumpLast, ctrl.lastPage, page < pager.nbPages, ctrl),
+    teamSelector(ctrl),
+    h(
+      'select.study__multiboard__pager__max-per-page',
+      { hook: bind('change', e => ctrl.setMaxPerPage((e.target as HTMLOptionElement).value)) },
+      [4, 6, 8, 10, 12, 16, 20, 24, 32].map(nb =>
+        h('option', { attrs: { value: nb, selected: nb === max } }, i18n.study.perPage(nb)),
+      ),
+    ),
   ]);
 }
 
-function pagerButton(text: string, icon: string, click: () => void, enable: boolean, ctrl: MultiBoardCtrl): VNode {
+const teamSelector = (ctrl: MultiBoardCtrl) => {
+  const allTeams = ctrl.computeTeamList();
+  const currentTeam = ctrl.teamSelect();
+  return allTeams.length
+    ? requiresI18n('broadcast', ctrl.redraw, broadcast =>
+        h(
+          'select',
+          {
+            hook: bind('change', e => ctrl.teamSelect((e.target as HTMLOptionElement).value), ctrl.redraw),
+          },
+          [broadcast.allTeams, ...allTeams].map((t, i) =>
+            h('option', { attrs: { value: i ? t : '', selected: i && t === currentTeam } }, t),
+          ),
+        ),
+      )
+    : undefined;
+};
+
+function pagerButton(icon: string, click: () => void, enable: boolean, ctrl: MultiBoardCtrl): VNode {
   return h('button.fbt', {
-    attrs: {
-      'data-icon': icon,
-      disabled: !enable,
-      title: text,
-    },
+    attrs: { 'data-icon': icon, disabled: !enable },
     hook: bind('mousedown', click, ctrl.redraw),
   });
 }
 
-function makePreview(study: StudyCtrl) {
-  return (preview: ChapterPreview) => {
-    const contents = preview.players
-      ? [
-          makePlayer(preview.players[opposite(preview.orientation)]),
-          makeCg(preview),
-          makePlayer(preview.players[preview.orientation]),
-        ]
-      : [h('div.name', preview.name), makeCg(preview)];
+const previewToCgConfig = (cp: ChapterPreview): CgConfig => ({
+  fen: cp.fen,
+  lastMove: uciToMove(cp.lastMove),
+  turnColor: fenColor(cp.fen),
+  check: !!cp.check,
+  orientation: cp.orientation,
+});
+
+const makePreviews = (
+  previews: ChapterPreview[],
+  roundPath: string,
+  current: ChapterId,
+  cloudEval?: MultiCloudEval,
+  showResults?: boolean,
+  round?: RelayRound,
+  pins?: RelayPlayerPin,
+) =>
+  previews.map((preview, index) => {
+    const extraCgConfig =
+      index === 0
+        ? () => ({
+            addDimensionsCssVarsTo: document.querySelector<HTMLElement>('.study__multiboard .now-playing')!,
+          })
+        : undefined;
     return h(
-      'a.' + preview.id,
+      `a.mini-game.is2d.chap-${preview.id}${showResults ? '' : '.no-spoilers'}`,
       {
-        attrs: { title: preview.name },
-        class: {
-          active: !study.multiBoard.loading && study.vm.chapterId == preview.id && !study.relay?.tourShow.active,
-        },
-        hook: bind('mousedown', _ => study.setChapter(preview.id)),
+        class: { active: preview.id === current },
+        attrs: gameLinkAttrs(roundPath, preview),
       },
-      contents
+      previewContent(preview, preview.orientation, cloudEval, showResults, round, extraCgConfig, pins),
     );
-  };
-}
-
-function makePlayer(player: ChapterPreviewPlayer): VNode {
-  return h('span.player', [
-    player.title ? `${player.title} ${player.name}` : player.name,
-    player.rating && h('span', '' + player.rating),
-  ]);
-}
-
-function makeCg(preview: ChapterPreview): VNode {
-  return h('span.mini-board.cg-wrap.is2d', {
-    attrs: {
-      'data-state': `${preview.fen},${preview.orientation},${preview.lastMove}`,
-    },
-    hook: {
-      insert(vnode) {
-        lichess.miniBoard.init(vnode.elm as HTMLElement);
-        vnode.data!.fen = preview.fen;
-      },
-      postpatch(old, vnode) {
-        if (old.data!.fen !== preview.fen) {
-          const lm = preview.lastMove!;
-          domData.get(vnode.elm as HTMLElement, 'chessground').set({
-            fen: preview.fen,
-            lastMove: [lm[0] + lm[1], lm[2] + lm[3]],
-          });
-        }
-        vnode.data!.fen = preview.fen;
-      },
-    },
   });
-}
+
+export const previewContent = (
+  preview: ChapterPreview,
+  orientation: Color,
+  cloudEval?: MultiCloudEval,
+  showResults?: boolean,
+  round?: RelayRound,
+  extraCgConfig?: () => Partial<CgConfig>,
+  pins?: RelayPlayerPin,
+): VNode[] => {
+  const makeCgConfig = () => ({
+    ...(showResults ? previewToCgConfig(preview) : { fen: EMPTY_BOARD_FEN }),
+    // previewToCgConfig sets the chapter orientation; the caller may want another one,
+    // like the liveboard following the main board flip.
+    orientation,
+    ...(extraCgConfig ? extraCgConfig() : {}),
+  });
+  return [
+    boardPlayer(preview, cgOpposite(orientation), showResults, round, pins),
+    h('span.cg-gauge', [
+      showResults ? cloudEval && verticalEvalGauge(preview, orientation, cloudEval) : undefined,
+      h(
+        'span.mini-game__board',
+        h('span.cg-wrap', {
+          hook: {
+            insert(vnode) {
+              const el = vnode.elm as HTMLElement;
+              vnode.data!.cg = makeChessground(el, {
+                coordinates: false,
+                viewOnly: true,
+                drawable: { enabled: false, visible: false },
+                ...makeCgConfig(),
+              });
+              vnode.data!.fen = preview.fen;
+            },
+            postpatch(old, vnode) {
+              if (!showResults) return;
+              const oldCg: CgApi = old.data!.cg;
+              // `cg.getFen()` is boardFen not fullFen
+              if (old.data!.fen !== preview.fen || oldCg.state.orientation !== orientation)
+                oldCg.set(makeCgConfig());
+              vnode.data!.fen = preview.fen;
+              vnode.data!.cg = oldCg;
+            },
+          },
+        }),
+      ),
+    ]),
+    boardPlayer(preview, orientation, showResults, round, pins),
+  ];
+};
+
+export const verticalEvalGauge = (
+  chap: ChapterPreview,
+  orientation: Color,
+  cloudEval: MultiCloudEval,
+): MaybeVNode => {
+  const baseTag = `span.mini-game__gauge${orientation === 'black' ? ' mini-game__gauge--flip' : ''}`;
+
+  if (chap.check === '#') {
+    return h(
+      baseTag + ` mini-game__gauge--set`,
+      {
+        attrs: {
+          'data-id': chap.id,
+          title: 'Checkmate',
+          style: `--multi-eval-percent: ${fenColor(chap.fen) === 'white' ? 100 : 0}%`,
+        },
+      },
+      [h('tick')],
+    );
+  }
+
+  return h(
+    baseTag,
+    {
+      attrs: { 'data-id': chap.id },
+      hook: {
+        ...onInsert(cloudEval.observe),
+        postpatch(old, vnode) {
+          const elm = vnode.elm as HTMLElement;
+          const prevNodeCloud: CloudEval | undefined = old.data?.cloud;
+          const cev = cloudEval.getCloudEval(chap.fen) || prevNodeCloud;
+          if (cev?.chances !== prevNodeCloud?.chances) {
+            elm.style.setProperty(
+              '--multi-eval-percent',
+              `${Math.round(((1 - (cev?.chances || 0)) / 2) * 100)}%`,
+            );
+            if (cev) {
+              elm.title = renderScore(cev);
+              elm.classList.add('mini-game__gauge--set');
+            }
+          }
+          vnode.data!.cloud = cev;
+        },
+      },
+    },
+    [h('tick')],
+  );
+};
+
+export const pinIcon = img(site.asset.flairSrc('objects.pushpin'), 'Pin player');
+
+const renderUser = (player: StudyPlayer, pinned?: boolean): VNode =>
+  h('span.mini-game__user', [
+    playerFedFlag(player.fed),
+    h('span.name', [userTitle(player), player.name || '?']),
+    player.rating ? h('span.rating', player.rating.toString()) : undefined,
+    pinned ? pinIcon('.pinned-icon') : undefined,
+  ]);
+
+export const renderClock = (chapter: ChapterPreview, color: Color) => {
+  const timeleft = computeTimeLeft(chapter, color);
+  if (!defined(timeleft)) return undefined;
+
+  const turnColor = fenColor(chapter.fen);
+  const ticking = turnColor === color && otbClockIsRunning(chapter.fen);
+  return h(
+    'span.mini-game__clock.mini-game__clock',
+    { class: { 'clock--run': ticking } },
+    formatMs(timeleft * 1000),
+  );
+};
+
+const computeTimeLeft = (preview: ChapterPreview, color: Color) => {
+  const clock = preview.players?.[color]?.clock;
+  if (notNull(clock)) {
+    if (defined(preview.lastMoveAt) && defined(preview.lastMove) && fenColor(preview.fen) === color) {
+      const spent = (Date.now() - preview.lastMoveAt) / 1000;
+      return Math.max(0, clock / 100 - spent);
+    } else return clock / 100;
+  } else return undefined;
+};
+
+const boardPlayer = (
+  preview: ChapterPreview,
+  color: Color,
+  showResults?: boolean,
+  round?: RelayRound,
+  pins?: RelayPlayerPin,
+) => {
+  const player = preview.players?.[color];
+  const coloredResult =
+    preview.status &&
+    preview.status !== '*' &&
+    playerColoredResult(preview.status, color, round?.customScoring);
+  return h('span.mini-game__player', [
+    player && renderUser(player, pins?.isPlayerPinned(player)),
+    showResults
+      ? coloredResult
+        ? h(`${coloredResult.tag}.mini-game__result`, coloredResult.points)
+        : renderClock(preview, color)
+      : undefined,
+  ]);
+};

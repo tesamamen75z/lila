@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="activity">Aktivitet</string>
-  <string name="hostedALiveStream">Värd för en direktsänd videosändning</string>
+  <string name="hostedALiveStream">Var värd för en direktsänd videosändning</string>
   <plurals name="supportedNbMonths">
     <item quantity="one">Har stött lichess.org i %1$s månad som en %2$s</item>
     <item quantity="other">Har stött lichess.org i %1$s månader som en %2$s</item>
@@ -33,6 +33,10 @@
   <plurals name="completedNbGames">
     <item quantity="one">Avslutade %s korrespondensparti</item>
     <item quantity="other">Avslutade %s korrespondenspartier</item>
+  </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Avslutade %1$s %2$s korrespondensparti</item>
+    <item quantity="other">Avslutade %1$s %2$s korrespondenspartier</item>
   </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">Började följa %s spelare</item>

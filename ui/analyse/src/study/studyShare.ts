@@ -1,207 +1,242 @@
-import { h, VNode } from 'snabbdom';
-import { bind, baseUrl } from '../util';
-import { prop, Prop } from 'common';
-import { renderIndexAndMove } from '../moveView';
-import { StudyData, StudyChapterMeta } from './interfaces';
-import RelayCtrl from './relay/relayCtrl';
+import { prop } from 'lib';
+import { licon } from 'lib/licon';
+import type { TreeNode } from 'lib/tree/types';
+import { type VNode, bind, dataIcon, hl, copyMeInput, type MaybeVNode } from 'lib/view';
+import { cmnToggleProp } from 'lib/view/cmn-toggle';
+import { writeTextClipboard, url as xhrUrl } from 'lib/xhr';
 
-export interface StudyShareCtrl {
-  studyId: string;
-  chapter: () => StudyChapterMeta;
-  isPrivate(): boolean;
-  currentNode: () => Tree.Node;
-  withPly: Prop<boolean>;
-  relay: RelayCtrl | undefined;
-  cloneable: boolean;
-  redraw: () => void;
-  trans: Trans;
+import { renderIndexAndMove } from '@/view/components';
+import { baseUrl } from '@/view/util';
+
+import type { ChapterPreview, StudyData } from './interfaces';
+import type RelayCtrl from './relay/relayCtrl';
+import { relayIframe } from './relay/relayTourView';
+
+export class StudyShare {
+  withPly = prop(false);
+
+  constructor(
+    readonly data: StudyData,
+    readonly currentChapter: () => ChapterPreview,
+    readonly currentNode: () => TreeNode,
+    readonly onMainline: () => boolean,
+    readonly bottomColor: () => Color,
+    readonly relay: RelayCtrl | undefined,
+    readonly redraw: () => void,
+  ) {}
+
+  studyId = this.data.id;
+
+  variantKey = this.data.chapter.setup.variant.key;
+
+  chapter = this.currentChapter;
+  isPrivate = () => this.data.visibility === 'private';
+  cloneable = () => this.data.features.cloneable;
+  shareable = () => this.data.features.shareable;
+  gamebook = this.data.chapter.gamebook;
 }
 
-function fromPly(ctrl: StudyShareCtrl): VNode {
-  const renderedMove = renderIndexAndMove(
+function fromPly(ctrl: StudyShare): MaybeVNode {
+  if (!ctrl.onMainline()) return undefined;
+  const renderedMove = renderIndexAndMove(ctrl.currentNode(), false, false);
+  return hl('label.url-start-at-ply', [
+    cmnToggleProp({ id: 'study-share-start-position', prop: ctrl.withPly, redraw: ctrl.redraw }),
+    ...(renderedMove.length
+      ? i18n.study.startAtX.asArray(hl('strong', renderedMove))
+      : [i18n.study.startAtInitialPosition]),
+  ]);
+}
+
+function youCanPasteThis() {
+  return hl(
+    'p.form-help.text',
+    { attrs: dataIcon(licon.InfoCircle) },
+    i18n.study.pasteToEmbedChapterInForumOrBlog,
+  );
+}
+
+function copyChapterPgn(url: string, text: string) {
+  return hl(
+    'a.button.text',
     {
-      withDots: true,
-      showEval: false,
-    },
-    ctrl.currentNode()
-  );
-  return h(
-    'div.ply-wrap',
-    h('label.ply', [
-      h('input', {
-        attrs: { type: 'checkbox' },
-        hook: bind(
-          'change',
-          e => {
-            ctrl.withPly((e.target as HTMLInputElement).checked);
+      attrs: {
+        ...dataIcon(licon.Clipboard),
+        tabindex: '0',
+        'data-url': url,
+      },
+      hook: bind('click', async event => {
+        const target = event.target as HTMLElement;
+        const url = target.dataset['url']!;
+        const iconFeedback = (success: boolean) => {
+          target.setAttribute('data-icon', success ? licon.Checkmark : licon.X);
+          setTimeout(() => target.setAttribute('data-icon', licon.Clipboard), 1000);
+        };
+        writeTextClipboard(url).then(
+          () => iconFeedback(true),
+          err => {
+            console.log(err);
+            iconFeedback(false);
           },
-          ctrl.redraw
-        ),
+        );
       }),
-      ...(renderedMove
-        ? ctrl.trans.vdom('startAtX', h('strong', renderedMove))
-        : [ctrl.trans.noarg('startAtInitialPosition')]),
-    ])
+    },
+    text,
   );
 }
 
-export function ctrl(
-  data: StudyData,
-  currentChapter: () => StudyChapterMeta,
-  currentNode: () => Tree.Node,
-  relay: RelayCtrl | undefined,
-  redraw: () => void,
-  trans: Trans
-): StudyShareCtrl {
-  const withPly = prop(false);
-  return {
-    studyId: data.id,
-    chapter: currentChapter,
-    isPrivate() {
-      return data.visibility === 'private';
-    },
-    currentNode,
-    withPly,
-    relay,
-    cloneable: data.features.cloneable,
-    redraw,
-    trans,
-  };
-}
-
-export function view(ctrl: StudyShareCtrl): VNode {
-  const studyId = ctrl.studyId,
-    chapter = ctrl.chapter();
+export function view(ctrl: StudyShare): VNode {
+  const { studyId, relay } = ctrl;
+  const chapter = ctrl.chapter();
   const isPrivate = ctrl.isPrivate();
-  const addPly = (path: string) => (ctrl.withPly() ? `${path}#${ctrl.currentNode().ply}` : path);
-  return h('div.study__share', [
-    h('div.downloads', [
-      ctrl.cloneable
-        ? h(
-            'a.button.text',
-            {
-              attrs: {
-                'data-icon': '',
-                href: `/study/${studyId}/clone`,
-              },
+  const currentNode = ctrl.currentNode();
+
+  const addPly = (path: string) =>
+    ctrl.onMainline() ? (ctrl.withPly() ? `${path}#${currentNode.ply}` : path) : `${path}#last`;
+
+  return hl('div.study__share', [
+    hl('div.downloads', [
+      ctrl.cloneable() &&
+        hl(
+          'a.button.text',
+          { attrs: { ...dataIcon(licon.StudyBoard), href: `/study/${studyId}/clone` } },
+          i18n.study.cloneStudy,
+        ),
+      relay &&
+        hl(
+          'a.button.text',
+          {
+            attrs: {
+              ...dataIcon(licon.Download),
+              href: `/api/broadcast/${relay.data.tour.id}.pgn`,
+              download: true,
             },
-            ctrl.trans.noarg('cloneStudy')
-          )
-        : null,
-      h(
+          },
+          i18n.broadcast.downloadAllRounds,
+        ),
+      hl(
         'a.button.text',
         {
           attrs: {
-            'data-icon': '',
-            href: `/study/${studyId}.pgn`,
+            ...dataIcon(licon.Download),
+            href: relay ? `${relay.roundPath()}.pgn` : `/study/${studyId}.pgn`,
             download: true,
           },
         },
-        ctrl.trans.noarg(ctrl.relay ? 'downloadAllGames' : 'studyPgn')
+        relay ? i18n.site.downloadAllGames : i18n.study.studyPgn,
       ),
-      h(
+      hl(
         'a.button.text',
         {
           attrs: {
-            'data-icon': '',
+            ...dataIcon(licon.Download),
             href: `/study/${studyId}/${chapter.id}.pgn`,
             download: true,
           },
         },
-        ctrl.trans.noarg(ctrl.relay ? 'downloadGame' : 'chapterPgn')
+        relay ? i18n.study.downloadGame : i18n.study.chapterPgn,
       ),
-      h(
+      copyChapterPgn(`/study/${studyId}/${chapter.id}.pgn`, i18n.study.copyChapterPgn),
+      copyChapterPgn(
+        `/study/${studyId}/${chapter.id}.pgn?clocks=false&comments=false&variations=false`,
+        i18n.study.copyRawChapterPgn,
+      ),
+      hl(
         'a.button.text',
         {
           attrs: {
-            'data-icon': '',
-            href: `/study/${studyId}/${chapter.id}.gif`,
+            ...dataIcon(licon.Download),
+            href: xhrUrl(site.asset.baseUrl() + '/export/fen.gif', {
+              fen: currentNode.fen,
+              color: ctrl.bottomColor(),
+              lastMove: currentNode.uci,
+              variant: ctrl.variantKey,
+              theme: document.body.dataset.board,
+              piece: document.body.dataset.pieceSet,
+            }),
             download: true,
           },
         },
-        'GIF'
+        i18n.site.board,
+      ),
+      hl(
+        'a.button.text',
+        {
+          attrs: {
+            ...dataIcon(licon.Download),
+            href: xhrUrl(`/study/${studyId}/${chapter.id}.gif`, {
+              theme: document.body.dataset.board,
+              piece: document.body.dataset.pieceSet,
+              showGlyphs: true,
+            }),
+            download: true,
+          },
+        },
+        'GIF',
       ),
     ]),
-    h('form.form3', [
-      ...(ctrl.relay
+    hl('form.form3', [
+      (relay
         ? [
-            ['broadcastUrl', `${ctrl.relay.tourPath()}`],
-            ['currentRoundUrl', `${ctrl.relay.roundPath()}`],
-            ['currentGameUrl', `${ctrl.relay.roundPath()}/${chapter.id}`],
+            [relay.data.tour.name, relay.tourPath()],
+            [ctrl.data.name, relay.roundPath()],
+            [i18n.broadcast.currentGameUrl, addPly(`${relay.roundPath()}/${chapter.id}`), true],
           ]
         : [
-            ['studyUrl', `/study/${studyId}`],
-            ['currentChapterUrl', addPly(`/study/${studyId}/${chapter.id}`), true],
+            [i18n.study.studyUrl, `/study/${studyId}`],
+            [i18n.study.currentChapterUrl, addPly(`/study/${studyId}/${chapter.id}`), true],
           ]
-      ).map(([i18n, path, isFull]: [string, string, boolean]) =>
-        h('div.form-group', [
-          h('label.form-label', ctrl.trans.noarg(i18n)),
-          h('input.form-control.autoselect', {
-            attrs: {
-              readonly: true,
-              value: `${baseUrl()}${path}`,
-            },
-          }),
-          ...(isFull
-            ? [
-                fromPly(ctrl),
-                !isPrivate
-                  ? h(
-                      'p.form-help.text',
-                      {
-                        attrs: { 'data-icon': '' },
-                      },
-                      ctrl.trans.noarg('youCanPasteThisInTheForumToEmbed')
-                    )
-                  : null,
-              ]
-            : []),
-        ])
+      ).map(([text, path, pastable]: [string, string, boolean]) =>
+        hl('div.form-group', [
+          hl('label.form-label', text),
+          copyMeInput(`${baseUrl()}${path}`, { inputAttrs: { readonly: true } }),
+          pastable && fromPly(ctrl),
+          pastable && isPrivate && youCanPasteThis(),
+        ]),
       ),
-      h(
-        'div.form-group',
-        [
-          h('label.form-label', ctrl.trans.noarg('embedInYourWebsite')),
-          h('input.form-control.autoselect', {
-            attrs: {
-              readonly: true,
-              disabled: isPrivate,
-              value: !isPrivate
-                ? `<iframe width=600 height=371 src="${baseUrl()}${addPly(
-                    `/study/embed/${studyId}/${chapter.id}`
-                  )}" frameborder=0></iframe>`
-                : ctrl.trans.noarg('onlyPublicStudiesCanBeEmbedded'),
-            },
-          }),
-        ].concat(
-          !isPrivate
-            ? [
-                fromPly(ctrl),
-                h(
-                  'a.form-help.text',
-                  {
-                    attrs: {
-                      href: '/developers#embed-study',
-                      target: '_blank',
-                      rel: 'noopener',
-                      'data-icon': '',
-                    },
+      relay
+        ? hl('div.form-group', [
+            hl('label.form-label', 'Embed this particular game'),
+            copyMeInput(relayIframe(`${relay.roundPath()}/${chapter.id}`), {
+              inputAttrs: { readonly: true },
+            }),
+            hl(
+              'a.form-help.text',
+              { attrs: { ...dataIcon(licon.InfoCircle), href: `${relay.roundPath()}#overview` } },
+              'More options for embedding a broadcast',
+            ),
+          ])
+        : isPrivate || // study embed
+          hl('div.form-group', [
+            hl('div.form-label', [
+              hl('label', i18n.study.embedInYourWebsite),
+              hl(
+                'a.form-help.text',
+                {
+                  attrs: {
+                    href: '/developers#embed-study',
+                    target: '_blank',
+                    ...dataIcon(licon.InfoCircle),
                   },
-                  ctrl.trans.noarg('readMoreAboutEmbedding')
-                ),
-              ]
-            : []
-        )
-      ),
-      h('div.form-group', [
-        h('label.form-label', 'FEN'),
-        h('input.form-control.autoselect', {
-          attrs: {
-            readonly: true,
-            value: ctrl.currentNode().fen,
-          },
-        }),
-      ]),
+                },
+                i18n.study.readMoreAboutEmbedding,
+              ),
+            ]),
+            copyMeInput(
+              !isPrivate
+                ? `<iframe ${
+                    ctrl.gamebook ? 'width="320" height="320"' : 'width="600" height="371"'
+                  } src="${baseUrl()}${addPly(
+                    `/study/embed/${studyId}/${chapter.id}`,
+                  )}" frameborder=0></iframe>`
+                : i18n.study.onlyPublicStudiesCanBeEmbedded,
+              { inputAttrs: { readonly: true, disabled: isPrivate } },
+            ),
+            fromPly(ctrl),
+          ]),
+    ]),
+    hl('div.form-group', [
+      hl('label.form-label', 'FEN'),
+      copyMeInput(currentNode.fen, { inputAttrs: { readonly: true } }),
     ]),
   ]);
 }

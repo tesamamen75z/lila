@@ -1,45 +1,43 @@
 package lila.plan
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
 import play.api.libs.ws.StandaloneWSClient
-import scala.concurrent.duration._
 
-import lila.common.config._
-import lila.common.Strings
-import lila.memo.SettingStore.Strings._
+import lila.common.autoconfig.{ *, given }
+import lila.common.config.given
+import lila.core.config.*
+import lila.db.dsl.Coll
 
 @Module
 private class PlanConfig(
     @ConfigName("collection.patron") val patronColl: CollName,
     @ConfigName("collection.charge") val chargeColl: CollName,
     val stripe: StripeClient.Config,
+    val payPal: PayPalClient.Config,
     val oer: CurrencyApi.Config,
-    @ConfigName("paypal.ipn_key") val payPalIpnKey: Secret
+    @ConfigName("payPal.ipn_key") val payPalIpnKey: Secret
 )
 
+@Module
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
     ws: StandaloneWSClient,
-    timeline: lila.hub.actors.Timeline,
     cacheApi: lila.memo.CacheApi,
     mongoCache: lila.memo.MongoCache.Api,
-    lightUserApi: lila.user.LightUserApi,
-    userRepo: lila.user.UserRepo,
-    settingStore: lila.memo.SettingStore.Builder
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
+    lightUserApi: lila.core.user.LightUserApi,
+    relationApi: lila.core.relation.RelationApi,
+    userApi: lila.core.user.UserApi,
+    settingStore: lila.memo.SettingStore.Builder,
+    ip2proxy: lila.core.security.Ip2ProxyApi,
+    routeUrl: RouteUrl
+)(using Executor, play.api.Mode, lila.core.i18n.Translator, Scheduler):
 
-  import StripeClient.stripeConfigLoader
-  import CurrencyApi.currencyConfigLoader
-  private val config = appConfig.get[PlanConfig]("plan")(AutoConfig.loader)
+  private val config = appConfig.get[PlanConfig]("plan")(using AutoConfig.loader)
 
   val stripePublicKey = config.stripe.publicKey
+  val payPalPublicKey = config.payPal.publicKey
 
   val donationGoalSetting = settingStore[Int](
     "donationGoal",
@@ -47,68 +45,48 @@ final class Env(
     text = "Monthly donation goal in USD from https://lichess.org/costs".some
   )
 
-  val paymentMethodsSetting = settingStore[Strings](
-    "paymentMethods",
-    default = Strings(List("card")),
-    text = "Stripe payment methods, separated by commas".some
+  private lazy val mongo = PlanMongo(
+    patron = db(config.patronColl),
+    charge = db(config.chargeColl)
   )
 
-  private lazy val patronColl = db(config.patronColl)
-  private lazy val chargeColl = db(config.chargeColl)
-
-  lazy val stripePaymentMethods: StripePaymentMethods = wire[StripePaymentMethods]
-
   private lazy val stripeClient: StripeClient = wire[StripeClient]
+
+  private lazy val payPalClient: PayPalClient = wire[PayPalClient]
 
   lazy val currencyApi: CurrencyApi = wire[CurrencyApi]
 
   lazy val priceApi: PlanPricingApi = wire[PlanPricingApi]
 
-  lazy val checkoutForm = wire[CheckoutForm]
+  lazy val checkoutForm = wire[PlanCheckoutForm]
 
   private lazy val notifier: PlanNotifier = wire[PlanNotifier]
 
-  private lazy val monthlyGoalApi = new MonthlyGoalApi(
+  private lazy val monthlyGoalApi = MonthlyGoalApi(
     getGoal = () => Usd(donationGoalSetting.get()),
-    chargeColl = chargeColl
+    chargeColl = mongo.charge
   )
 
-  lazy val api = new PlanApi(
-    stripeClient = stripeClient,
-    patronColl = patronColl,
-    chargeColl = chargeColl,
-    notifier = notifier,
-    userRepo = userRepo,
-    lightUserApi = lightUserApi,
-    cacheApi = cacheApi,
-    mongoCache = mongoCache,
-    payPalIpnKey = config.payPalIpnKey,
-    monthlyGoalApi = monthlyGoalApi,
-    currencyApi = currencyApi,
-    pricingApi = priceApi
-  )
+  lazy val api: PlanApi = wire[PlanApi]
 
-  lazy val webhookHandler = new WebhookHandler(api)
+  lazy val webhook = wire[PlanWebhook]
 
-  private lazy val expiration = new Expiration(
-    userRepo,
-    patronColl,
-    notifier
-  )
+  PlanExpiration(userApi, mongo.patron, notifier)
 
-  system.scheduler.scheduleWithFixedDelay(5 minutes, 5 minutes) { () =>
-    expiration.run.unit
-  }
+  lila.common.Bus.sub[lila.core.user.ChangeEmail]:
+    case lila.core.user.ChangeEmail(userId, email) => api.onEmailChange(userId, email)
 
-  def cli =
-    new lila.common.Cli {
-      def process = {
-        case "patron" :: "lifetime" :: user :: Nil =>
-          userRepo named user flatMap { _ ?? api.setLifetime } inject "ok"
-        case "patron" :: "month" :: user :: Nil =>
-          userRepo named user flatMap { _ ?? api.freeMonth } inject "ok"
-        case "patron" :: "remove" :: user :: Nil =>
-          userRepo named user flatMap { _ ?? api.remove } inject "ok"
-      }
-    }
-}
+  lila.common.Cli.handle(_.FreePatron):
+    case "patron" :: "lifetime" :: user :: Nil =>
+      userApi.byId(UserStr(user)).flatMapz(api.setLifetime).inject("ok")
+    case "patron" :: "gift-month" :: user :: Nil =>
+      api.freeMonths(user, 1).inject("ok")
+    case "patron" :: "gift-months" :: user :: nbMonths :: Nil =>
+      nbMonths.toIntOption.so(api.freeMonths(user, _)).inject("ok")
+    case "patron" :: "remove" :: user :: Nil =>
+      userApi.byId(UserStr(user)).flatMapz(api.remove).inject("ok")
+    case "patron" :: "set-months" :: user :: months :: Nil =>
+      months.toIntOption.fold(fuccess("invalid months")): months =>
+        userApi.byId(UserStr(user)).flatMapz(api.setMonths(_, months)).inject("ok")
+
+final private class PlanMongo(val patron: Coll, val charge: Coll)

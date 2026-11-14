@@ -1,58 +1,31 @@
-import { h, VNode } from 'snabbdom';
+import { memoize, type Toggle } from 'lib';
+import { licon } from 'lib/licon';
+import { bind, hl, type VNode } from 'lib/view';
 
-export type Redraw = () => void;
-export type Close = () => void;
-export type Open = (sub: string) => void;
-
-export interface Prop<T> {
-  (): T;
-  (v: T): T;
-}
-
-export function defined<A>(v: A | undefined): v is A {
-  return typeof v !== 'undefined';
-}
-
-// like mithril prop but with type safety
-export function prop<A>(initialValue: A): Prop<A> {
-  let value = initialValue;
-  const fun = function (v: A | undefined) {
-    if (typeof v !== 'undefined') value = v;
-    return value;
-  };
-  return fun as Prop<A>;
-}
-
-export function bind(eventName: string, f: (e: Event) => void, redraw: Redraw | undefined = undefined) {
-  return {
-    insert: (vnode: VNode) => {
-      (vnode.elm as HTMLElement).addEventListener(eventName, e => {
-        e.stopPropagation();
-        f(e);
-        if (redraw) redraw();
-        return false;
-      });
-    },
-  };
-}
-
-export function header(name: string, close: Close) {
-  return h(
-    'a.head.text',
-    {
-      attrs: { 'data-icon': '' },
-      hook: bind('click', close),
-    },
-    name
+export const header = (name: string, close: () => void): VNode =>
+  hl(
+    'button.head.text',
+    { attrs: { 'data-icon': licon.LessThan, type: 'button' }, hook: bind('click', close) },
+    name,
   );
-}
 
-export function spinner() {
-  return h('div.spinner', [
-    h('svg', { attrs: { viewBox: '0 0 40 40' } }, [
-      h('circle', {
-        attrs: { cx: 20, cy: 20, r: 18, fill: 'none' },
-      }),
-    ]),
-  ]);
-}
+export const moreButton = (toggle: Toggle): VNode =>
+  hl(
+    'button.button.more',
+    {
+      attrs: { title: toggle() ? i18n.site.less : i18n.site.more },
+      hook: bind('click', toggle.toggle),
+    },
+    toggle() ? '-' : '+',
+  );
+
+export const elementScrollBarWidthSlowGuess: () => number = memoize<number>(() => {
+  const ruler = document.createElement('div');
+  ruler.style.position = 'absolute';
+  ruler.style.overflow = 'scroll';
+  ruler.style.visibility = 'hidden';
+  document.body.appendChild(ruler);
+  const barWidth = ruler.offsetWidth - ruler.clientWidth;
+  document.body.removeChild(ruler);
+  return barWidth;
+});

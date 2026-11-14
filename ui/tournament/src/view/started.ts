@@ -1,42 +1,39 @@
-import { h, VNode } from 'snabbdom';
+import { h, type VNode } from 'snabbdom';
+
+import type { MaybeVNodes } from 'lib/view';
+
+import type TournamentController from '../ctrl';
 import { controls, standing } from './arena';
 import { teamStanding } from './battle';
 import header from './header';
-import tourTable from './table';
 import playerInfo from './playerInfo';
+import tourTable from './table';
 import teamInfo from './teamInfo';
-import * as pagination from '../pagination';
-import * as tour from '../tournament';
-import TournamentController from '../ctrl';
-import { MaybeVNodes } from '../interfaces';
 
-function joinTheGame(ctrl: TournamentController, gameId: string) {
-  return h(
-    'a.tour__ur-playing.button.is.is-after',
-    {
-      attrs: { href: '/' + gameId },
-    },
-    [ctrl.trans('youArePlaying'), h('br'), ctrl.trans('joinTheGame')]
-  );
+function joinTheGame(gameId: string) {
+  return h('a.tour__ur-playing.button.is.is-after', { attrs: { href: '/game/' + gameId } }, [
+    i18n.site.youArePlaying,
+    h('br'),
+    i18n.site.joinTheGame,
+  ]);
 }
 
 function notice(ctrl: TournamentController): VNode {
-  return tour.willBePaired(ctrl)
-    ? h('div.tour__notice.bar-glider', ctrl.trans('standByX', ctrl.data.me!.username))
-    : h('div.tour__notice.closed', ctrl.trans('tournamentPairingsAreNowClosed'));
+  return ctrl.willBePaired()
+    ? h('div.tour__notice.bar-glider', i18n.site.standByX(ctrl.data.myUsername!))
+    : h('div.tour__notice.closed', i18n.arena.tournamentPairingsAreNowClosed);
 }
 
 export const name = 'started';
 
 export function main(ctrl: TournamentController): MaybeVNodes {
-  const gameId = ctrl.myGameId(),
-    pag = pagination.players(ctrl);
+  const gameId = ctrl.myGameId();
   return [
     header(ctrl),
-    gameId ? joinTheGame(ctrl, gameId) : tour.isIn(ctrl) ? notice(ctrl) : null,
+    gameId ? joinTheGame(gameId) : ctrl.isIn() ? notice(ctrl) : null,
     teamStanding(ctrl, 'started'),
-    controls(ctrl, pag),
-    standing(ctrl, pag, 'started'),
+    controls(ctrl),
+    standing(ctrl, 'started'),
   ];
 }
 

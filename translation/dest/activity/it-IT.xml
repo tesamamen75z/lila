@@ -11,8 +11,8 @@
     <item quantity="other">Ha studiato %1$s posizioni in %2$s</item>
   </plurals>
   <plurals name="solvedNbPuzzles">
-    <item quantity="one">Ha giocato %s tattica</item>
-    <item quantity="other">Ha giocato %s tattiche</item>
+    <item quantity="one">Ha risolto %s puzzle</item>
+    <item quantity="other">Ha risolto %s puzzle</item>
   </plurals>
   <plurals name="playedNbGames">
     <item quantity="one">Ha giocato %1$s partita %2$s</item>
@@ -34,6 +34,10 @@
     <item quantity="one">Ha concluso %s partita per corrispondenza</item>
     <item quantity="other">Ha concluso %s partite per corrispondenza</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Partita %1$s %2$s per corrispondenza completata</item>
+    <item quantity="other">Partite %1$s %2$s per corrispondenza completate</item>
+  </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">Ha iniziato a seguire %s giocatore</item>
     <item quantity="other">Ha iniziato a seguire %s giocatori</item>
@@ -47,8 +51,8 @@
     <item quantity="other">Ha ospitato %s esibizioni simultanee</item>
   </plurals>
   <plurals name="joinedNbSimuls">
-    <item quantity="one">Ha partecipato a %s simultanea</item>
-    <item quantity="other">Ha partecipato a %s simultanee</item>
+    <item quantity="one">Ha partecipato ad %s esibizione simultanea</item>
+    <item quantity="other">Ha partecipato a %s esibizioni simultanee</item>
   </plurals>
   <plurals name="createdNbStudies">
     <item quantity="one">Ha creato %s nuovo studio</item>
@@ -63,13 +67,13 @@
     <item quantity="other">Si è classificato %1$s° (nel miglior %2$s%%) con %3$s partite in %4$s</item>
   </plurals>
   <plurals name="competedInNbSwissTournaments">
-    <item quantity="one">Ha gareggiato in %s toreno Svizzero</item>
+    <item quantity="one">Ha gareggiato in %s torneo Svizzero</item>
     <item quantity="other">Ha gareggiato in %s tornei Svizzeri</item>
   </plurals>
   <string name="rankedInSwissTournament">Classificato #%1$s in %2$s</string>
   <string name="signedUp">Si è registrato su lichess.org</string>
   <plurals name="joinedNbTeams">
-    <item quantity="one">Si è unito ad %s gruppo</item>
-    <item quantity="other">Si è unito a %s gruppi</item>
+    <item quantity="one">Si è unito ad %s squadra</item>
+    <item quantity="other">Si è unito a %s squadre</item>
   </plurals>
 </resources>

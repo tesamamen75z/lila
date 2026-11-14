@@ -1,68 +1,101 @@
 package lila.oauth
 
-import org.joda.time.DateTime
-import play.api.mvc.{ RequestHeader, Result }
+import com.softwaremill.tagging.*
+import play.api.mvc.Result
+import scalalib.net.{ Bearer, UserAgent }
 
-import lila.common.{ Bearer, HTTPRequest }
-import lila.db.dsl._
-import lila.user.{ User, UserRepo }
+import lila.common.{ ClientName, HTTPRequest }
+import lila.memo.SettingStore
 
 final class OAuthServer(
+    userApi: lila.core.user.UserApi,
     tokenApi: AccessTokenApi,
-    userRepo: UserRepo,
-    cacheApi: lila.memo.CacheApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    originBlocklist: SettingStore[lila.core.data.Strings] @@ OriginBlocklist,
+    signedClients: OAuthSignedClients
+)(using play.api.Mode, Executor):
 
-  import OAuthServer._
+  import OAuthServer.*
 
-  def auth(req: RequestHeader, scopes: List[OAuthScope]): Fu[AuthResult] =
-    HTTPRequest.bearer(req).fold[Fu[AuthResult]](fufail(MissingAuthorizationHeader)) {
-      auth(_, scopes)
-    } recover { case e: AuthError =>
-      Left(e)
-    }
+  private type Signature = Option[String]
 
-  def auth(tokenId: Bearer, scopes: List[OAuthScope]): Fu[AuthResult] =
-    tokenApi.get(tokenId) orFailWith NoSuchToken flatMap {
-      case at if scopes.nonEmpty && !scopes.exists(at.scopes.contains) => fufail(MissingScope(at.scopes))
-      case at =>
-        userRepo enabledById at.userId flatMap {
-          case None    => fufail(NoSuchUser)
-          case Some(u) => fuccess(OAuthScope.Scoped(u, at.scopes))
-        }
-    } dmap Right.apply recover { case e: AuthError =>
-      Left(e)
-    }
+  def authReq(accepted: EndpointScopes)(using req: Req)(using ClientName): AccessFu =
+    val res = for
+      bearer <- HTTPRequest.bearer.raiseIfNone(MissingAuthorizationHeader)
+      res <- auth(bearer, accepted, req.some)
+      _ <- checkOauthUaUser(res, HTTPRequest.userAgent(req)).raiseIfSome(funit)
+    yield res
+    res.onComplete(x => monitorAuth(x.isSuccess))
+    res
 
-  def authBoth(scopes: List[OAuthScope])(
+  def auth(
+      bearer: (Bearer, Signature),
+      accepted: EndpointScopes,
+      andLogReq: Option[Req]
+  )(using client: ClientName): AccessFu = for
+    at <- getTokenFromSignedBearer(bearer)
+    at <- at.raiseIfNone(NoSuchToken)
+    _ <- raiseIf(!accepted.isEmpty && !accepted.compatible(at.scopes)):
+      MissingScope(accepted, at.scopes)
+    u <- userApi.meWithConfirmedEmail(at.userId)
+    u <- u.raiseIfNone(NoSuchUser)
+    u <- u.left.map(_ => EmailUnconfirmed).raiseIfLeft
+    blocked = at.clientOrigin.exists(origin => originBlocklist.get().value.exists(origin.value.contains))
+    _ = andLogReq
+      .ifTrue(blocked || (u.isnt(UserId.explorer) && !client.isPlaybot))
+      .foreach: req =>
+        val logMsg =
+          val verb = if blocked then "block" else "auth"
+          s"$verb ${at.clientOrigin | "-"} as ${u.username} ${HTTPRequest.print(using req).take(200)}"
+        if blocked then logger.info(logMsg) else logger.debug(logMsg)
+    _ <- raiseIf(blocked)(OriginBlocked)
+  yield OAuthScope.Access(OAuthScope.Scoped(u, at.scopes), at.tokenId)
+
+  def authBoth(scopes: EndpointScopes, req: Req)(
       token1: Bearer,
       token2: Bearer
-  ): Fu[Either[AuthError, (User, User)]] = for {
-    auth1 <- auth(token1, scopes)
-    auth2 <- auth(token2, scopes)
-  } yield for {
-    user1  <- auth1
-    user2  <- auth2
-    result <- if (user1.user is user2.user) Left(OneUserWithTwoTokens) else Right(user1.user -> user2.user)
-  } yield result
-}
+  )(using ClientName): FuRaise[AuthError, (User, User)] = for
+    auth1 <- auth(token1 -> none, scopes, req.some)
+    auth2 <- auth(token2 -> none, scopes, req.some)
+    _ <- raiseIf(auth1.user.is(auth2.user))(OneUserWithTwoTokens)
+  yield auth1.user -> auth2.user
 
-object OAuthServer {
+  val UaUserRegex = """(?:user|as):\s?([\w\-]{3,31})""".r
+  private def checkOauthUaUser(access: OAuthScope.Access, ua: UserAgent): Option[AuthError] =
+    ua.value match
+      case UaUserRegex(u) if access.me.isnt(UserStr(u)) => UserAgentMismatch.some
+      case _ => none
 
-  type AuthResult = Either[AuthError, OAuthScope.Scoped]
+  private def getTokenFromSignedBearer(pair: (Bearer, Signature)): Fu[Option[AccessToken.ForAuth]] =
+    val (bearer, signature) = pair
+    tokenApi
+      .get(bearer)
+      .mapz: token =>
+        if signedClients.allow(bearer, token, signature) then token.some
+        else
+          logger.warn(s"declined token for ${token.show}, signed=${signature.isDefined}")
+          none
 
-  sealed abstract class AuthError(val message: String) extends lila.base.LilaException
-  case object MissingAuthorizationHeader               extends AuthError("Missing authorization header")
-  case object NoSuchToken                              extends AuthError("No such token")
-  case class MissingScope(scopes: List[OAuthScope])    extends AuthError("Missing scope")
-  case object NoSuchUser                               extends AuthError("No such user")
-  case object OneUserWithTwoTokens                     extends AuthError("Both tokens belong to the same user")
+  private def monitorAuth(success: Boolean) =
+    lila.mon.user.oauth.request(success).increment()
 
-  def responseHeaders(acceptedScopes: Seq[OAuthScope], availableScopes: Seq[OAuthScope])(
-      res: Result
-  ): Result =
+object OAuthServer:
+
+  type AccessFu = FuRaise[AuthError, OAuthScope.Access]
+  type AuthFu = FuRaise[AuthError, OAuthScope.Scoped]
+
+  class AuthError(val message: String)
+  case object MissingAuthorizationHeader extends AuthError("Missing authorization header")
+  case object NoSuchToken extends AuthError("No such token")
+  case class MissingScope(accepted: EndpointScopes, available: TokenScopes)
+      extends AuthError(s"Missing scope: ${accepted.show}")
+  case object NoSuchUser extends AuthError("No such user")
+  case object OneUserWithTwoTokens extends AuthError("Both tokens belong to the same user")
+  case object OriginBlocked extends AuthError("Origin blocked")
+  case object UserAgentMismatch extends AuthError("The user in the user-agent doesn't match the token bearer")
+  case object EmailUnconfirmed extends AuthError("Please check your email for a confirmation link")
+
+  def responseHeaders(accepted: EndpointScopes, tokenScopes: TokenScopes)(res: Result): Result =
     res.withHeaders(
-      "X-OAuth-Scopes"          -> OAuthScope.keyList(availableScopes),
-      "X-Accepted-OAuth-Scopes" -> OAuthScope.keyList(acceptedScopes)
+      "X-OAuth-Scopes" -> tokenScopes.into(OAuthScopes).keyList,
+      "X-Accepted-OAuth-Scopes" -> accepted.into(OAuthScopes).keyList
     )
-}

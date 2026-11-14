@@ -1,151 +1,125 @@
 package lila.chat
 
-import lila.hub.actorApi.shutup.PublicSource
-import lila.user.User
+import reactivemongo.api.bson.BSONDocumentHandler
 
-sealed trait AnyChat {
-  def id: Chat.Id
+import lila.core.chat.PublicSource
+
+sealed trait AnyChat:
+  def id: ChatId
   def lines: List[Line]
 
   val loginRequired: Boolean
 
-  def forUser(u: Option[User]): AnyChat
-
   def isEmpty = lines.isEmpty
 
-  def userIds: List[User.ID]
-}
+  def userIds: Set[UserId]
 
-sealed trait Chat[L <: Line] extends AnyChat {
-  def id: Chat.Id
+sealed trait Chat[L <: Line] extends AnyChat:
+  def id: ChatId
   def lines: List[L]
   def nonEmpty = lines.exists(_.isHuman)
-}
 
 case class UserChat(
-    id: Chat.Id,
+    id: ChatId,
     lines: List[UserLine]
-) extends Chat[UserLine] {
+) extends Chat[UserLine]:
 
   val loginRequired = true
 
-  def forUser(u: Option[User]): UserChat =
-    if (u.??(_.marks.troll)) this
-    else copy(lines = lines filterNot (_.troll))
+  def forMe(using me: Option[Me]): UserChat =
+    if me.exists(_.marks.troll) then this
+    else copy(lines = lines.filterNot(_.troll))
 
-  def markDeleted(u: User) =
-    copy(
-      lines = lines.map { l =>
-        if (l.userId == u.id) l.delete else l
-      }
-    )
+  def markDeleted(u: User) = copy(
+    lines = lines.map: l =>
+      if l.userId.is(u.id) then l.delete else l
+  )
 
   def hasLinesOf(u: User) = lines.exists(_.userId == u.id)
 
   def add(line: UserLine) = copy(lines = lines :+ line)
 
-  def mapLines(f: UserLine => UserLine) = copy(lines = lines map f)
+  def mapLines(f: UserLine => UserLine) = copy(lines = lines.map(f))
 
-  def userIds = lines.map(_.userId)
+  def filterLines(f: UserLine => Boolean) = copy(lines = lines.filter(f))
 
-  def truncate(max: Int) = copy(lines = lines.drop((lines.size - max) atLeast 0))
+  def userIds = lines.view.map(_.userId).toSet
+
+  def truncate(max: Int) = copy(lines = lines.drop((lines.size - max).atLeast(0)))
 
   def hasRecentLine(u: User): Boolean = lines.reverse.take(12).exists(_.userId == u.id)
-}
 
-object UserChat {
-  case class Mine(chat: UserChat, timeout: Boolean) {
-    def truncate(max: Int) = copy(chat = chat truncate max)
-  }
-}
+object UserChat:
+  case class Mine(chat: UserChat, lines: JsonChatLines, timeout: Boolean, locked: Boolean = false):
+    def truncate(max: Int) = copy(chat = chat.truncate(max))
 
 case class MixedChat(
-    id: Chat.Id,
+    id: ChatId,
     lines: List[Line]
-) extends Chat[Line] {
+) extends Chat[Line]:
 
   val loginRequired = false
 
-  def forUser(u: Option[User]): MixedChat =
-    if (u.??(_.marks.troll)) this
-    else
-      copy(lines = lines filter {
-        case l: UserLine   => !l.troll
-        case _: PlayerLine => true
-      })
+  def mapLines(f: Line => Line) = copy(lines = lines.map(f))
 
-  def mapLines(f: Line => Line) = copy(lines = lines map f)
+  def userIds = lines
+    .collect:
+      case l: UserLine => l.userId
+    .toSet
 
-  def userIds =
-    lines.collect { case l: UserLine =>
-      l.userId
-    }
-}
+object Chat:
 
-object Chat {
+  case class Setup(id: ChatId, publicSource: PublicSource)
 
-  case class Id(value: String) extends AnyVal with StringValue
-
-  case class ResourceId(value: String) extends AnyVal with StringValue
-
-  case class Setup(id: Id, publicSource: PublicSource)
-
-  def tournamentSetup(tourId: String) = Setup(Id(tourId), PublicSource.Tournament(tourId))
-  def simulSetup(simulId: String)     = Setup(Id(simulId), PublicSource.Simul(simulId))
+  def tournamentSetup(tourId: TourId) = Setup(tourId.into(ChatId), PublicSource.Tournament(tourId))
+  def simulSetup(simulId: SimulId) = Setup(simulId.into(ChatId), PublicSource.Simul(simulId))
 
   // if restricted, only presets are available
-  case class Restricted(chat: MixedChat, restricted: Boolean)
+  case class Restricted(chat: MixedChat, lines: JsonChatLines, restricted: Boolean)
+
+  case class RestrictedLines(lines: JsonChatLines, restricted: Boolean)
 
   // left: game chat
   // right: tournament/simul chat
-  case class GameOrEvent(either: Either[Restricted, (UserChat.Mine, ResourceId)]) {
+  case class GameOrEvent(either: Either[Restricted, (UserChat.Mine, PublicSource)]):
     def game = either.left.toOption
-  }
 
   import lila.db.BSON
 
-  def makeUser(id: Chat.Id)  = UserChat(id, Nil)
-  def makeMixed(id: Chat.Id) = MixedChat(id, Nil)
+  def makeUser(id: ChatId) = UserChat(id, Nil)
+  def makeMixed(id: ChatId) = MixedChat(id, Nil)
 
-  def chanOf(id: Chat.Id) = s"chat:$id"
+  def chanOf(id: ChatId) = s"chat:$id"
 
-  object BSONFields {
-    val id    = "_id"
+  object BSONFields:
+    val id = "_id"
     val lines = "l"
-  }
 
-  import BSONFields._
+  import BSONFields.*
   import reactivemongo.api.bson.BSONDocument
-  import Line.{ lineBSONHandler, userLineBSONHandler }
+  import lila.db.dsl.given
 
-  implicit val chatIdIso         = lila.common.Iso.string[Id](Id.apply, _.value)
-  implicit val chatIdBSONHandler = lila.db.BSON.stringIsoHandler(chatIdIso)
-
-  implicit val mixedChatBSONHandler = new BSON[MixedChat] {
-    def reads(r: BSON.Reader): MixedChat = {
+  given BSONDocumentHandler[MixedChat] = new BSON[MixedChat]:
+    import lila.chat.Line.given
+    def reads(r: BSON.Reader): MixedChat =
       MixedChat(
-        id = r.get[Id](id),
+        id = r.get[ChatId](id),
         lines = r.get[List[Line]](lines)
       )
-    }
     def writes(w: BSON.Writer, o: MixedChat) =
       BSONDocument(
-        id    -> o.id,
+        id -> o.id,
         lines -> o.lines
       )
-  }
 
-  implicit val userChatBSONHandler = new BSON[UserChat] {
-    def reads(r: BSON.Reader): UserChat = {
+  given BSONDocumentHandler[UserChat] = new BSON[UserChat]:
+    def reads(r: BSON.Reader): UserChat =
       UserChat(
-        id = r.get[Id](id),
+        id = r.get[ChatId](id),
         lines = r.get[List[UserLine]](lines)
       )
-    }
     def writes(w: BSON.Writer, o: UserChat) =
       BSONDocument(
-        id    -> o.id,
+        id -> o.id,
         lines -> o.lines
       )
-  }
-}

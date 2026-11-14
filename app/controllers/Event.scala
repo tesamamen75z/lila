@@ -1,71 +1,60 @@
 package controllers
 
-import lila.app._
-import views._
+import scalalib.Json.given
 
-final class Event(env: Env) extends LilaController(env) {
+import lila.app.*
 
-  private def api = env.event.api
+final class Event(env: Env) extends LilaController(env):
 
-  def show(id: String) =
-    Open { implicit ctx =>
-      OptionOk(api oneEnabled id) { event =>
-        html.event.show(event)
-      }
-    }
+  import env.event.api
 
-  def manager =
-    Secure(_.ManageEvent) { implicit ctx => _ =>
-      api.list map { events =>
-        html.event.manager(events)
-      }
-    }
+  def show(id: String) = Open:
+    FoundPage(api.oneEnabled(id)): event =>
+      for html <- env.event.markdown.of(event)
+      yield views.event.show(event, html)
 
-  def edit(id: String) =
-    Secure(_.ManageEvent) { implicit ctx => _ =>
-      OptionOk(api one id) { event =>
-        html.event.edit(event, api editForm event)
-      }
-    }
+  def manager(page: Int) = Secure(_.ManageEvent) { ctx ?=> _ ?=>
+    Ok.async:
+      api.pager(page).map(views.event.manager)
+  }
 
-  def update(id: String) =
-    SecureBody(_.ManageEvent) { implicit ctx => me =>
-      OptionFuResult(api one id) { event =>
-        implicit val req = ctx.body
-        api
-          .editForm(event)
-          .bindFromRequest()
-          .fold(
-            err => BadRequest(html.event.edit(event, err)).fuccess,
-            data => api.update(event, data, me.user) inject Redirect(routes.Event.edit(id)).flashSuccess
-          )
-      }
-    }
+  def apiCalendar(page: Int) = SecuredScoped(_.ManageEvent) { ctx ?=> _ ?=>
+    Reasonable(page, Max(20)):
+      val since = getTimestamp("since").getOrElse(nowInstant)
+      val until = getTimestamp("until").getOrElse(nowInstant.plusDays(7))
+      for pager <- api.between(since, until, page)
+      yield JsonOk(pager.mapResults(env.event.jsonView.calendar))
+  }
 
-  def form =
-    Secure(_.ManageEvent) { implicit ctx => _ =>
-      Ok(html.event.create(api.createForm)).fuccess
-    }
+  def edit(id: String) = Secure(_.ManageEvent) { ctx ?=> _ ?=>
+    FoundPage(api.one(id)): event =>
+      views.event.edit(event, api.editForm(event))
+  }
 
-  def create =
-    SecureBody(_.ManageEvent) { implicit ctx => me =>
-      implicit val req = ctx.body
-      api.createForm
-        .bindFromRequest()
-        .fold(
-          err => BadRequest(html.event.create(err)).fuccess,
-          data =>
-            api.create(data, me.id) map { event =>
-              Redirect(routes.Event.edit(event.id)).flashSuccess
-            }
-        )
-    }
+  def update(id: String) = SecureBody(_.ManageEvent) { ctx ?=> me ?=>
+    Found(api.one(id)): event =>
+      bindForm(api.editForm(event))(
+        err => BadRequest.page(views.event.edit(event, err)),
+        data => api.update(event, data).inject(Redirect(routes.Event.edit(id)).flashSuccess)
+      )
+  }
 
-  def cloneE(id: String) =
-    Secure(_.ManageEvent) { implicit ctx => _ =>
-      OptionFuResult(api one id) { old =>
-        val event = api clone old
-        Ok(html.event.create(api editForm event)).fuccess
-      }
-    }
-}
+  def form = Secure(_.ManageEvent) { ctx ?=> _ ?=>
+    Ok.page:
+      views.event.create(api.createForm)
+  }
+
+  def create = SecureBody(_.ManageEvent) { ctx ?=> me ?=>
+    bindForm(api.createForm)(
+      err => BadRequest.page(views.event.create(err)),
+      data =>
+        api.create(data).map { event =>
+          Redirect(routes.Event.edit(event.id)).flashSuccess
+        }
+    )
+  }
+
+  def cloneE(id: String) = Secure(_.ManageEvent) { ctx ?=> _ ?=>
+    FoundPage(api.one(id)): old =>
+      views.event.create(api.editForm(api.clone(old)))
+  }

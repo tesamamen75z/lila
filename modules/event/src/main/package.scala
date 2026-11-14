@@ -1,3 +1,4 @@
-package lila
+package lila.event
 
-package object event extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

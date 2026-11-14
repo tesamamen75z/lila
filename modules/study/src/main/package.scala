@@ -1,12 +1,13 @@
-package lila
+package lila.study
 
-import reactivemongo.api.ReadPreference
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.study.data.{ StudyName, StudyChapterName }
 
-package object study extends PackageObject {
+private val logger = lila.log("study")
 
-  private[study] val logger = lila.log("study")
+case class StudyValidationException(message: String) extends lila.core.lilaism.LilaException
 
-  private[study] type ChapterMap = Map[lila.study.Chapter.Id, lila.study.Chapter]
-
-  private[study] val readPref = ReadPreference.primary
-}
+def canUnfeature(using Option[Me]) =
+  lila.core.perm.Granter.opt(_.StudyAdmin) ||
+    lila.core.perm.Granter.opt(_.Shadowban)

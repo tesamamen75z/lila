@@ -1,6 +1,6 @@
-var props = ['animation', 'autoQueen', 'autoThreefold', 'challenge', 'coordColor', 'takeback'];
+const props = ['animation', 'autoQueen', 'autoThreefold', 'challenge', 'takeback'];
 db.pref.find().forEach(function (p) {
-  var set = {},
+  const set = {},
     unset = {};
   props.forEach(function (prop) {
     if (typeof p[prop] !== 'undefined') {
@@ -15,7 +15,7 @@ db.pref.find().forEach(function (p) {
     },
     {
       $unset: set,
-    }
+    },
   );
   db.pref.update(
     {
@@ -23,7 +23,7 @@ db.pref.find().forEach(function (p) {
     },
     {
       $set: set,
-    }
+    },
   );
 });
 

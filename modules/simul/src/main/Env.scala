@@ -1,14 +1,13 @@
 package lila.simul
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import scala.concurrent.duration._
 
 import lila.common.Bus
-import lila.common.config._
-import lila.socket.Socket.{ GetVersion, SocketVersion }
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
+import lila.core.socket.{ GetVersion, SocketVersion }
+import lila.memo.CacheApi.buildAsyncTimeout
 
 @Module
 private class SimulConfig(
@@ -20,27 +19,27 @@ private class SimulConfig(
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    renderer: lila.hub.actors.Renderer,
-    timeline: lila.hub.actors.Timeline,
-    chatApi: lila.chat.ChatApi,
-    lightUser: lila.common.LightUser.Getter,
-    onGameStart: lila.round.OnStart,
+    gameRepo: lila.core.game.GameRepo,
+    newPlayer: lila.core.game.NewPlayer,
+    userApi: lila.core.user.UserApi,
+    chat: lila.core.chat.ChatApi,
+    lightUser: lila.core.LightUser.GetterFallback,
+    onGameStart: lila.core.game.OnStart,
     cacheApi: lila.memo.CacheApi,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    proxyRepo: lila.round.GameProxyRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    mode: play.api.Mode
-) {
+    historyApi: lila.core.history.HistoryApi,
+    socketKit: lila.core.socket.SocketKit,
+    socketReq: lila.core.socket.SocketRequester,
+    gameProxy: lila.core.game.GameProxy,
+    isOnline: lila.core.socket.IsOnline
+)(using Executor, Scheduler, lila.core.config.RateLimit):
 
-  private val config = appConfig.get[SimulConfig]("simul")(AutoConfig.loader)
+  private val config = appConfig.get[SimulConfig]("simul")(using AutoConfig.loader)
 
   private lazy val simulColl = db(config.simulColl)
 
   lazy val repo: SimulRepo = wire[SimulRepo]
+
+  lazy val verify = wire[SimulCondition.Verify]
 
   lazy val api: SimulApi = wire[SimulApi]
 
@@ -48,51 +47,43 @@ final class Env(
 
   private val simulSocket = wire[SimulSocket]
 
-  val isHosting = new lila.round.IsSimulHost(u => api.currentHostIds dmap (_ contains u))
+  val allCreatedFeaturable = cacheApi.unit[List[Simul]]("simul.allCreatedFeaturable"):
+    _.refreshAfterWrite(3.seconds).buildAsyncTimeout(): _ =>
+      repo.allCreatedFeaturable
 
-  val allCreatedFeaturable = cacheApi.unit[List[Simul]] {
-    _.refreshAfterWrite(3 seconds)
-      .buildAsyncFuture(_ => repo.allCreatedFeaturable)
-  }
+  val featurable = SimulIsFeaturable: simul =>
+    simul.conditions.teamMember.isEmpty && featureLimiter.zero(simul.hostId)(true)
 
-  val featurable = new SimulIsFeaturable((simul: Simul) =>
-    simul.team.isEmpty && featureLimiter(simul.hostId)(true)(false)
-  )
-
-  private val featureLimiter = new lila.memo.RateLimit[lila.user.User.ID](
+  private val featureLimiter = lila.memo.RateLimit[UserId](
     credits = config.featureViews.value,
-    duration = 24 hours,
-    key = "simul.feature",
+    duration = 24.hours,
+    limiterKey = "simul.feature",
     log = false
   )
 
-  def version(simulId: Simul.ID) =
-    simulSocket.rooms.ask[SocketVersion](simulId)(GetVersion)
+  def version(simulId: SimulId) =
+    simulSocket.rooms.ask[SocketVersion](simulId.into(RoomId))(GetVersion.apply)
 
-  Bus.subscribeFuns(
-    "finishGame" -> { case lila.game.actorApi.FinishGame(game, _, _) =>
-      api finishGame game
-      ()
-    },
-    "adjustCheater" -> { case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
-      api ejectCheater userId
-      ()
-    },
-    "simulGetHosts" -> { case lila.hub.actorApi.simul.GetHostIds(promise) =>
-      promise completeWith api.currentHostIds
-    },
-    "moveEventSimul" -> { case lila.hub.actorApi.round.SimulMoveEvent(move, _, opponentUserId) =>
-      Bus.publish(
-        lila.hub.actorApi.socket.SendTo(
+  Bus.sub[lila.core.game.FinishGame]:
+    case lila.core.game.FinishGame(game, _) =>
+      api.finishGame(game)
+
+  Bus.sub[lila.core.mod.MarkCheater]:
+    case lila.core.mod.MarkCheater(userId, true) =>
+      api.ejectCheater(userId)
+
+  Bus.sub[lila.core.round.SimulMoveEvent]:
+    case lila.core.round.SimulMoveEvent(move, _, opponentUserId) =>
+      import lila.common.Json.given
+      Bus.pub:
+        lila.core.socket.SendTo(
           opponentUserId,
-          lila.socket.Socket.makeMessage("simulPlayerMove", move.gameId)
-        ),
-        "socketUsers"
-      )
-    }
-  )
-}
+          lila.core.socket.makeMessage("simulPlayerMove", move.gameId)
+        )
 
-final class SimulIsFeaturable(f: Simul => Boolean) extends (Simul => Boolean) {
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    repo.anonymizeHost(del.id)
+    repo.anonymizePlayers(del.id)
+
+final class SimulIsFeaturable(f: Simul => Boolean) extends (Simul => Boolean):
   def apply(simul: Simul) = f(simul)
-}

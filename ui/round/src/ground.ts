@@ -1,27 +1,42 @@
-import { h } from 'snabbdom';
-import { Chessground } from 'chessground';
-import { Config } from 'chessground/config';
-import changeColorHandle from 'common/coordsColor';
-import resizeHandle from 'common/resize';
-import * as util from './util';
-import { plyStep } from './round';
-import RoundController from './ctrl';
-import { RoundData } from './interfaces';
+import { Chessground as makeChessground } from '@lichess-org/chessground';
+import type { DrawShape } from '@lichess-org/chessground/draw';
+import { uciToMove } from '@lichess-org/chessground/util';
+import { h, type VNode } from 'snabbdom';
 
-export function makeConfig(ctrl: RoundController): Config {
-  const data = ctrl.data,
-    hooks = ctrl.makeCgHooks(),
-    step = plyStep(data, ctrl.ply),
-    playing = ctrl.isPlaying();
+import resizeHandle from 'lib/chessgroundResize';
+import { isSafari } from 'lib/device';
+import { plyColor } from 'lib/game/chess';
+import { endgameShapes } from 'lib/game/endgame';
+import { finished } from 'lib/game/status';
+import { ShowResizeHandle, Coords, MoveEvent } from 'lib/prefs';
+import { storage } from 'lib/storage';
+import { onInsert } from 'lib/view';
+
+import type RoundController from './ctrl';
+import type { RoundData, Step } from './interfaces';
+import { Premove } from './premove';
+import * as util from './util';
+import { plyStep } from './util';
+
+export function makeConfig(ctrl: RoundController): CgConfig {
+  const data = ctrl.data;
+  const hooks = ctrl.makeCgHooks();
+  const step = plyStep(data, ctrl.ply);
+  const playing = ctrl.isPlaying();
+  const premove = new Premove(data.game.variant.key, !!data.pref.rookCastle);
+
   return {
     fen: step.fen,
     orientation: boardOrientation(data, ctrl.flip),
-    turnColor: step.ply % 2 === 0 ? 'white' : 'black',
-    lastMove: util.uci2move(step.uci),
+    turnColor: plyColor(step.ply),
+    lastMove: uciToMove(step.uci),
     check: !!step.check,
-    coordinates: data.pref.coords !== Prefs.Coords.Hidden,
+    coordinates: data.pref.coords !== Coords.Hidden,
+    coordinatesOnSquares: data.pref.coords === Coords.All,
     addPieceZIndex: ctrl.data.pref.is3d,
-    addDimensionsCssVars: true,
+    addDimensionsCssVarsTo: document.body,
+    touchIgnoreRadius: data.correspondence ? 0 : 1,
+    jsHover: isSafari(),
     highlight: {
       lastMove: data.pref.highlight,
       check: data.pref.highlight,
@@ -30,15 +45,21 @@ export function makeConfig(ctrl: RoundController): Config {
       move: hooks.onMove,
       dropNewPiece: hooks.onNewPiece,
       insert(elements) {
-        resizeHandle(elements, ctrl.data.pref.resizeHandle, ctrl.ply);
-        if (data.pref.coords === Prefs.Coords.Inside) changeColorHandle();
+        const firstPly = util.firstPly(ctrl.data);
+        const isSecond = plyColor(firstPly) !== data.player.color;
+        const showUntil = firstPly + 2 + Number(isSecond);
+        resizeHandle(
+          elements,
+          playing ? ctrl.data.pref.resizeHandle : ShowResizeHandle.Always,
+          ctrl.ply,
+          p => p <= showUntil,
+        );
       },
     },
     movable: {
       free: false,
-      color: playing ? data.player.color : undefined,
-      dests: playing ? util.parsePossibleMoves(data.possibleMoves) : new Map(),
-      showDests: data.pref.destination,
+      ...movableState(data, playing),
+      showDests: data.pref.destination && !ctrl.blindfold(),
       rookCastle: data.pref.rookCastle,
       events: {
         after: hooks.onUserMove,
@@ -51,12 +72,12 @@ export function makeConfig(ctrl: RoundController): Config {
     },
     premovable: {
       enabled: data.pref.enablePremove,
-      showDests: data.pref.destination,
-      castle: data.game.variant.key !== 'antichess',
+      showDests: data.pref.destination && !ctrl.blindfold(),
       events: {
         set: hooks.onPremove,
         unset: hooks.onCancelPremove,
       },
+      additionalPremoveRequirements: premove.additionalPremoveRequirements,
     },
     predroppable: {
       enabled: data.pref.enablePremove && data.game.variant.key === 'crazyhouse',
@@ -68,31 +89,53 @@ export function makeConfig(ctrl: RoundController): Config {
       },
     },
     draggable: {
-      enabled: data.pref.moveEvent !== Prefs.MoveEvent.Click,
+      enabled: data.pref.moveEvent !== MoveEvent.Click,
       showGhost: data.pref.highlight,
     },
     selectable: {
-      enabled: data.pref.moveEvent !== Prefs.MoveEvent.Drag,
+      enabled: data.pref.moveEvent !== MoveEvent.Drag,
     },
     drawable: {
       enabled: true,
-      defaultSnapToValidMove: (lichess.storage.get('arrow.snap') || 1) != '0',
+      defaultSnapToValidMove: storage.boolean('arrow.snap').getOrDefault(true),
+      autoShapes: endgameShapesForStep(ctrl, step),
     },
     disableContextMenu: true,
   };
 }
 
-export function reload(ctrl: RoundController) {
-  ctrl.chessground.set(makeConfig(ctrl));
-}
+const movableState = (data: RoundData, playing: boolean) => ({
+  color: playing ? data.player.color : undefined,
+  dests: playing ? util.parsePossibleMoves(data.possibleMoves) : new Map(),
+});
 
-export function boardOrientation(data: RoundData, flip: boolean): Color {
-  if (data.game.variant.key === 'racingKings') return flip ? 'black' : 'white';
-  else return flip ? data.opponent.color : data.player.color;
-}
+export const reload = (ctrl: RoundController): void => ctrl.chessground.set(makeConfig(ctrl));
 
-export function render(ctrl: RoundController) {
-  return h('div.cg-wrap', {
-    hook: util.onInsert(el => ctrl.setChessground(Chessground(el, makeConfig(ctrl)))),
+export const sync = (ctrl: RoundController, step: Step, playing: boolean): void =>
+  ctrl.chessground.set({
+    fen: step.fen,
+    lastMove: uciToMove(step.uci),
+    check: !!step.check,
+    turnColor: plyColor(step.ply),
+    movable: movableState(ctrl.data, playing),
+    drawable: { autoShapes: endgameShapesForStep(ctrl, step) },
   });
-}
+
+export const endgameShapesForStep = (ctrl: RoundController, step: Step): DrawShape[] =>
+  finished(ctrl.data) && ctrl.ply === ctrl.lastPly()
+    ? endgameShapes(step.fen, ctrl.data.game.winner, ctrl.data.game.status.name)
+    : [];
+
+export const boardOrientation = (data: RoundData, flip: boolean): Color =>
+  data.game.variant.key === 'racingKings'
+    ? flip
+      ? 'black'
+      : 'white'
+    : flip
+      ? data.opponent.color
+      : data.player.color;
+
+export const render = (ctrl: RoundController): VNode =>
+  h('div.cg-wrap', {
+    hook: onInsert(el => ctrl.setChessground(makeChessground(el, makeConfig(ctrl)))),
+  });

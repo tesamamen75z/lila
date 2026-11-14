@@ -1,28 +1,28 @@
 package lila.clas
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 
-import lila.common.config._
+import lila.core.config.*
+import lila.core.misc.clas.ClasBus
 
 @Module
 final class Env(
     db: lila.db.Db,
     userRepo: lila.user.UserRepo,
-    gameRepo: lila.game.GameRepo,
-    historyApi: lila.history.HistoryApi,
+    perfsRepo: lila.user.UserPerfsRepo,
+    gameRepo: lila.core.game.GameRepo,
+    historyApi: lila.core.history.HistoryApi,
     puzzleColls: lila.puzzle.PuzzleColls,
-    msgApi: lila.msg.MsgApi,
-    lightUserAsync: lila.common.LightUser.Getter,
-    securityForms: lila.security.SecurityForm,
-    authenticator: lila.user.Authenticator,
+    msgApi: lila.core.msg.MsgApi,
+    lightUserAsync: lila.core.LightUser.Getter,
+    signupForm: lila.core.security.SignupFormFields,
+    authenticator: lila.core.security.Authenticator,
     cacheApi: lila.memo.CacheApi,
-    baseUrl: BaseUrl
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    scheduler: akka.actor.Scheduler,
-    mat: akka.stream.Materializer,
-    mode: play.api.Mode
-) {
+    markdownCache: lila.memo.MarkdownCache,
+    routeUrl: RouteUrl
+)(using Executor, org.apache.pekko.stream.Materializer, lila.core.i18n.Translator, play.api.Mode)(using
+    scheduler: Scheduler
+):
 
   lazy val nameGenerator: NameGenerator = wire[NameGenerator]
 
@@ -30,34 +30,40 @@ final class Env(
 
   private val colls = wire[ClasColls]
 
-  lazy val studentCache = wire[ClasStudentCache]
+  lazy val filters = wire[ClasUserFilters]
 
-  lazy val matesCache = wire[ClasMatesCache]
+  lazy val mates = wire[ClasMates]
+
+  private lazy val clasMsg = wire[ClasMsg]
 
   lazy val api: ClasApi = wire[ClasApi]
 
   lazy val progressApi = wire[ClasProgressApi]
 
-  lazy val markup = wire[ClasMarkup]
+  lazy val markdown = wire[ClasMarkdown]
 
-  lila.common.Bus.subscribeFuns(
-    "finishGame" -> { case lila.game.actorApi.FinishGame(game, _, _) =>
-      progressApi.onFinishGame(game).unit
-    },
-    "clas" -> { case lila.hub.actorApi.clas.IsTeacherOf(teacher, student, promise) =>
-      promise completeWith api.clas.isTeacherOf(teacher, student)
-    },
-    "clas" -> { case lila.hub.actorApi.clas.AreKidsInSameClass(kid1, kid2, promise) =>
-      promise completeWith api.clas.areKidsInSameClass(kid1, kid2)
-    },
-    "clas" -> { case lila.hub.actorApi.clas.ClasMatesAndTeachers(kid, promise) =>
-      promise completeWith matesCache.get(kid.id)
-    }
-  )
-}
+  lazy val login = wire[ClasLoginApi]
 
-private class ClasColls(db: lila.db.Db) {
-  val clas    = db(CollName("clas_clas"))
-  val student = db(CollName("clas_student"))
-  val invite  = db(CollName("clas_invite"))
-}
+  lazy val signup = wire[ClasSignup]
+
+  lazy val bulk = wire[ClasBulkApi]
+
+  def isAnyTeacher(using me: Me) = lila.core.perm.Granter(_.Teacher)
+
+  def isActiveTeacher(using me: Me) = isAnyTeacher && filters.teacher(me)
+
+  def seesClassMenu(using me: Me) =
+    filters.student(me) || isAnyTeacher || me.hasTitle || me.roles.contains("ROLE_COACH")
+
+  scheduler.scheduleWithFixedDelay(44.minutes, 1.hour)(() => api.clas.archiveAllInactive)
+
+  lila.common.Bus.sub[lila.core.game.FinishGame]: finish =>
+    progressApi.onFinishGame(finish.game)
+
+  lila.common.Bus.sub[ClasBus]:
+    case ClasBus.IsTeacherOf(teacher, student, promise) =>
+      promise.completeWith(api.clas.isTeacherOf(teacher, student))
+    case ClasBus.CanKidsUseMessages(kid1, kid2, promise) =>
+      promise.completeWith(api.clas.canKidsUseMessages(kid1, kid2))
+    case ClasBus.ClasMatesAndTeachers(kid, promise) =>
+      promise.completeWith(mates.get(kid.id))

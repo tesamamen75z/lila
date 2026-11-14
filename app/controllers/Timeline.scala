@@ -1,40 +1,44 @@
 package controllers
 
-import play.api.libs.json._
-import scala.concurrent.duration._
+import play.api.libs.json.*
 
-import lila.app._
-import lila.common.config.Max
+import lila.app.{ *, given }
 import lila.common.HTTPRequest
-import lila.timeline.Entry.entryWrites
-import views._
+import lila.common.Json.given
+import lila.timeline.Entry.{ gtfoLichobile, given }
 
-final class Timeline(env: Env) extends LilaController(env) {
+final class Timeline(env: Env) extends LilaController(env):
 
-  def home =
-    Auth { implicit ctx => me =>
-      negotiate(
-        html =
-          if (HTTPRequest.isXhr(ctx.req))
-            env.timeline.entryApi
-              .userEntries(me.id)
-              .logTimeIfGt(s"timeline site entries for ${me.id}", 10.seconds)
-              .map { html.timeline.entries(_) }
-          else
-            env.timeline.entryApi
-              .moreUserEntries(me.id, Max(30))
-              .map { html.timeline.more(_) },
-        _ =>
-          env.timeline.entryApi
-            .moreUserEntries(me.id, Max(getInt("nb") | 10) atMost env.apiTimelineSetting.get())
-            .map { es =>
-              Ok(Json.obj("entries" -> es))
-            }
-      )
-    }
+  def home = Auth { ctx ?=> me ?=>
+    negotiate(
+      html =
+        if HTTPRequest.isXhr(ctx.req) then
+          for
+            entries <- env.timeline.entryApi.userEntries(me)
+            _ <- env.user.lightUserApi.preloadMany(entries.flatMap(_.userIds))
+          yield Ok.snip(views.timeline.entries(entries))
+        else
+          for
+            entries <- env.timeline.entryApi.moreUserEntries(me, Max(30), since = getTimestamp("since"))
+            _ <- env.user.lightUserApi.preloadMany(entries.flatMap(_.userIds))
+            res <- Ok.page(views.timeline.more(entries))
+          yield res
+      ,
+      json =
+        val users = Map("lichess" -> env.user.lightUserSyncFallback(UserId.lichess))
+        Ok(Json.obj("entries" -> List(gtfoLichobile), "users" -> users)).publicCache(1.hour).varyAccept
+    )
+  }
 
-  def unsub(channel: String) =
-    Auth { implicit ctx => me =>
-      env.timeline.unsubApi.set(channel, me.id, ~get("unsub") == "on")
-    }
-}
+  def api = AuthOrScoped(_.Web.Mobile) { _ ?=> me ?=>
+    val max = getIntAs[Max]("nb").fold(Max(15))(_.atMost(Max(30)))
+    for
+      entries <- env.timeline.entryApi.moreUserEntries(me, max, since = getTimestamp("since"))
+      users <- env.user.lightUserApi.asyncManyFallback(entries.flatMap(_.userIds).distinct)
+      userMap = users.mapBy(_.id)
+    yield Ok(Json.obj("entries" -> entries, "users" -> Json.toJsObject(userMap)))
+  }
+
+  def unsub(channel: String) = Auth { ctx ?=> me ?=>
+    env.timeline.unsubApi.set(channel, me, ~get("unsub") == "on").inject(NoContent)
+  }

@@ -1,195 +1,93 @@
 package lila.coach
 
-import org.joda.time.DateTime
-import scala.concurrent.duration._
-
-import lila.db.dsl._
-import lila.db.Photographer
-import lila.notify.{ Notification, NotifyApi }
-import lila.security.Granter
-import lila.user.{ Holder, User, UserRepo }
+import lila.core.perm.Granter
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi.buildAsyncTimeout
+import lila.memo.PicfitApi
+import lila.rating.UserPerfsExt.bestStandardRating
 
 final class CoachApi(
-    coachColl: Coll,
-    reviewColl: Coll,
-    userRepo: UserRepo,
-    photographer: Photographer,
-    cacheApi: lila.memo.CacheApi,
-    notifyApi: NotifyApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    coll: Coll,
+    userRepo: lila.core.user.UserRepo,
+    userApi: lila.core.user.UserApi,
+    flagApi: lila.core.user.FlagApi,
+    picfitApi: PicfitApi,
+    cacheApi: lila.memo.CacheApi
+)(using Executor, Scheduler):
 
-  import BsonHandlers._
+  import BsonHandlers.given
 
-  def byId(id: Coach.Id): Fu[Option[Coach]] = coachColl.byId[Coach](id.value)
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    coll.delete.one(bid(del.id)).void
 
-  def find(username: String): Fu[Option[Coach.WithUser]] =
-    userRepo named username flatMap { _ ?? find }
+  def byId[U: UserIdOf](u: U): Fu[Option[Coach]] = coll.byId[Coach](u.id)
+
+  def find(username: UserStr): Fu[Option[Coach.WithUser]] =
+    userApi.byId(username).flatMapz(find)
+
+  def canCoach = Granter.ofUser(_.Coach)
 
   def find(user: User): Fu[Option[Coach.WithUser]] =
-    Granter(_.Coach)(user) ?? {
-      byId(Coach.Id(user.id)) dmap {
-        _ map withUser(user)
-      }
-    }
+    canCoach(user).so:
+      byId(user.id).flatMapz: coach =>
+        userApi.withPerfs(user).dmap(coach.withUser).dmap(some)
 
-  def findOrInit(coach: Holder): Fu[Option[Coach.WithUser]] =
-    Granter.is(_.Coach)(coach) ?? {
-      find(coach.user) orElse {
-        val c = Coach.WithUser(Coach make coach.user, coach.user)
-        coachColl.insert.one(c.coach) inject c.some
-      }
-    }
+  def findOrInit(using me: Me): Fu[Option[Coach.WithUser]] =
+    val user = me.value
+    canCoach(user).so:
+      find(user).orElse(userApi.withPerfs(user).flatMap { user =>
+        val c = Coach.make(user).withUser(user)
+        coll.insert.one(c.coach).inject(c.some)
+      })
 
   def isListedCoach(user: User): Fu[Boolean] =
-    Granter(_.Coach)(user) ?? user.enabled ?? user.marks.clean ?? coachColl.exists($id(user.id))
+    (canCoach(user) && user.enabled.yes && user.marks.clean).so:
+      coll.secondary.exists(bid(user.id) ++ bdoc("listed" -> true))
 
   def setSeenAt(user: User): Funit =
-    Granter(_.Coach)(user) ?? coachColl.update.one($id(user.id), $set("user.seenAt" -> DateTime.now)).void
+    canCoach(user).so:
+      coll.update.one(bid(user.id), set("user.seenAt" -> nowInstant)).void
 
-  def setRating(userPre: User): Funit =
-    Granter(_.Coach)(userPre) ?? {
-      userRepo.byId(userPre.id) flatMap {
-        _ ?? { user =>
-          coachColl.update.one($id(user.id), $set("user.rating" -> user.perfs.bestStandardRating)).void
-        }
+  def updateRatingFromDb(user: User): Funit =
+    canCoach(user).so:
+      userApi.perfsOf(user).flatMap { perfs =>
+        coll.update.one(bid(perfs.id), set("user.rating" -> perfs.bestStandardRating)).void
       }
-    }
 
   def update(c: Coach.WithUser, data: CoachProfileForm.Data): Funit =
-    coachColl.update
+    coll.update
       .one(
-        $id(c.coach.id),
+        bid(c.coach.id),
         data(c.coach),
         upsert = true
       )
       .void
 
-  def setNbReviews(id: Coach.Id, nb: Int): Funit =
-    coachColl.update.one($id(id), $set("nbReviews" -> nb)).void
+  def uploadPicture(c: Coach.WithUser, picture: PicfitApi.FilePart): Funit =
+    for
+      pic <- picfitApi.uploadFile(picture, c.user.id, s"coach:${c.coach.id}".some, requestAutomod = false)
+      _ <- coll.update.one(bid(c.coach.id), set("picture" -> pic.id))
+    yield ()
 
-  def uploadPicture(c: Coach.WithUser, picture: Photographer.Uploaded, by: User): Funit =
-    photographer(c.coach.id.value, picture, createdBy = by.id).flatMap { pic =>
-      coachColl.update.one($id(c.coach.id), $set("picturePath" -> pic.path)).void
-    }
+  private val languagesCache = cacheApi.unit[Set[String]]("coach.languages"):
+    _.refreshAfterWrite(1.hour).buildAsyncTimeout(): _ =>
+      coll.secondary.distinctEasy[String, Set]("languages", emptyBdoc)
 
-  def deletePicture(c: Coach.WithUser): Funit =
-    coachColl.update.one($id(c.coach.id), $unset("picturePath")).void
-
-  private val languagesCache = cacheApi.unit[Set[String]] {
-    _.refreshAfterWrite(1 hour)
-      .buildAsyncFuture { _ =>
-        coachColl.secondaryPreferred.distinctEasy[String, Set]("languages", $empty)
-      }
-  }
   def allLanguages: Fu[Set[String]] = languagesCache.get {}
 
-  private val countriesCache = cacheApi.unit[Set[String]] {
-    _.refreshAfterWrite(1 hour)
-      .buildAsyncFuture { _ =>
-        userRepo.coll.secondaryPreferred
-          .distinctEasy[String, Set](
-            "profile.country",
-            $doc("roles" -> lila.security.Permission.Coach.dbKey, "enabled" -> true)
-          )
-      }
-  }
-  def allCountries: Fu[Set[String]] = countriesCache.get {}
-
-  private def withUser(user: User)(coach: Coach) = Coach.WithUser(coach, user)
-
-  object reviews {
-
-    def add(me: User, coach: Coach, data: CoachReviewForm.Data): Fu[CoachReview] =
-      find(me, coach).flatMap { existing =>
-        val id = CoachReview.makeId(me, coach)
-        val review = existing match {
-          case None =>
-            CoachReview(
-              _id = id,
-              userId = me.id,
-              coachId = coach.id,
-              score = data.score,
-              text = data.text,
-              approved = false,
-              createdAt = DateTime.now,
-              updatedAt = DateTime.now
-            )
-          case Some(r) =>
-            r.copy(
-              score = data.score,
-              text = data.text,
-              approved = false,
-              updatedAt = DateTime.now
-            )
-        }
-        if (me.marks.troll) fuccess(review)
-        else {
-          reviewColl.update.one($id(id), review, upsert = true) >>
-            notifyApi.addNotification(
-              Notification.make(
-                notifies = Notification.Notifies(coach.id.value),
-                content = lila.notify.CoachReview
-              )
-            ) >> refreshCoachNbReviews(coach.id) inject review
-        }
-      }
-
-    def byId(id: String) = reviewColl.byId[CoachReview](id)
-
-    def mine(user: User, coach: Coach): Fu[Option[CoachReview]] =
-      reviewColl.byId[CoachReview](CoachReview.makeId(user, coach))
-
-    def approve(r: CoachReview, v: Boolean) = {
-      if (v)
-        reviewColl.update
-          .one(
-            $id(r.id),
-            $set("approved" -> v) ++ $unset("moddedAt")
-          )
-          .void
-      else reviewColl.delete.one($id(r.id)).void
-    } >> refreshCoachNbReviews(r.coachId)
-
-    def mod(r: CoachReview) =
-      reviewColl.update.one(
-        $id(r.id),
-        $set(
-          "approved" -> false,
-          "moddedAt" -> DateTime.now
+  private val countriesCache = cacheApi.unit[CountrySelection]("coach.countries"):
+    _.refreshAfterWrite(1.hour).buildAsyncTimeout(): _ =>
+      import lila.core.user.FlagCode
+      userRepo.coll.secondary
+        .distinctEasy[FlagCode, Set](
+          "profile.country",
+          bdoc("roles" -> lila.core.perm.Permission.Coach.dbKey, "enabled" -> true)
         )
-      ) >> refreshCoachNbReviews(r.coachId)
+        .map: codes =>
+          flagApi.all
+            .collect:
+              case f if codes.contains(f.code) && !flagApi.nonCountries.contains(f.code) => f.code -> f.name
+            .sortBy(_._2)
+        .map(CountrySelection(_))
 
-    private def refreshCoachNbReviews(id: Coach.Id): Funit =
-      reviewColl.countSel($doc("coachId" -> id.value, "approved" -> true)) flatMap {
-        setNbReviews(id, _)
-      }
-
-    def find(user: User, coach: Coach): Fu[Option[CoachReview]] =
-      reviewColl.byId[CoachReview](CoachReview.makeId(user, coach))
-
-    def approvedByCoach(c: Coach): Fu[CoachReview.Reviews] =
-      findRecent($doc("coachId" -> c.id.value, "approved" -> true))
-
-    def pendingByCoach(c: Coach): Fu[CoachReview.Reviews] =
-      findRecent($doc("coachId" -> c.id.value, "approved" -> false))
-
-    def allByCoach(c: Coach): Fu[CoachReview.Reviews] =
-      findRecent($doc("coachId" -> c.id.value))
-
-    def deleteAllBy(userId: User.ID): Funit =
-      for {
-        reviews <- reviewColl.list[CoachReview]($doc("userId" -> userId))
-        _ <- reviews.map { review =>
-          reviewColl.delete.one($doc("userId" -> review.userId)).void
-        }.sequenceFu
-        _ <- reviews.map(_.coachId).distinct.map(refreshCoachNbReviews).sequenceFu
-      } yield ()
-
-    private def findRecent(selector: Bdoc): Fu[CoachReview.Reviews] =
-      reviewColl
-        .find(selector)
-        .sort($sort desc "createdAt")
-        .cursor[CoachReview]()
-        .list(100) map CoachReview.Reviews.apply
-  }
-}
+  def countrySelection: Fu[CountrySelection] = countriesCache.get {}

@@ -1,3 +1,4 @@
-package lila
+package lila.room
 
-package object room extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

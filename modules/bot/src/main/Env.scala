@@ -1,24 +1,30 @@
 package lila.bot
 
-import com.softwaremill.macwire._
-import lila.socket.IsOnline
+import com.softwaremill.macwire.*
+
+import lila.core.socket.IsOnline
 
 @Module
 final class Env(
     chatApi: lila.chat.ChatApi,
     gameRepo: lila.game.GameRepo,
-    lightUserApi: lila.user.LightUserApi,
+    lightUserApi: lila.core.user.LightUserApi,
     rematches: lila.game.Rematches,
-    isOfferingRematch: lila.round.IsOfferingRematch,
-    spam: lila.security.Spam,
-    isOnline: IsOnline
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
+    spam: lila.core.security.SpamApi,
+    isOnline: IsOnline,
+    settingStore: lila.memo.SettingStore.Builder,
+    cacheApi: lila.memo.CacheApi,
+    userApi: lila.core.user.UserApi,
+    userJsonView: lila.core.user.JsonView
+)(using
+    Executor,
+    org.apache.pekko.actor.ActorSystem,
+    Scheduler,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+):
 
-  private def scheduler = system.scheduler
+  lazy val limit = wire[BotLimit]
 
   lazy val jsonView = wire[BotJsonView]
 
@@ -28,5 +34,6 @@ final class Env(
 
   lazy val onlineApiUsers: OnlineApiUsers = wire[OnlineApiUsers]
 
+  lazy val boardReport = wire[BoardReport]
+
   val form = BotForm
-}

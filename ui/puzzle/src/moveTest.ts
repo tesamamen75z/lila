@@ -1,9 +1,18 @@
-import { altCastles } from 'chess';
 import { parseUci } from 'chessops/util';
-import { path as pathOps } from 'tree';
-import { Vm, Puzzle, MoveTest } from './interfaces';
+
+import { plyOpponentColor } from 'lib/game';
+import { path as pathOps } from 'lib/tree/tree';
+
+import type PuzzleCtrl from './ctrl';
+import type { MoveTest } from './interfaces';
 
 type MoveTestReturn = undefined | 'fail' | 'win' | MoveTest;
+const altCastles = {
+  e1a1: 'e1c1',
+  e1h1: 'e1g1',
+  e8a8: 'e8c8',
+  e8h8: 'e8g8',
+};
 
 type AltCastle = keyof typeof altCastles;
 
@@ -11,36 +20,36 @@ function isAltCastle(str: string): str is AltCastle {
   return str in altCastles;
 }
 
-export default function moveTest(vm: Vm, puzzle: Puzzle): MoveTestReturn {
-  if (vm.mode === 'view') return;
-  if (!pathOps.contains(vm.path, vm.initialPath)) return;
+export default function moveTest(ctrl: PuzzleCtrl): MoveTestReturn {
+  if (ctrl.mode === 'view') return undefined;
+  if (!pathOps.contains(ctrl.path, ctrl.initialPath)) return undefined;
 
-  const playedByColor = vm.node.ply % 2 === 1 ? 'white' : 'black';
-  if (playedByColor !== vm.pov) return;
+  const playedByColor = plyOpponentColor(ctrl.node.ply);
+  if (playedByColor !== ctrl.pov) return undefined;
 
-  const nodes = vm.nodeList.slice(pathOps.size(vm.initialPath) + 1).map(node => ({
+  const nodes = ctrl.nodeList.slice(pathOps.size(ctrl.initialPath) + 1).map(node => ({
     uci: node.uci,
     castle: node.san!.startsWith('O-O'),
     checkmate: node.san!.endsWith('#'),
   }));
 
-  for (const i in nodes) {
-    if (nodes[i].checkmate) return (vm.node.puzzle = 'win');
-    const uci = nodes[i].uci!,
-      solUci = puzzle.solution[i];
-    if (uci != solUci && (!nodes[i].castle || !isAltCastle(uci) || altCastles[uci] != solUci))
-      return (vm.node.puzzle = 'fail');
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].checkmate) return (ctrl.node.puzzle = 'win');
+    const uci = nodes[i].uci!;
+    const solUci = ctrl.data.puzzle.solution[i];
+    if (uci !== solUci && (!nodes[i].castle || !isAltCastle(uci) || altCastles[uci] !== solUci))
+      return (ctrl.node.puzzle = 'fail');
   }
 
-  const nextUci = puzzle.solution[nodes.length];
-  if (!nextUci) return (vm.node.puzzle = 'win');
+  const nextUci = ctrl.data.puzzle.solution[nodes.length];
+  if (!nextUci) return (ctrl.node.puzzle = 'win');
 
   // from here we have a next move
-  vm.node.puzzle = 'good';
+  ctrl.node.puzzle = 'good';
 
   return {
     move: parseUci(nextUci)!,
-    fen: vm.node.fen,
-    path: vm.path,
+    fen: ctrl.node.fen,
+    path: ctrl.path,
   };
 }

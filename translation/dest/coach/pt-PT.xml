@@ -5,7 +5,7 @@
   <string name="areYouCoach">É um bom treinador de xadrez com um %s?</string>
   <string name="nmOrFideTitle" comment="nmOrFideTitle&#10;&#10;Part of sentence &quot;Are you a great chess coach with a NM or FIDE title?&quot;&#10;&#10;The text links to our title verification page: https://lichess.org/help/master">título FIDE ou NM</string>
   <string name="confirmTitle">Confirme o seu título aqui e analisaremos a sua candidatura.</string>
-  <string name="sendApplication" comment="sendApplication&#10;&#10;%s is the lichess email adress">Envie-nos um e-mail para %s e analisaremos a sua candidatura.</string>
+  <string name="sendApplication" comment="sendApplication&#10;&#10;%s is the lichess email address">Envie-nos um e-mail para %s e analisaremos a sua candidatura.</string>
   <string name="location">Localização</string>
   <string name="languages">Línguas</string>
   <string name="rating">Pontuação</string>
@@ -24,12 +24,7 @@
   <string name="teachingMethod">Metodologia de ensino</string>
   <string name="publicStudies">Estudos públicos</string>
   <string name="youtubeVideos">Vídeos no YouTube</string>
-  <plurals name="studentReviews">
-    <item quantity="one">Avaliação de um aluno</item>
-    <item quantity="other">Avaliação de %s alunos</item>
-  </plurals>
-  <string name="thankYouForReview">Obrigado pela avaliação!</string>
-  <string name="xWillApproveIt">%s irá aprovar em breve ou um moderador irá dar-lhe uma olhada.</string>
-  <string name="reviewCoach">Avaliar este treinador</string>
-  <string name="describeExperienceWith">Descreve a tua experiência de treino com %s</string>
+  <string name="allCountries">Todos os países</string>
+  <string name="lastLogin">Último acesso</string>
+  <string name="lichessRating">Rating Lichess</string>
 </resources>

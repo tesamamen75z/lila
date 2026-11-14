@@ -1,31 +1,30 @@
 package lila.lobby
 
-import com.softwaremill.macwire._
-import play.api.Configuration
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
 
-import lila.common.config._
+import lila.core.config.*
 
 @Module
 final class Env(
-    appConfig: Configuration,
     db: lila.db.Db,
-    onStart: lila.round.OnStart,
-    relationApi: lila.relation.RelationApi,
-    playbanApi: lila.playban.PlaybanApi,
-    gameCache: lila.game.Cached,
-    userRepo: lila.user.UserRepo,
-    gameRepo: lila.game.GameRepo,
-    poolApi: lila.pool.PoolApi,
+    onStart: lila.core.game.OnStart,
+    relationApi: lila.core.relation.RelationApi,
+    hasCurrentPlayban: lila.core.playban.HasCurrentPlayban,
+    userApi: lila.core.user.UserApi,
+    gameRepo: lila.core.game.GameRepo,
+    gameApi: lila.core.game.GameApi,
+    newPlayer: lila.core.game.NewPlayer,
+    poolApi: lila.core.pool.PoolApi,
     cacheApi: lila.memo.CacheApi,
-    remoteSocketApi: lila.socket.RemoteSocket
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    idGenerator: lila.game.IdGenerator
-) {
-
-  private lazy val maxPlaying = appConfig.get[Max]("setup.max_playing")
+    userTrustApi: lila.core.security.UserTrustApi,
+    socketKit: lila.core.socket.SocketKit
+)(using
+    Executor,
+    Scheduler,
+    lila.core.game.IdGenerator,
+    lila.core.pool.IsClockCompatible,
+    lila.core.config.RateLimit
+):
 
   private lazy val seekApiConfig = new SeekApi.Config(
     coll = db(CollName("seek")),
@@ -38,20 +37,15 @@ final class Env(
 
   lazy val boardApiHookStream = wire[BoardApiHookStream]
 
-  private lazy val lobbyTrouper = LobbyTrouper.start(
-    broomPeriod = 2 seconds,
-    resyncIdsPeriod = 25 seconds
-  ) { () =>
-    wire[LobbyTrouper]
-  }
+  private lazy val lobbySyncActor = LobbySyncActor.start(
+    broomPeriod = 2.seconds,
+    resyncIdsPeriod = 25.seconds
+  ): () =>
+    wire[LobbySyncActor]
 
-  private lazy val abortListener = wire[AbortListener]
+  // eager initialization for Bus subscription
+  wire[AbortListener]
 
   private lazy val biter = wire[Biter]
 
   val socket = wire[LobbySocket]
-
-  lila.common.Bus.subscribeFun("abortGame") { case lila.game.actorApi.AbortedBy(pov) =>
-    abortListener(pov).unit
-  }
-}

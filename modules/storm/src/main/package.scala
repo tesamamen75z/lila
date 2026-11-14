@@ -1,6 +1,6 @@
-package lila
+package lila.storm
 
-package object storm extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[storm] val logger = lila.log("storm")
-}
+private lazy val logger = lila.log("storm")

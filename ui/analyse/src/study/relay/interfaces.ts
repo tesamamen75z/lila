@@ -1,37 +1,106 @@
+import type { Federation, FideId, PointsStr } from '../interfaces';
+import type { RelayPlayer } from './relayPlayers';
+
 export interface RelayData {
   tour: RelayTour;
   rounds: RelayRound[];
   sync?: RelaySync;
+  group?: RelayGroup;
+  isSubscribed?: boolean; // undefined if anon
+  videoUrls?: [string, string];
+  pinned?: { name: string; redirect: string; text?: string };
+  note?: string;
+  lcc?: boolean;
+  delayedUntil?: number;
+  photos: Photos;
 }
+
+export type Photos = Record<FideId, Photo>;
+
+export interface Photo {
+  small: string;
+  medium: string;
+  credit?: string;
+}
+
+export interface RelayGroup {
+  id: GroupId;
+  slug: string;
+  name: string;
+  tours: RelayTourPreview[];
+}
+
+export type GroupId = string;
+export type TourId = string;
+export type RoundId = string;
+
+export interface RelayTourPreview {
+  id: TourId;
+  name: string;
+  active: boolean; // see modules/relay/src/main/RelayTour.scala
+  live?: boolean; // see modules/relay/src/main/RelayTour.scala
+}
+
+interface CustomScore {
+  win: number;
+  draw: number;
+}
+
+export type CustomScoring = ByColor<CustomScore>;
 
 export interface RelayRound {
-  id: string;
+  id: RoundId;
   name: string;
   slug: string;
-  finished?: boolean;
+  url: string;
+  finishedAt?: number;
   ongoing?: boolean;
   startsAt?: number;
+  startsAfterPrevious?: boolean;
+  customScoring?: CustomScoring;
 }
 
+export type FideTC = 'standard' | 'rapid' | 'blitz';
+export type StatByFideTC = Record<FideTC, number>;
+
+export interface RelayTourInfo {
+  format?: string;
+  tc?: string;
+  fideTC?: FideTC;
+  location?: string;
+  players?: string;
+  website?: string;
+  standings?: string;
+  regulations?: string;
+}
+
+export type RelayTourDates = [number] | [number, number];
+
 export interface RelayTour {
-  id: string;
+  id: TourId;
   name: string;
   slug: string;
-  description: string;
-  markup?: string;
-  credit?: string;
+  description?: string;
+  info: RelayTourInfo;
+  image?: string;
+  teamTable?: boolean;
+  showTeamScores?: boolean;
+  tier?: number;
+  dates?: RelayTourDates;
+  tc?: FideTC;
+  communityOwner?: LightUser;
 }
 
 export interface RelaySync {
   ongoing: boolean;
   url?: string;
-  ids?: string;
+  urls?: [{ url: string }];
+  ids?: string[];
+  users?: string[];
   log: LogEvent[];
-}
-
-export interface RelayTourShow {
-  active: boolean;
-  disable(): void;
+  delay?: number;
+  filter?: number;
+  slices?: string;
 }
 
 export interface LogEvent {
@@ -40,3 +109,28 @@ export interface LogEvent {
   error?: string;
   at: number;
 }
+
+export interface POVTeamMatch {
+  roundId: RoundId;
+  opponent: RelayTeamName;
+  points?: PointsStr;
+  mp?: number;
+  gp?: number;
+}
+
+export type RelayTeamName = string;
+
+export interface RelayTeamStandingsFromServer {
+  name: RelayTeamName;
+  mp: number;
+  gp: number;
+  matches: POVTeamMatch[];
+  players: RelayPlayer[];
+  averageRating?: number;
+}
+
+export interface RelayTeamStandingsEntry extends RelayTeamStandingsFromServer {
+  fed?: Federation;
+}
+
+export type RelayTeamStandings = RelayTeamStandingsEntry[];

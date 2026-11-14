@@ -10,7 +10,7 @@
   <string name="dailyClassical">Ημερήσιο Κλασικό</string>
   <string name="dailyXArena">Ημερήσια %s Αρένα</string>
   <string name="dailyX">Ημερήσιο %s</string>
-  <string name="easternRapidArena">Ανατολική Rapid Αρένα</string>
+  <string name="easternRapidArena">Ανατολική Αρένα Rapid</string>
   <string name="easternRapid">Ανατολικό Rapid</string>
   <string name="easternClassicalArena">Ανατολική Κλασσική Αρένα</string>
   <string name="easternClassical">Ανατολικό Κλασικό</string>
@@ -40,9 +40,7 @@
   <string name="classicalShield">Κλασικό Shield</string>
   <string name="xShieldArena">%s Shield Arena</string>
   <string name="xShield">%s Shield</string>
-  <string name="openingRapidArena">%s Rapid Αρένα</string>
-  <string name="openingRapid">%s Rapid</string>
-  <string name="xTeamBattle">%s Ομαδική Μάχη</string>
+  <string name="xTeamBattle">Ομαδική μάχη %s</string>
   <string name="eliteXArena">Ελίτ %s Αρένα</string>
   <string name="eliteX">Ελίτ %s</string>
   <string name="xArena">%s Αρένα</string>

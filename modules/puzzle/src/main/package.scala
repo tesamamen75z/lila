@@ -1,16 +1,12 @@
-package lila
+package lila.puzzle
 
-import lila.rating.Glicko
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.PuzzleId
 
-package object puzzle extends PackageObject {
+private lazy val logger = lila.log("puzzle")
 
-  private[puzzle] def logger = lila.log("puzzle")
-}
+opaque type PuzzleWin = Boolean
+object PuzzleWin extends YesNo[PuzzleWin]
 
-package puzzle {
-
-  case class Result(win: Boolean) extends AnyVal {
-    def loss   = !win
-    def glicko = if (win) Glicko.Result.Win else Glicko.Result.Loss
-  }
-}
+val difficultyCookie = "puz-diff"

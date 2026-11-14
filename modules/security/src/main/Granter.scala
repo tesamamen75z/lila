@@ -1,42 +1,14 @@
 package lila.security
 
-import lila.user.{ Holder, User }
+import lila.core.perm.Permission
 
-object Granter {
+object Granter:
 
-  def apply(permission: Permission)(user: User): Boolean =
-    user.enabled && apply(permission, user.roles)
+  export lila.core.perm.Granter.*
 
-  def apply(f: Permission.Selector)(user: User): Boolean =
-    user.enabled && apply(f(Permission), user.roles)
-
-  def is(permission: Permission)(holder: Holder): Boolean =
-    apply(permission)(holder.user)
-
-  def is(f: Permission.Selector)(holder: Holder): Boolean =
-    apply(f)(holder.user)
-
-  def apply(permission: Permission, roles: Seq[String]): Boolean =
-    Permission(roles).exists(_ is permission)
-
-  def byRoles(f: Permission.Selector)(roles: Seq[String]): Boolean =
-    apply(f(Permission), roles)
-
-  def canGrant(user: Holder, permission: Permission): Boolean =
-    is(_.SuperAdmin)(user) || {
-      is(_.ChangePermission)(user) && Permission.nonModPermissions(permission)
-    } || {
-      is(_.Admin)(user) && {
-        is(permission)(user) || Set[Permission](
-          Permission.MonitoredMod,
-          Permission.PublicMod
-        )(permission)
-      }
+  def canViewAltUsername(user: User)(using Option[Me]): Boolean =
+    opt(_.Admin) || {
+      (opt(_.CheatHunter) && user.marks.engine) ||
+      (opt(_.BoostHunter) && user.marks.boost) ||
+      (opt(_.Shusher) && user.marks.troll)
     }
-
-  def canViewAltUsername(mod: Holder, user: User): Boolean =
-    is(_.Admin)(mod) || {
-      (is(_.Hunter)(mod) && user.marks.engine) ||
-      (is(_.Shusher)(mod) && user.marks.troll)
-    }
-}

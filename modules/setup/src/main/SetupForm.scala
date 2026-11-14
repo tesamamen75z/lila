@@ -1,158 +1,142 @@
 package lila.setup
 
-import chess.format.FEN
+import chess.format.Fen
 import chess.variant.Variant
-import play.api.data._
-import play.api.data.Forms._
+import chess.{ Clock, Rated }
+import play.api.data.*
+import play.api.data.Forms.*
+import scalalib.model.Days
 
-import lila.rating.RatingRange
-import lila.user.{ User, UserContext }
+import lila.common.Form as LilaForm
+import lila.common.Form.{ *, given }
+import lila.core.rating.RatingRange
 
-object SetupForm {
+object SetupForm:
 
-  import Mappings._
+  import Mappings.*
 
   val filter = Form(single("local" -> text))
 
-  def aiFilled(fen: Option[FEN]): Form[AiConfig] =
-    ai fill fen.foldLeft(AiConfig.default) { case (config, f) =>
-      config.copy(fen = f.some, variant = chess.variant.FromPosition)
-    }
+  def aiFilled(fen: Option[Fen.Full]): Form[AiConfig] =
+    ai.fill(fen.foldLeft(AiConfig.default): (config, f) =>
+      config.copy(fen = f.some, variant = chess.variant.FromPosition))
 
-  lazy val ai = Form(
+  lazy val ai = Form:
     mapping(
-      "variant"   -> aiVariants,
-      "timeMode"  -> timeMode,
-      "time"      -> time,
+      "variant" -> aiVariants,
+      "timeMode" -> timeMode,
+      "time" -> time,
       "increment" -> increment,
-      "days"      -> days,
-      "level"     -> level,
-      "color"     -> color,
-      "fen"       -> fenField
+      "days" -> days,
+      "level" -> level,
+      "color" -> color,
+      "fen" -> fenField
     )(AiConfig.from)(_.>>)
       .verifying("invalidFen", _.validFen)
       .verifying("Can't play that time control from a position", _.timeControlFromPosition)
-  )
 
-  def friendFilled(fen: Option[FEN])(implicit ctx: UserContext): Form[FriendConfig] =
-    friend(ctx) fill fen.foldLeft(FriendConfig.default) { case (config, f) =>
-      config.copy(fen = f.some, variant = chess.variant.FromPosition)
-    }
+  def friendFilled(fen: Option[Fen.Full])(using Option[Me]): Form[FriendConfig] =
+    friend.fill(fen.foldLeft(FriendConfig.default): (config, f) =>
+      config.copy(fen = f.some, variant = chess.variant.FromPosition))
 
-  def friend(ctx: UserContext) =
-    Form(
-      mapping(
-        "variant"   -> variantWithFenAndVariants,
-        "timeMode"  -> timeMode,
-        "time"      -> time,
-        "increment" -> increment,
-        "days"      -> days,
-        "mode"      -> mode(withRated = ctx.isAuth),
-        "color"     -> color,
-        "fen"       -> fenField
-      )(FriendConfig.from)(_.>>)
-        .verifying("Invalid clock", _.validClock)
-        .verifying("Invalid speed", _.validSpeed(ctx.me.exists(_.isBot)))
-        .verifying("invalidFen", _.validFen)
-    )
-
-  def hookFilled(timeModeString: Option[String])(implicit ctx: UserContext): Form[HookConfig] =
-    hook fill HookConfig.default(ctx.isAuth).withTimeModeString(timeModeString)
-
-  def hook(implicit ctx: UserContext) =
-    Form(
-      mapping(
-        "variant"     -> variantWithVariants,
-        "timeMode"    -> timeMode,
-        "time"        -> time,
-        "increment"   -> increment,
-        "days"        -> days,
-        "mode"        -> mode(ctx.isAuth),
-        "ratingRange" -> optional(ratingRange),
-        "color"       -> color
-      )(HookConfig.from)(_.>>)
-        .verifying("Invalid clock", _.validClock)
-        .verifying("Can't create rated unlimited in lobby", _.noRatedUnlimited)
-    )
-
-  lazy val boardApiHook = Form(
+  def friend(using me: Option[Me]) = Form:
     mapping(
-      "time"        -> optional(time),
-      "increment"   -> optional(increment),
-      "days"        -> optional(days),
-      "variant"     -> optional(boardApiVariantKeys),
-      "rated"       -> optional(boolean),
-      "color"       -> optional(color),
-      "ratingRange" -> optional(ratingRange)
-    )((t, i, d, v, r, c, g) =>
+      "variant" -> variantWithFenAndVariants,
+      "timeMode" -> timeMode,
+      "time" -> time,
+      "increment" -> increment,
+      "days" -> days,
+      "mode" -> mode(withRated = me.isDefined),
+      "color" -> color,
+      "fen" -> fenField
+    )(FriendConfig.from)(_.>>)
+      .verifying("Invalid clock", _.validClock)
+      .verifying("Invalid speed", _.validSpeed(me.exists(_.isBot)))
+      .verifying("Can't create rated unlimited game", !_.isRatedUnlimited)
+      .verifying("invalidFen", _.validFen)
+
+  def hookFilled(timeModeString: Option[String])(using me: Option[Me]): Form[HookConfig] =
+    hook.fill(HookConfig.default(me.isDefined).withTimeModeString(timeModeString))
+
+  def hook(using me: Option[Me]) = Form:
+    mapping(
+      "variant" -> variantWithVariants,
+      "timeMode" -> timeMode,
+      "time" -> time,
+      "increment" -> increment,
+      "days" -> days,
+      "mode" -> mode(me.isDefined),
+      "ratingRange" -> optional(ratingRange),
+      "color" -> lila.common.Form.empty
+    )(HookConfig.from)(_.>>)
+      .verifying("Invalid clock", _.validClock)
+      .verifying("Can't create rated unlimited game", !_.isRatedUnlimited)
+
+  private lazy val boardApiHookBase: Mapping[HookConfig] =
+    mapping(
+      "time" -> optional(time),
+      "increment" -> optional(increment),
+      "days" -> optional(days),
+      "variant" -> optional(boardApiVariantKeys),
+      "rated" -> optional(boolean.into[Rated]),
+      "ratingRange" -> optional(ratingRange),
+      "color" -> optional(color)
+    )((t, i, d, v, r, g, c) =>
       HookConfig(
-        variant = v.flatMap(Variant.apply) | Variant.default,
-        timeMode = if (d.isDefined) TimeMode.Correspondence else TimeMode.RealTime,
+        variant = Variant.orDefault(v),
+        timeMode = if d.isDefined then TimeMode.Correspondence else TimeMode.RealTime,
         time = t | 10,
-        increment = i | 5,
-        days = d | 7,
-        mode = chess.Mode(~r),
-        color = lila.lobby.Color.orDefault(c),
-        ratingRange = g.fold(RatingRange.default)(RatingRange.orDefault)
+        increment = i | Clock.IncrementSeconds(5),
+        days = d | Days(7),
+        rated = r | Rated.No,
+        ratingRange = g.fold(RatingRange.default)(RatingRange.orDefault),
+        color = lila.lobby.TriColor.orDefault(c)
       )
     )(_ => none)
       .verifying("Invalid clock", _.validClock)
-      .verifying(
-        "Invalid time control",
-        hook => hook.makeClock.exists(lila.game.Game.isBoardCompatible) || hook.makeDaysPerTurn.isDefined
-      )
-  )
 
-  lazy val boardApiSeek = Form(
-    mapping(
-      "time"        -> time,
-      "increment"   -> increment,
-      "variant"     -> optional(boardApiVariantKeys),
-      "rated"       -> optional(boolean),
-      "color"       -> optional(color),
-      "ratingRange" -> optional(ratingRange)
-    )((t, i, v, r, c, g) =>
-      HookConfig(
-        variant = v.flatMap(Variant.apply) | Variant.default,
-        timeMode = TimeMode.RealTime,
-        time = t,
-        increment = i,
-        days = 1,
-        mode = chess.Mode(~r),
-        color = lila.lobby.Color.orDefault(c),
-        ratingRange = g.fold(RatingRange.default)(RatingRange.orDefault)
-      )
-    )(_ => none)
-      .verifying("Invalid clock", _.validClock)
-      .verifying(
-        "Invalid time control",
-        hook => hook.makeClock ?? lila.game.Game.isBoardCompatible
-      )
-  )
+  def boardApiHook(allowFastGames: Boolean) = Form:
+    boardApiHookBase.verifying(
+      "Invalid time control",
+      hook =>
+        allowFastGames || hook.makeClock.exists(
+          lila.core.game.isBoardCompatible
+        ) || hook.makeDaysPerTurn.isDefined
+    )
 
-  object api {
+  def toFriend = Form(single("username" -> lila.common.Form.username.historicalField))
+
+  object api extends lila.core.setup.SetupForm:
 
     lazy val clockMapping =
       mapping(
-        "limit"     -> number.verifying(ApiConfig.clockLimitSeconds.contains _),
+        "limit" -> number.into[Clock.LimitSeconds].verifying(ApiConfig.clockLimitSeconds.contains),
         "increment" -> increment
-      )(chess.Clock.Config.apply)(chess.Clock.Config.unapply)
-        .verifying("Invalid clock", c => c.estimateTotalTime > chess.Centis(0))
+      )(Clock.Config.apply)(unapply)
+        .verifying("Invalid clock", _.estimateTotalTime.nonZero)
 
     lazy val clock = "clock" -> optional(clockMapping)
 
-    lazy val variant =
-      "variant" -> optional(text.verifying(Variant.byKey.contains _))
+    lazy val optionalDays = "days" -> optional(days)
 
-    lazy val message = optional(
-      nonEmptyText.verifying(
+    lazy val variant = "variant" -> optional(typeIn(Variant.list.all.map(_.key).toSet))
+
+    lazy val message = "message" -> optional(
+      nonEmptyText(maxLength = 8_000).verifying(
         "The message must contain {game}, which will be replaced with the game URL.",
-        _ contains "{game}"
+        msg => msg.contains("{game}") || msg.toLowerCase.contains("{nomessage}")
       )
     )
 
-    def user(from: User) =
-      Form(challengeMapping.verifying("Invalid speed", _ validSpeed from.isBot))
+    val rules = "rules" -> optional:
+      import lila.core.game.GameRule
+      lila.common.Form.strings
+        .separator(",")
+        .verifying(_.forall(GameRule.byKey.contains))
+        .transform[Set[GameRule]](rs => rs.flatMap(GameRule.byKey.get).toSet, _.map(_.toString).toList)
+
+    def user(using from: Me) =
+      Form(challengeMapping.verifying("Invalid speed", _.validSpeed(from.isBot)))
 
     def admin = Form(challengeMapping)
 
@@ -160,37 +144,51 @@ object SetupForm {
       mapping(
         variant,
         clock,
-        "days"          -> optional(days),
-        "rated"         -> boolean,
-        "color"         -> optional(color),
-        "fen"           -> fenField,
-        "acceptByToken" -> optional(nonEmptyText),
-        "message"       -> message
+        optionalDays,
+        "rated" -> boolean.into[Rated],
+        "color" -> optional(color),
+        "fen" -> fenField,
+        message,
+        "keepAliveStream" -> optional(boolean),
+        rules,
+        "onlyIfOpponentFollowsMe" -> optional(boolean)
       )(ApiConfig.from)(_ => none)
         .verifying("invalidFen", _.validFen)
         .verifying("can't be rated", _.validRated)
 
-    lazy val ai = Form(
+    lazy val ai = Form:
       mapping(
         "level" -> level,
         variant,
         clock,
-        "days"  -> optional(days),
+        optionalDays,
         "color" -> optional(color),
-        "fen"   -> fenField
+        "fen" -> fenField
       )(ApiAiConfig.from)(_ => none).verifying("invalidFen", _.validFen)
-    )
 
-    lazy val open = Form(
-      mapping(
-        "name" -> optional(lila.common.Form.cleanNonEmptyText(maxLength = 200)),
-        variant,
-        clock,
-        "rated" -> boolean,
-        "fen"   -> fenField
-      )(OpenConfig.from)(_ => none)
-        .verifying("invalidFen", _.validFen)
-        .verifying("rated without a clock", c => c.clock.isDefined || !c.rated)
-    )
-  }
-}
+    def open(isAdmin: Boolean) = Form:
+      openMapping.verifying(
+        "The `noAbort` rule is now restricted to challenge administrators",
+        d => !d.rules.contains(lila.core.game.GameRule.noAbort) || isAdmin
+      )
+
+    private lazy val openMapping = mapping(
+      "name" -> optional(LilaForm.cleanNonEmptyText(maxLength = 200)),
+      variant,
+      clock,
+      optionalDays,
+      "rated" -> boolean.into[Rated],
+      "fen" -> fenField,
+      "users" -> optional:
+        LilaForm.strings
+          .separator(",")
+          .verifying("Must be 2 usernames, white and black", _.sizeIs == 2)
+          .transform[List[UserStr]](UserStr.from(_), UserStr.raw(_))
+      ,
+      rules,
+      "expiresAt" -> optional:
+        inTheFuture(ISOInstantOrTimestamp.mapping)
+          .verifying("Open challenges must expire within 2 weeks", _.isBefore(nowInstant.plusWeeks(2)))
+    )(OpenConfig.from)(_ => none)
+      .verifying("invalidFen", _.validFen)
+      .verifying("rated without a clock", c => c.clock.isDefined || c.days.isDefined || c.rated.no)

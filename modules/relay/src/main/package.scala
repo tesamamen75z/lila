@@ -1,8 +1,25 @@
-package lila
+package lila.relay
 
-package object relay extends PackageObject {
+import alleycats.Zero
 
-  private[relay] val logger = lila.log("relay")
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.{ RelayRoundId, RelayTourId, RelayGroupId }
 
-  private[relay] type RelayGames = Vector[RelayGame]
-}
+val broadcasterUrl = "https://lichess.org/broadcast/app"
+
+val monthOfFirstRelay = java.time.YearMonth.of(2020, 1)
+
+private lazy val logger = lila.log("relay")
+
+private type RelayGames = Vector[RelayGame]
+
+// apply updates to a value, and keep track of the updates
+// so they can all be replayed on another value
+case class Updating[A](current: A, reRun: Update[A] = (a: A) => a):
+  def apply(up: Update[A]) = Updating(up(current), up.compose(reRun))
+
+opaque type Crowd = Int
+object Crowd extends RichOpaqueInt[Crowd]:
+  val zero: Crowd = 0
+  given Zero[Crowd] = Zero(zero)

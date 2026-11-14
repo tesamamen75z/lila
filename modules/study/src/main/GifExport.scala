@@ -1,22 +1,32 @@
 package lila.study
 
-import akka.stream.scaladsl._
-import akka.util.ByteString
-import play.api.libs.json._
-import play.api.libs.ws.JsonBodyWritables._
+import org.apache.pekko.stream.scaladsl.*
+import org.apache.pekko.util.ByteString
+import play.api.libs.json.*
+import play.api.libs.ws.JsonBodyWritables.*
 import play.api.libs.ws.StandaloneWSClient
+
+import lila.common.Json.given
+import lila.core.lilaism.LilaInvalid
+import lila.tree.Node
 
 final class GifExport(
     ws: StandaloneWSClient,
     url: String
-)(implicit ec: scala.concurrent.ExecutionContext) {
-  def ofChapter(chapter: Chapter): Fu[Source[ByteString, _]] =
+)(using Executor):
+
+  def ofChapter(
+      chapter: Chapter,
+      theme: Option[String],
+      piece: Option[String],
+      showGlyphs: Boolean = true
+  ): Fu[Source[ByteString, ?]] =
     ws.url(s"$url/game.gif")
       .withMethod("POST")
       .addHttpHeaders("Content-Type" -> "application/json")
       .withBody(
         Json.obj(
-          "delay"       -> 80,
+          "delay" -> 80,
           "orientation" -> chapter.setup.orientation.name,
           "white" -> List(
             chapter.tags(_.WhiteTitle),
@@ -28,30 +38,31 @@ final class GifExport(
             chapter.tags(_.Black),
             chapter.tags(_.BlackElo).map(elo => s"($elo)")
           ).flatten.mkString(" "),
-          "frames" -> framesRec(chapter.root +: chapter.root.mainline, Json.arr())
+          "frames" -> framesRec(chapter.root :: chapter.root.mainline, showGlyphs, Json.arr()),
+          "theme" -> theme.|("brown"),
+          "piece" -> piece.|("cburnett")
         )
       )
-      .stream() flatMap {
-      case res if res.status != 200 =>
-        logger.warn(s"GifExport study ${chapter.studyId}/${chapter._id} ${res.status}")
-        fufail(res.statusText)
-      case res => fuccess(res.bodyAsSource)
-    }
+      .stream()
+      .flatMap:
+        case res if res.status == 200 => fuccess(res.bodyAsSource)
+        case res if res.status == 400 => fufail(LilaInvalid(res.body))
+        case res =>
+          logger.warn(s"GifExport study ${chapter.studyId}/${chapter.id} ${res.status}")
+          fufail(res.statusText)
 
   @annotation.tailrec
-  private def framesRec(nodes: Vector[RootOrNode], arr: JsArray): JsArray =
-    nodes match {
+  private def framesRec(nodes: List[Node], showGlyphs: Boolean, arr: JsArray): JsArray =
+    nodes match
       case node +: tail =>
         framesRec(
           tail,
+          showGlyphs,
           arr :+ Json
-            .obj(
-              "fen" -> node.fen.value
-            )
-            .add("check", node.check option true)
+            .obj("fen" -> node.fen.value)
             .add("lastMove", node.moveOption.map(_.uci.uci))
-            .add("delay", tail.isEmpty option 500) // more delay for last frame
+            .add("delay", tail.isEmpty.option(500)) // more delay for last frame
+            .add("glyph", showGlyphs.so(node.glyphs.toBase.move.map(_.symbol)))
+            .add("pockets", node.crazyData.map(_.pockets))
         )
       case _ => arr
-    }
-}

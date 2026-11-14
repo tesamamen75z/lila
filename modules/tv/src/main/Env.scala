@@ -1,25 +1,38 @@
 package lila.tv
 
-import akka.actor.ActorSystem
-import com.softwaremill.macwire._
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import org.apache.pekko.actor.{ ActorRef, ActorSystem, Props }
+
+import lila.tv.Tv.Channel
 
 @Module
 final class Env(
     gameRepo: lila.game.GameRepo,
-    renderer: lila.hub.actors.Renderer,
-    lightUser: lila.common.LightUser.GetterSync,
-    gameProxyRepo: lila.round.GameProxyRepo,
+    lightUserApi: lila.core.user.LightUserApi,
+    lightUserSync: lila.core.LightUser.GetterSync,
+    userApi: lila.core.user.UserApi,
+    gameProxy: lila.core.game.GameProxy,
     system: ActorSystem,
-    recentTvGames: lila.round.RecentTvGames,
+    onTvGame: lila.game.core.OnTvGame,
     rematches: lila.game.Rematches
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, Scheduler):
 
-  private val tvTrouper = wire[TvTrouper]
+  private val tvSyncActor = wire[TvSyncActor]
 
   lazy val tv = wire[Tv]
 
-  system.scheduler.scheduleWithFixedDelay(12 seconds, 3 seconds) { () =>
-    tvTrouper ! TvTrouper.Select
-  }
-}
+  val channelBroadcasts: Map[Channel, ActorRef] = Tv.Channel.values.map { c =>
+    c -> system.actorOf(Props(wire[TvBroadcast]))
+  }.toMap
+
+  def channelSource(channel: Channel, bc: Boolean): Option[Fu[TvBroadcast.SourceType]] =
+    given timeout: org.apache.pekko.util.Timeout = org.apache.pekko.util.Timeout(1.second)
+    import org.apache.pekko.pattern.ask
+    val ctag = summon[scala.reflect.ClassTag[TvBroadcast.SourceType]]
+    channelBroadcasts
+      .get(channel)
+      .map: actor =>
+        (actor ? TvBroadcast.Connect(bc)).mapTo(using ctag)
+
+  system.scheduler.scheduleWithFixedDelay(12.seconds, 3.seconds): () =>
+    tvSyncActor ! TvSyncActor.Select

@@ -1,7 +1,8 @@
 .swiss__boards {
   margin: $block-gap 0;
-  grid-gap: 1ch;
-  --np-min-width: 200px;
+  gap: 1ch;
+
+  ---np-min-width: 200px;
 }
 
 .swiss__board {
@@ -18,7 +19,7 @@
 
     strong {
       text-align: center;
-      margin-right: 1ch;
+      margin-inline-end: 1ch;
     }
   }
 }

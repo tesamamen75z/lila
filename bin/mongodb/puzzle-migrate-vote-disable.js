@@ -1,4 +1,4 @@
-var puzzles = db.puzzle;
+const puzzles = db.puzzle;
 
 modified = 0;
 
@@ -19,7 +19,7 @@ puzzles
         $unset: {
           'vote.sum': true,
         },
-      }
+      },
     );
     modified += 1;
   });

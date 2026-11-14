@@ -1,90 +1,58 @@
 package lila.practice
 
-import lila.study.{ Chapter, Study }
+import lila.core.i18n.I18nKey
+import lila.study.Chapter
 
-case class PracticeStructure(
-    sections: List[PracticeSection]
-) {
+case class PracticeStructure(sections: List[PracticeSection]):
 
-  def study(id: Study.Id): Option[PracticeStudy] =
-    sections.flatMap(_ study id).headOption
+  def study(id: StudyId): Option[PracticeStudy] =
+    sections.flatMap(_.study(id)).headOption
 
-  lazy val studiesByIds: Map[Study.Id, PracticeStudy] =
+  lazy val studiesByIds: Map[StudyId, PracticeStudy] =
     sections.view
       .flatMap(_.studies)
-      .map { s =>
-        s.id -> s
-      }
-      .toMap
+      .mapBy(_.id)
 
-  lazy val sectionsByStudyIds: Map[Study.Id, PracticeSection] =
+  lazy val sectionsByStudyIds: Map[StudyId, PracticeSection] =
     sections.view.flatMap { sec =>
       sec.studies.map { stu =>
         stu.id -> sec
       }
     }.toMap
 
-  lazy val chapterIds: List[Chapter.Id] = sections.flatMap(_.studies).flatMap(_.chapterIds)
+  lazy val chapterIds: List[StudyChapterId] = sections.flatMap(_.studies).flatMap(_.chapterIds)
 
-  lazy val nbChapters = chapterIds.size
+  lazy val nbChapters = sections.flatMap(_.studies).map(_.chapterIds.size).sum
 
-  def findSection(id: Study.Id): Option[PracticeSection] = sectionsByStudyIds get id
-
-  def hasStudy(id: Study.Id) = studiesByIds contains id
-}
+  def findSection(id: StudyId): Option[PracticeSection] = sectionsByStudyIds.get(id)
 
 case class PracticeSection(
     id: String,
-    name: String,
+    name: I18nKey,
     studies: List[PracticeStudy]
-) {
+):
+  lazy val studiesByIds: Map[StudyId, PracticeStudy] = studies.mapBy(_.id)
 
-  lazy val studiesByIds: Map[Study.Id, PracticeStudy] =
-    studies.view.map { s =>
-      s.id -> s
-    }.toMap
-
-  def study(id: Study.Id): Option[PracticeStudy] = studiesByIds get id
-}
+  def study(id: StudyId): Option[PracticeStudy] = studiesByIds.get(id)
 
 case class PracticeStudy(
-    id: Study.Id, // study ID
-    name: String,
-    desc: String,
+    id: StudyId,
+    name: I18nKey,
+    desc: I18nKey,
     chapters: List[Chapter.IdName]
-) {
+) extends lila.ui.practice.Study:
+  val slug = scalalib.StringOps.slug(name.value)
+  val chapterIds = chapters.map(_.id)
 
-  val slug = lila.common.String slugify name
+object PracticeStructure:
 
-  def chapterIds = chapters.map(_.id)
-}
+  private[practice] val totalChapters = 233
 
-object PracticeStructure {
+  private[practice] def studyIds: List[StudyId] = PracticeSections.list.flatMap(_.studies.map(_.id))
 
-  val totalChapters = 233
-
-  def isChapterNameCommented(name: Chapter.Name) = name.value.startsWith("//")
-
-  def make(conf: PracticeConfig, chapters: Map[Study.Id, Vector[Chapter.IdName]]) =
-    PracticeStructure(
-      sections = conf.sections.map { sec =>
-        PracticeSection(
-          id = sec.id,
-          name = sec.name,
-          studies = sec.studies.map { stu =>
-            val id = Study.Id(stu.id)
-            PracticeStudy(
-              id = id,
-              name = stu.name,
-              desc = stu.desc,
-              chapters = chapters
-                .get(id)
-                .??(_.filterNot { c =>
-                  isChapterNameCommented(c.name)
-                }.toList)
-            )
-          }
-        )
-      }
-    )
-}
+  def withChapters(chapters: Map[StudyId, Vector[Chapter.IdName]]) = PracticeStructure:
+    PracticeSections.list.map: sec =>
+      sec.copy(
+        studies = sec.studies.map: stu =>
+          stu.copy(chapters = chapters.get(stu.id).so(_.toList))
+      )

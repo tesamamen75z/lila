@@ -1,69 +1,83 @@
 package controllers
 
-import play.api.libs.json.Json
+import cats.mtl.Handle.*
+import play.api.libs.json.*
 
-import lila.app._
-import lila.setup.SetupBulk
+import lila.api.GameApiV2
+import lila.app.*
+import lila.challenge.ChallengeBulkSetup
+import lila.common.Json.given
+import lila.game.PgnDump.requestPgnFlags
 
-final class BulkPairing(env: Env) extends LilaController(env) {
+final class BulkPairing(env: Env) extends LilaController(env):
 
-  def list =
-    ScopedBody(_.Challenge.Bulk) { implicit req => me =>
-      env.challenge.bulk.scheduledBy(me) map { list =>
-        JsonOk(Json.obj("bulks" -> list.map(SetupBulk.toJson)))
-      }
-    }
+  def list = ScopedBody(_.Challenge.Bulk) { _ ?=> me ?=>
+    env.challenge.bulk
+      .scheduledBy(me)
+      .map: list =>
+        Ok(Json.obj("bulks" -> list.map(ChallengeBulkSetup.toJson)))
+  }
 
-  def delete(id: String) =
-    ScopedBody(_.Challenge.Bulk) { implicit req => me =>
-      env.challenge.bulk.deleteBy(id, me) flatMap {
-        case true => jsonOkResult.fuccess
-        case _    => notFoundJson()
-      }
-    }
+  def show(id: String) = ScopedBody(_.Challenge.Bulk) { _ ?=> me ?=>
+    env.challenge.bulk
+      .findBy(id, me)
+      .map:
+        _.fold(notFoundJson()): bulk =>
+          Ok(ChallengeBulkSetup.toJson(bulk))
+  }
 
-  def startClocks(id: String) =
-    ScopedBody(_.Challenge.Bulk) { implicit req => me =>
-      env.challenge.bulk.startClocks(id, me) flatMap {
-        case true => jsonOkResult.fuccess
-        case _    => notFoundJson()
-      }
-    }
+  def games(id: String) = ScopedBody(_.Challenge.Bulk) { _ ?=> me ?=>
+    env.challenge.bulk
+      .findBy(id, me)
+      .map:
+        _.fold(notFoundText()): bulk =>
+          val config = GameApiV2.ByIdsConfig(
+            ids = bulk.games.map(_.id),
+            format = GameApiV2.Format.byRequest,
+            flags = requestPgnFlags(extended = false, delayMoves = false),
+            perSecond = MaxPerSecond(50)
+          )
+          limit.GlobalConcurrencyLimitPerIP
+            .download(req.ipAddress)(env.api.gameApiV2.exportByIds(config)): source =>
+              Ok.chunked(source).as(config.contentType).noProxyBuffer
+  }
 
-  def create =
-    ScopedBody(_.Challenge.Bulk) { implicit req => me =>
-      implicit val lang = reqLang
-      import lila.setup.SetupBulk
-      lila.setup.SetupBulk.form
-        .bindFromRequest()
-        .fold(
-          newJsonFormError,
-          data =>
-            env.setup.bulk(data, me) flatMap {
-              case Left(SetupBulk.RateLimited) =>
-                TooManyRequests(
-                  jsonError(s"Ratelimited! Max games per 10 minutes: ${SetupBulk.maxGames}")
-                ).fuccess
-              case Left(SetupBulk.BadTokens(tokens)) =>
-                import lila.setup.SetupBulk.BadToken
-                import play.api.libs.json._
-                BadRequest(
-                  Json.obj(
-                    "tokens" -> JsObject {
-                      tokens.map { case BadToken(token, error) =>
-                        token.secret -> JsString(error.message)
-                      }
-                    }
-                  )
-                ).fuccess
-              case Left(SetupBulk.DuplicateUsers(users)) =>
-                BadRequest(Json.obj("duplicateUsers" -> users)).fuccess
-              case Right(bulk) =>
-                env.challenge.bulk.schedule(bulk) map {
-                  case Left(error) => BadRequest(jsonError(error))
-                  case Right(bulk) => JsonOk(SetupBulk toJson bulk)
-                }
-            }
-        )
-    }
-}
+  def delete(id: String) = ScopedBody(_.Challenge.Bulk) { _ ?=> me ?=>
+    env.challenge.bulk
+      .deleteBy(id, me)
+      .flatMap:
+        if _ then jsonOkResult else notFoundJson()
+  }
+
+  def startClocks(id: String) = ScopedBody(_.Challenge.Bulk) { _ ?=> me ?=>
+    env.challenge.bulk
+      .startClocksAsap(id, me)
+      .flatMap:
+        if _ then jsonOkResult else notFoundJson()
+  }
+
+  def create = ScopedBody(_.Challenge.Bulk) { ctx ?=> me ?=>
+    bindForm(env.challenge.bulkSetup.form)(
+      jsonFormError,
+      data =>
+        import ChallengeBulkSetup.*
+        allow:
+          for
+            bulk <- env.challenge.bulkSetupApi(data)
+            scheduled <- env.challenge.bulk.schedule(bulk)
+          yield Ok(toJson(scheduled))
+        .rescue:
+          case ScheduleError.RateLimited =>
+            TooManyRequests:
+              jsonError(s"Ratelimited! Max games per 10 minutes: ${maxGamesPerTenMinutes}")
+          case ScheduleError.BadTokens(tokens) =>
+            BadRequest:
+              Json.obj:
+                "tokens" -> JsObject:
+                  tokens.map: t =>
+                    t.token.value -> JsString(t.error.message)
+          case ScheduleError.DuplicateUsers(users) =>
+            BadRequest(Json.obj("duplicateUsers" -> users))
+          case error: String => BadRequest(jsonError(error))
+    )
+  }

@@ -1,74 +1,81 @@
 package lila.study
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 import play.api.Configuration
 import play.api.libs.ws.StandaloneWSClient
 
-import lila.common.config._
-import lila.socket.Socket.{ GetVersion, SocketVersion }
-import lila.user.User
+import lila.core.config.*
+import lila.core.security.LilaCookie
+import lila.core.socket.{ GetVersion, SocketVersion }
 
 @Module
 final class Env(
     appConfig: Configuration,
     ws: StandaloneWSClient,
-    lightUserApi: lila.user.LightUserApi,
-    gamePgnDump: lila.game.PgnDump,
-    divider: lila.game.Divider,
-    gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    explorerImporter: lila.explorer.ExplorerImporter,
-    notifyApi: lila.notify.NotifyApi,
-    prefApi: lila.pref.PrefApi,
-    relationApi: lila.relation.RelationApi,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    timeline: lila.hub.actors.Timeline,
-    fishnet: lila.hub.actors.Fishnet,
-    chatApi: lila.chat.ChatApi,
+    lightUserApi: lila.core.user.LightUserApi,
+    gamePgnDump: lila.core.game.PgnDump,
+    divider: lila.core.game.Divider,
+    gameRepo: lila.core.game.GameRepo,
+    namer: lila.core.game.Namer,
+    gameOpening: lila.core.game.GameOpening,
+    userApi: lila.core.user.UserApi,
+    flairApi: lila.core.user.FlairApi,
+    explorer: lila.core.game.Explorer,
+    notifyApi: lila.core.notify.NotifyApi,
+    federations: lila.core.fide.Federation.FedsOf,
+    prefApi: lila.core.pref.PrefApi,
+    relationApi: lila.core.relation.RelationApi,
+    socketKit: lila.core.socket.SocketKit,
+    socketReq: lila.core.socket.SocketRequester,
+    chatApi: lila.core.chat.ChatApi,
+    analyser: lila.tree.Analyser,
+    analysisJson: lila.tree.AnalysisJson,
+    annotator: lila.tree.Annotator,
     mongo: lila.db.Env,
-    net: lila.common.config.NetConfig,
-    cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mat: akka.stream.Materializer,
-    mode: play.api.Mode
-) {
+    net: lila.core.config.NetConfig,
+    cacheApi: lila.memo.CacheApi,
+    settingStore: lila.memo.SettingStore.Builder,
+    baker: LilaCookie
+)(using
+    Executor,
+    Scheduler,
+    org.apache.pekko.stream.Materializer,
+    lila.core.config.RateLimit,
+    lila.core.fide.Federation.Guess,
+    lila.core.fide.GetPlayer,
+    lila.core.fide.Federation.GetName
+):
 
   private lazy val studyDb = mongo.asyncDb("study", appConfig.get[String]("study.mongodb.uri"))
 
-  def version(studyId: Study.Id): Fu[SocketVersion] =
-    socket.rooms.ask[SocketVersion](studyId.value)(GetVersion)
+  def version(studyId: StudyId): Fu[SocketVersion] =
+    socket.rooms.ask[SocketVersion](studyId.into(RoomId))(GetVersion.apply)
 
-  def isConnected(studyId: Study.Id, userId: User.ID): Fu[Boolean] =
+  def isConnected(studyId: StudyId, userId: UserId): Fu[Boolean] =
     socket.isPresent(studyId, userId)
 
-  private def scheduler = system.scheduler
+  private lazy val socket: StudySocket = wire[StudySocket]
 
-  private val socket: StudySocket = wire[StudySocket]
-
-  lazy val studyRepo             = new StudyRepo(studyDb(CollName("study")))
-  lazy val chapterRepo           = new ChapterRepo(studyDb(CollName("study_chapter_flat")))
-  private lazy val topicRepo     = new StudyTopicRepo(studyDb(CollName("study_topic")))
-  private lazy val userTopicRepo = new StudyUserTopicRepo(studyDb(CollName("study_user_topic")))
+  val studyRepo = StudyRepo(studyDb(CollName("study")))
+  val chapterRepo = ChapterRepo(studyDb(CollName("study_chapter_flat")))
+  private val topicRepo = StudyTopicRepo(studyDb(CollName("study_topic")))
+  private val userTopicRepo = StudyUserTopicRepo(studyDb(CollName("study_user_topic")))
 
   lazy val jsonView = wire[JsonView]
 
-  private lazy val pgnFetch = wire[PgnFetch]
-
   private lazy val chapterMaker = wire[ChapterMaker]
 
-  private lazy val explorerGame = wire[ExplorerGame]
+  private lazy val explorerGame = wire[ExplorerGameApi]
 
   private lazy val studyMaker = wire[StudyMaker]
 
   private lazy val studyInvite = wire[StudyInvite]
 
-  private lazy val serverEvalRequester = wire[ServerEval.Requester]
+  private lazy val serverEvalRequester = wire[serverEval.Requester]
 
   private lazy val sequencer = wire[StudySequencer]
 
-  lazy val serverEvalMerger = wire[ServerEval.Merger]
+  lazy val serverEvalMerger = wire[serverEval.Merger]
 
   lazy val topicApi = wire[StudyTopicApi]
 
@@ -76,23 +83,37 @@ final class Env(
 
   lazy val pager = wire[StudyPager]
 
-  lazy val multiBoard = wire[StudyMultiBoard]
+  lazy val preview = wire[ChapterPreviewApi]
 
   lazy val pgnDump = wire[PgnDump]
 
-  lazy val gifExport = new GifExport(ws, appConfig.get[String]("game.gifUrl"))
+  lazy val gifExport = GifExport(ws, appConfig.get[String]("game.gifUrl"))
 
-  def cli =
-    new lila.common.Cli {
-      def process = { case "study" :: "rank" :: "reset" :: Nil =>
-        api.resetAllRanks.map { count =>
-          s"$count done"
-        }
-      }
-    }
+  lazy val formatStore = wire[ui.StudyFormatStore]
 
-  lila.common.Bus.subscribeFun("studyAnalysisProgress") {
-    case lila.analyse.actorApi.StudyAnalysisProgress(analysis, complete) =>
-      serverEvalMerger(analysis, complete).unit
-  }
-}
+  def findConnectedUsersIn(studyId: StudyId)(filter: Iterable[UserId] => Fu[List[UserId]]): Fu[List[UserId]] =
+    studyRepo
+      .membersById(studyId)
+      .flatMap:
+        _.map(_.members.keys)
+          .filter(_.nonEmpty)
+          .so: members =>
+            filter(members).flatMap:
+              _.parallel: streamer =>
+                isConnected(studyId, streamer).dmap(_.option(streamer))
+              .dmap(_.flatten)
+
+  lila.common.Cli.handle():
+    case "study" :: "rank" :: "reset" :: Nil =>
+      studyRepo.resetAllRanks.map: count =>
+        s"$count done"
+
+  lila.common.Bus.sub[lila.tree.StudyAnalysisProgress]:
+    case lila.tree.StudyAnalysisProgress(analysis, complete) => serverEvalMerger(analysis, complete)
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    for
+      _ <- api.deletePrivateByOwner(del.id)
+      _ <- studyRepo.anonymizeAllOf(del.id)
+      _ <- topicApi.userTopicsDelete(del.id)
+    yield ()

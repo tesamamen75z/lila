@@ -1,6 +1,6 @@
-package lila
+package lila.lobby
 
-package object lobby extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[lobby] def logger = lila.log("lobby")
-}
+private lazy val logger = lila.log("lobby")

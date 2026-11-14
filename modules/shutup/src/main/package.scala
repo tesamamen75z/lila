@@ -1,3 +1,4 @@
-package lila
+package lila.shutup
 
-package object shutup extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

@@ -1,36 +1,35 @@
-package views.html.lobby
+package views.lobby
 
-import lila.api.Context
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
-import lila.game.Pov
+import lila.app.UiEnv.{ *, given }
+import lila.round.UrgentGames
 
-object blindLobby {
+object blindLobby:
 
-  def apply(games: List[Pov])(implicit ctx: Context) =
+  def apply(games: UrgentGames)(using Context) =
     div(
-      h2(games.size, " ongoing games"),
-      games.nonEmpty option ongoingGames(games),
+      h2(trans.swiss.ongoingGames(games.value.size)),
+      games.value.nonEmpty.option(ongoingGames(games)),
       div(cls := "lobby__app")
     )
 
-  private def ongoingGames(games: List[Pov])(implicit ctx: Context) =
-    games.partition(_.isMyTurn) match {
-      case (myTurn, opTurn) =>
-        frag(
-          h3("My turn: ", myTurn.size, " games"),
-          ul(myTurn map renderGame),
-          h3("Opponent turn: ", opTurn.size, " games"),
-          ul(opTurn map renderGame)
-        )
-    }
+  private def ongoingGames(games: UrgentGames)(using Context) =
+    val (myTurn, opTurn) = games.value.partition(_.isMyTurn)
+    frag(
+      h3(trans.site.yourTurn(), " : ", trans.site.nbGames.plural(myTurn.size, myTurn.size.localize)),
+      ul(myTurn.map(renderGame)),
+      h3(
+        trans.site.waitingForOpponent(),
+        " : ",
+        trans.site.nbGames.plural(opTurn.size, opTurn.size.localize)
+      ),
+      ul(opTurn.map(renderGame))
+    )
 
-  private def renderGame(pov: Pov)(implicit ctx: Context) =
+  private def renderGame(pov: Pov)(using Context) =
     li(
-      a(href := gameLink(pov))(
+      a(href := gameUrl(pov.game, pov.color))(
         playerText(pov.opponent),
         " ",
-        pov.isMyTurn ?? pov.remainingSeconds map { secondsFromNow(_, alwaysRelative = true) }
+        pov.isMyTurn.so(pov.remainingSeconds).map(secondsFromNow(_, alwaysRelative = true))
       )
     )
-}

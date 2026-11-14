@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="team">تیم</string>
-  <string name="teams">تیم‌ ها</string>
+  <string name="teams">تیم‌ها</string>
   <plurals name="nbMembers">
     <item quantity="one">%s عضو</item>
     <item quantity="other">%s عضو</item>
   </plurals>
   <string name="allTeams">همه تیم‌ ها</string>
-  <string name="newTeam">ایجاد تیم جدید</string>
-  <string name="myTeams">تیم‌ های من</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">تیم هایی که رهبری می‌کنی</string>
+  <string name="newTeam">تیم جدید</string>
+  <string name="myTeams">تیم‌های من</string>
   <string name="noTeamFound">تیمی پیدا نشد</string>
   <string name="joinTeam">پیوستن به تیم</string>
   <string name="quitTeam">خروج از تیم</string>
@@ -16,24 +17,37 @@
     <item quantity="one">رهبر گروه</item>
     <item quantity="other">رهبران گروه</item>
   </plurals>
-  <string name="teamBestPlayers">بهترین بازیکنان</string>
   <string name="teamRecentMembers">اعضای اخیر</string>
-  <string name="kickSomeone">آیا می خواهید {0} را از تیم اخراج کنید</string>
-  <string name="whoToKick">چه کسی را می خواهید از تیم اخراج کنید?</string>
-  <plurals name="xJoinRequests">
-    <item quantity="one">%s درخواست پیوستن</item>
-    <item quantity="other">%s درخواست پیوستن</item>
-  </plurals>
   <string name="willBeReviewed">درخواست عضویت شما توسط مسئول گروه بررسی خواهد شد.</string>
   <string name="beingReviewed">درخواست عضویت شما توسط مسئول گروه در حال بررسی می باشد.</string>
-  <string name="teamBattle">مبارزات تیمی</string>
+  <string name="requestDeclined">درخواست عضویت شما توسط رهبر تیم رد شد.</string>
+  <string name="teamBattle">مبارزه تیمی</string>
   <string name="teamBattleOverview">مبارزه ی چندین تیم، امتیاز هر بازیکن برای تیم اش حساب می شود</string>
   <string name="teamTournament">مسابقه تیمی</string>
-  <string name="messageAllMembers">پیام به همه ی اعضا</string>
-  <string name="messageAllMembersOverview">یک پیام خصوصی به همه ی اعضای تیم ارسال کن</string>
+  <string name="teamTournamentOverview">مسابقهٔ راوانی که فقط عضوهای تیم‌تان می‌توانند به آن بپیوندند</string>
+  <string name="swissTournamentOverview">یک میدان مسابقه سوئیسی که فقط اعضای تیم شما می‌توانند به آن بپیوندند</string>
+  <string name="teamUpdates">روزامدهای تیم</string>
+  <string name="subToTeamUpdates">برای روزامدهای تیم مشترک شوید</string>
+  <string name="teamEvents">رویدادهای تیم</string>
+  <string name="upcomingTeamEvents">رویدادهای پیشاروی تیم</string>
   <string name="teamsIlead">تیم هایی که رهبری می کنم</string>
-  <string name="usersWhoCanManageThisTeam">کاربرانی که می توانند این تیم را مدیریت کنند</string>
-  <string name="leadersChat">چت رهبران</string>
-  <string name="closeTeam">بستن گروه</string>
-  <string name="closeTeamDescription">بستن گروه برای همیشه</string>
+  <string name="leadersChat">گپِ سرگروهان</string>
+  <string name="introduction">معرفی</string>
+  <string name="entryCode">کد ورود به تیم</string>
+  <string name="entryCodeDescriptionForLeader">کدی است که اعضای جدید برای ورود به تیم باید بدانند(اختیاری).</string>
+  <string name="incorrectEntryCode">کد ورودی اشتباه است.</string>
+  <string name="forumLabel">انجمنِ تیم</string>
+  <string name="teamAlreadyExists">این تیم هم‌اکنون وجود دارد.</string>
+  <string name="upcomingTournaments">مسابقات پیش رو</string>
+  <string name="completedTourns">مسابقاتِ کامل شده</string>
+  <string name="joinLichessVariantTeam">برای خبرها و رویدادها به تیم رسمی %s بپیوندید</string>
+  <string name="innerTeam">تیم داخلی</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="one">نبرد یک تیم</item>
+    <item quantity="other">نبرد %s تیم</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="one">یک رهبر از هر تیم</item>
+    <item quantity="other">%s رهبر از هر تیم</item>
+  </plurals>
 </resources>

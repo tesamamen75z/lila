@@ -1,59 +1,51 @@
 package lila.api
 
-import play.api.libs.json.{ JsArray, JsObject, Json }
+import play.api.libs.json.{ JsObject, Json, Writes }
 
-import lila.game.Pov
-import lila.lobby.SeekApi
+import lila.common.Json.given
+import lila.core.perf.{ UserPerfs, UserWithPerfs }
+import lila.lobby.LobbySocket
+import lila.mon.extensions.*
+import lila.rating.UserPerfsExt.perfsList
 
 final class LobbyApi(
     lightUserApi: lila.user.LightUserApi,
-    seekApi: SeekApi,
-    gameProxyRepo: lila.round.GameProxyRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    gameProxyRepo: lila.round.GameProxyRepo,
+    gameJson: lila.game.JsonView,
+    lobbySocket: LobbySocket
+)(using Executor):
 
-  def apply(implicit ctx: Context): Fu[(JsObject, List[Pov])] =
-    ctx.me.fold(seekApi.forAnon)(seekApi.forUser).mon(_.lobby segment "seeks") zip
-      (ctx.me ?? gameProxyRepo.urgentGames).mon(_.lobby segment "urgentGames") flatMap { case (seeks, povs) =>
-        val displayedPovs = povs take 9
-        lightUserApi.preloadMany(displayedPovs.flatMap(_.opponent.userId)) inject {
-          Json.obj(
-            "me" -> ctx.me.map { u =>
-              Json.obj("username" -> u.username).add("isBot" -> u.isBot)
-            },
-            "seeks"        -> JsArray(seeks.map(_.render)),
-            "nowPlaying"   -> JsArray(displayedPovs map nowPlaying),
-            "nbNowPlaying" -> povs.size
-          ) -> displayedPovs
-        }
-      }
-
-  def nowPlaying(pov: Pov) =
-    Json
-      .obj(
-        "fullId"   -> pov.fullId,
-        "gameId"   -> pov.gameId,
-        "fen"      -> chess.format.Forsyth.exportBoard(pov.game.board),
-        "color"    -> (if (pov.game.variant.racingKings) chess.White else pov.color).name,
-        "lastMove" -> ~pov.game.lastMoveKeys,
-        "variant" -> Json.obj(
-          "key"  -> pov.game.variant.key,
-          "name" -> pov.game.variant.name
-        ),
-        "speed"    -> pov.game.speed.key,
-        "perf"     -> lila.game.PerfPicker.key(pov.game),
-        "rated"    -> pov.game.rated,
-        "hasMoved" -> pov.hasMoved,
-        "opponent" -> Json
+  def get(using me: Option[UserWithPerfs]): Fu[(JsObject, List[Pov])] =
+    me.traverse(gameProxyRepo.urgentGames)
+      .mon(lila.mon.lobby.segment("urgentGames"))
+      .flatMap: urgent =>
+        val povs = urgent.so(_.value)
+        val displayedPovs = povs.take(9)
+        for _ <- lightUserApi.preloadMany(displayedPovs.flatMap(_.opponent.userId))
+        yield Json
           .obj(
-            "id" -> pov.opponent.userId,
-            "username" -> lila.game.Namer
-              .playerTextBlocking(pov.opponent, withRating = false)(lightUserApi.sync)
+            "nowPlaying" -> displayedPovs.map(nowPlaying),
+            "nbNowPlaying" -> povs.size,
+            "nbMyTurn" -> povs.count(_.isMyTurn),
+            "counters" -> Json.obj(
+              "members" -> lobbySocket.counters.members,
+              "rounds" -> lobbySocket.counters.rounds
+            )
           )
-          .add("rating" -> pov.opponent.rating)
-          .add("ai" -> pov.opponent.aiLevel),
-        "isMyTurn" -> pov.isMyTurn
+          .add("ratingMap", me.map(_.perfs).map(ratingMap))
+          .add(
+            "me",
+            me.map: u =>
+              Json.obj("username" -> u.username).add("isBot" -> u.isBot)
+          ) -> displayedPovs
+
+  def nowPlaying(pov: Pov): JsObject = gameJson.ownerPreview(pov)(using lightUserApi.sync)
+
+  private def ratingMap(perfs: UserPerfs): JsObject =
+    Writes
+      .keyMapWrites[PerfKey, Int, Map]
+      .writes(
+        perfs.perfsList.view.map { (pk, perf) =>
+          pk -> (perf.intRating.value * (if perf.glicko.provisional.yes then -1 else 1))
+        }.toMap
       )
-      .add("secondsLeft" -> pov.remainingSeconds)
-      .add("tournamentId" -> pov.game.tournamentId)
-      .add("swissId" -> pov.game.tournamentId)
-}

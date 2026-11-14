@@ -1,44 +1,35 @@
 package lila.coach
 
-object UrlList {
+object UrlList:
 
-  object youtube {
+  private val max = 6
 
-    val max = 6
+  object youtube:
 
-    case class Url(value: String) extends AnyVal
-
-    def apply(text: String): List[Url] =
-      text.linesIterator.toList.view.map(_.trim).filter(_.nonEmpty) flatMap toUrl take max to List
+    def apply(text: String): List[Url] = parse(text)(toUrl)
 
     private val UrlRegex = """(?:youtube\.com|youtu\.be)/(?:watch)?(?:\?v=)?([^"&?/ ]{11})""".r.unanchored
 
     /*
      * https://www.youtube.com/watch?v=wEwoyYp_iw8
      * https://www.youtube.com/embed/wEwoyYp_iw8
+     * https://www.youtube-nocookie.com/embed/wEwoyYp_iw8
      */
     private def toUrl(line: String): Option[Url] =
-      line match {
-        case UrlRegex(id) => Url(s"https://www.youtube.com/embed/$id").some
-        case _            => none
-      }
-  }
+      line match
+        case UrlRegex(id) => Url(s"https://www.youtube-nocookie.com/embed/$id").some
+        case _ => none
 
-  object study {
-
-    val max = 6
-
-    case class StudyId(value: String) extends AnyVal
+  object study:
 
     private val UrlRegex = """(?:lichess\.org)/study/(\w{8})""".r.unanchored
 
-    def apply(text: String): List[StudyId] =
-      text.linesIterator.toList.view.map(_.trim).filter(_.nonEmpty) flatMap toId take max to List
+    def apply(text: String): List[StudyId] = parse(text)(toId)
 
     private def toId(line: String): Option[StudyId] =
-      line match {
+      line match
         case UrlRegex(id) => StudyId(id).some
-        case _            => none
-      }
-  }
-}
+        case _ => none
+
+  private def parse[A](text: String)(read: String => Option[A]): List[A] =
+    text.linesIterator.toList.view.map(_.trim).filter(_.nonEmpty).flatMap(read).take(max) to List

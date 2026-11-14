@@ -1,7 +1,7 @@
 .puzzle__feedback.after {
   flex-flow: row nowrap;
 
-  @include breakpoint($mq-col2) {
+  @include mq-at-least-col2 {
     flex-flow: column;
   }
 
@@ -11,33 +11,32 @@
     justify-content: center;
     font-size: 1.3em;
     background: $c-primary;
-    color: $c-primary-over;
+    color: $c-over;
     text-transform: uppercase;
     padding: 2em;
 
     &:hover {
-      background: lighten($c-primary, 10%);
+      background: hsl(from $c-primary h s calc(l + 10));
     }
 
-    i::before {
+    icon::before {
       font-size: 2.5em;
-      margin-right: 10px;
+      margin-inline-end: 10px;
     }
   }
 
   .complete {
-    @extend %flex-center;
+    @extend %flex-center-center;
 
-    justify-content: center;
-    flex: 1 1 50%;
-    font-size: 1.3em;
-    white-space: nowrap;
+    padding: 1em;
+    flex: 0 1 50%;
 
     .game-over {
       letter-spacing: 0.5ch;
       border-bottom: $border;
       padding-bottom: 0.5em;
       margin-bottom: 0.5em;
+      text-transform: uppercase;
     }
 
     .puzzle--streak & {
@@ -49,40 +48,26 @@
     @extend %flex-between;
 
     display: none;
-    border-top: $border;
-    padding: 1em 2em;
+    padding: 0.5em 2em;
 
-    a {
+    .practice {
       color: $c-font;
-
-      &:hover {
-        color: $c-link;
-      }
     }
 
-    @include breakpoint($mq-col2) {
+    @include mq-at-least-col2 {
       display: flex;
     }
   }
 }
 
 .puzzle__vote {
-  @extend %flex-column;
-
-  flex: 1 1 70%;
+  @extend %flex-center-nowrap;
 
   &__help {
     margin: 0.5em 1em 0 0;
+    font-size: 0.8em;
 
-    p {
-      display: inline;
-
-      &:last-child {
-        margin-left: 1ch;
-      }
-    }
-
-    @include breakpoint($mq-col2) {
+    @include mq-at-least-col2 {
       display: block;
       margin: 0 1em;
     }
@@ -91,51 +76,48 @@
   &__buttons {
     @extend %flex-center-nowrap;
 
-    opacity: 0.1;
-
-    &.enabled {
-      opacity: 1;
-
-      @include transition(opacity, 0.5s);
-    }
-
     flex: 1 1 100%;
     align-items: stretch;
-    text-align: center;
+    gap: 1ch;
   }
 
-  .vote {
-    @extend %flex-center;
+  .button {
+    @extend %flex-center-center;
 
-    justify-content: center;
     flex: 0 0 50%;
-    cursor: pointer;
     color: $c-good;
-
-    &.vote-down {
-      color: $c-bad;
-    }
+    padding: 0.8em 1.3em;
 
     &::before {
       @extend %data-icon;
 
-      content: '';
-      font-size: 5em;
+      content: $licon-ThumbsUp;
     }
 
-    &.vote-down::before {
-      transform: rotate(0.5turn);
+    &.vote-down {
+      color: $c-bad;
+
+      &.active,
+      &.active:hover {
+        background: color-mix(in oklab, $c-bad 50%, $c-bg);
+        text-shadow: none !important;
+      }
+
+      &::before {
+        transform: rotate(0.5turn);
+      }
     }
 
-    &:hover,
-    &.active {
-      background: $c-good;
-      color: $c-good-over;
-    }
+    &.vote-up {
+      &.active,
+      &.active:hover {
+        background: color-mix(in oklab, $c-good 50%, $c-bg);
+        text-shadow: none !important;
+      }
 
-    &.vote-down:hover,
-    &.vote-down.active {
-      background: $c-bad;
+      &:hover {
+        color: $c-good !important;
+      }
     }
   }
 }

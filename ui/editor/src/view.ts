@@ -1,19 +1,50 @@
-import { h, VNode } from 'snabbdom';
-import { MouchEvent, NumberPair } from 'chessground/types';
-import { dragNewPiece } from 'chessground/drag';
-import { eventPosition, opposite } from 'chessground/util';
-import { Rules } from 'chessops/types';
-import { parseFen, EMPTY_FEN } from 'chessops/fen';
-import modal from 'common/modal';
-import EditorCtrl from './ctrl';
-import chessground from './chessground';
-import { Selected, CastlingToggle, EditorState } from './interfaces';
+import type { MouchEvent, NumberPair } from '@lichess-org/chessground/types';
+import { eventPosition, opposite } from '@lichess-org/chessground/util';
+import { COLORS } from 'chessops';
+import { lichessRules } from 'chessops/compat';
+import { parseFen } from 'chessops/fen';
+import { parseSquare, makeSquare } from 'chessops/util';
+import type { On } from 'snabbdom';
 
-function castleCheckBox(ctrl: EditorCtrl, id: CastlingToggle, label: string, reversed: boolean): VNode {
-  const input = h('input', {
-    attrs: {
-      type: 'checkbox',
-      checked: ctrl.castlingToggles[id],
+import { view as cevalView } from 'lib/ceval';
+import { displayColumns, isTouchDevice, hasFeature, isAndroid, isChrome } from 'lib/device';
+import { fenToEpd } from 'lib/game/chess';
+import { variants } from 'lib/game/perf';
+import { licon, type LiconValue } from 'lib/licon';
+import {
+  copyMeInput,
+  dataIcon,
+  domDialog,
+  enter,
+  input,
+  optgroup,
+  label,
+  form,
+  button,
+  option,
+  div,
+  select,
+  strong,
+  a,
+  span,
+  p,
+  makeExoticTag,
+  type VNode,
+  type MaybeVNode,
+} from 'lib/view';
+import { url as xhrUrl } from 'lib/xhr';
+
+import { fenToChess960Id, isValidPositionId } from './chess960';
+import chessground from './chessground';
+import type EditorCtrl from './ctrl';
+import type { Selected, CastlingToggle, EditorState, EndgamePosition, OpeningPosition } from './interfaces';
+
+function castleCheckBox(ctrl: EditorCtrl, id: CastlingToggle, inputLabel: string, reversed: boolean): VNode {
+  const inputElement = input('checkbox')({
+    class: { 'not-allowed': !ctrl.enabledCastlingToggles[id] },
+    props: {
+      checked: ctrl.castlingToggles[id] && ctrl.enabledCastlingToggles[id],
+      disabled: !ctrl.enabledCastlingToggles[id],
     },
     on: {
       change(e) {
@@ -21,251 +52,265 @@ function castleCheckBox(ctrl: EditorCtrl, id: CastlingToggle, label: string, rev
       },
     },
   });
-  return h('label', reversed ? [input, label] : [label, input]);
-}
-
-function optgroup(name: string, opts: VNode[]): VNode {
-  return h('optgroup', { attrs: { label: name } }, opts);
+  return label(reversed ? [inputElement, inputLabel] : [inputLabel, inputElement]);
 }
 
 function studyButton(ctrl: EditorCtrl, state: EditorState): VNode {
-  return h(
-    'form',
-    {
-      attrs: {
-        method: 'post',
-        action: '/study/as',
+  return form({ method: 'post', action: '/study/as' }, [
+    input('hidden')({ name: 'orientation', value: ctrl.bottomColor() }),
+    input('hidden')({ name: 'variant', value: lichessRules(ctrl.variant) }),
+    input('hidden')({ name: 'fen', value: state.legalFen || '' }),
+    button(
+      {
+        type: 'submit',
+        ...dataIcon(licon.StudyBoard),
+        disabled: !state.legalFen,
+        class: { button: true, 'button-empty': true, text: true, disabled: !state.legalFen },
       },
-    },
-    [
-      h('input', { attrs: { type: 'hidden', name: 'orientation', value: ctrl.bottomColor() } }),
-      h('input', { attrs: { type: 'hidden', name: 'variant', value: ctrl.rules } }),
-      h('input', { attrs: { type: 'hidden', name: 'fen', value: state.legalFen || '' } }),
-      h(
-        'button',
-        {
-          attrs: {
-            type: 'submit',
-            'data-icon': '',
-            disabled: !state.legalFen,
-          },
-          class: {
-            button: true,
-            'button-empty': true,
-            text: true,
-            disabled: !state.legalFen,
-          },
+      i18n.site.toStudy,
+    ),
+  ]);
+}
+
+function variantOption(key: VariantKey, current: VariantKey): VNode {
+  return option({ value: key, selected: key === current }, `${i18n.site.variant} | ${i18n.variant[key]}`);
+}
+
+function endgamePositionOption(pos: EndgamePosition): VNode {
+  return option({ value: pos.epd || pos.fen, 'data-fen': pos.fen }, pos.name);
+}
+
+function positionOption(pos: OpeningPosition): VNode {
+  return option(
+    { value: pos.epd || pos.fen, 'data-fen': pos.fen },
+    pos.eco ? `${pos.eco} ${pos.name}` : pos.name,
+  );
+}
+
+function controlsButtonStart(ctrl: EditorCtrl, icon?: LiconValue) {
+  return button(
+    `.button.button-empty${icon ? '.text' : ''}`,
+    {
+      title: 'Hotkey: p',
+      on: {
+        click(e) {
+          e.preventDefault();
+          ctrl.startPosition();
         },
-        ctrl.trans.noarg('toStudy')
-      ),
-    ]
-  );
-}
-
-function variant2option(key: Rules, name: string, ctrl: EditorCtrl): VNode {
-  return h(
-    'option',
-    {
-      attrs: {
-        value: key,
-        selected: key == ctrl.rules,
       },
+      type: 'button',
+      ...(icon ? dataIcon(icon) : {}),
     },
-    `${ctrl.trans.noarg('variant')} | ${name}`
+    i18n.site.startPosition,
   );
 }
 
-const allVariants: Array<[Rules, string]> = [
-  ['chess', 'Standard'],
-  ['antichess', 'Antichess'],
-  ['atomic', 'Atomic'],
-  ['crazyhouse', 'Crazyhouse'],
-  ['horde', 'Horde'],
-  ['kingofthehill', 'King of the Hill'],
-  ['racingkings', 'Racing Kings'],
-  ['3check', 'Three-check'],
-];
+function controlsButtonClear(ctrl: EditorCtrl, icon?: LiconValue) {
+  return button(
+    `.button.button-empty${icon ? '.text' : ''}`,
+    {
+      title: 'Hotkey: c',
+      on: {
+        click(e) {
+          e.preventDefault();
+          ctrl.clearBoard();
+        },
+      },
+      type: 'button',
+      ...(icon ? dataIcon(icon) : {}),
+    },
+    i18n.site.clearBoard,
+  );
+}
 
 function controls(ctrl: EditorCtrl, state: EditorState): VNode {
-  const position2option = function (pos: Editor.OpeningPosition): VNode {
-    return h(
-      'option',
-      {
-        attrs: {
-          value: pos.epd || pos.fen,
-          'data-fen': pos.fen,
-        },
-      },
-      pos.eco ? `${pos.eco} ${pos.name}` : pos.name
-    );
-  };
-
-  const endgamePosition2option = function (pos: Editor.EndgamePosition): VNode {
-    return h(
-      'option',
-      {
-        attrs: {
-          value: pos.epd || pos.fen,
-          'data-fen': pos.fen,
-        },
-      },
-      pos.name
-    );
-  };
-
-  return h('div.board-editor__tools', [
-    ...(ctrl.cfg.embed || !ctrl.cfg.positions || !ctrl.cfg.endgamePositions
-      ? []
-      : [
-          h('div', [
-            h(
-              'select.positions',
-              {
-                props: {
-                  value: state.fen.split(' ').slice(0, 4).join(' '),
+  const chess960PositionIdSelector =
+    ctrl.variant !== 'chess960'
+      ? null
+      : div('.metadata', [
+          div('.chess960-position-row', [
+            label('.form-label', { for: 'chess960-position-id' }, 'Chess960 position'),
+            input('number')('#chess960-position-id', {
+              minlength: 1,
+              maxlength: 3,
+              min: '0',
+              max: '959',
+              props: {
+                value: ctrl.chess960PositionId,
+              },
+              on: {
+                change(e) {
+                  const value = (e.target as HTMLSelectElement).value;
+                  if (!/^\d+$/.test(value)) return;
+                  const candidateId = parseInt(value);
+                  if (!isValidPositionId(candidateId)) return;
+                  ctrl.set960Position(candidateId);
                 },
-                on: {
-                  change(e) {
-                    const el = e.target as HTMLSelectElement;
-                    let value = el.selectedOptions[0].getAttribute('data-fen');
-                    if (value == 'prompt') value = (prompt('Paste FEN') || '').trim();
-                    if (!value || !ctrl.setFen(value)) el.value = '';
-                  },
+                keydown: enter(target => target.blur()),
+              },
+            }),
+            button('.button.button-empty', {
+              type: 'button',
+              title: i18n.site.randomChess960Position,
+              ...dataIcon(licon.DieSix),
+              on: {
+                click(e) {
+                  e.preventDefault();
+                  ctrl.setRandom960Position();
                 },
               },
-              [
-                optgroup(ctrl.trans.noarg('setTheBoard'), [
-                  h(
-                    'option',
-                    {
-                      attrs: {
-                        selected: true,
-                      },
-                    },
-                    `- ${ctrl.trans.noarg('boardEditor')}  -`
-                  ),
-                  ...ctrl.extraPositions.map(position2option),
-                ]),
-                optgroup(ctrl.trans.noarg('popularOpenings'), ctrl.cfg.positions.map(position2option)),
-                optgroup(ctrl.trans.noarg('endgamePositions'), ctrl.cfg.endgamePositions.map(endgamePosition2option)),
-              ]
-            ),
+            }),
           ]),
-        ]),
-    h('div.metadata', [
-      h(
-        'div.color',
-        h(
-          'select',
+        ]);
+
+  return div('.board-editor__tools', [
+    ...(ctrl.cfg.embed ? [] : [div('.ceval-wrap', [cevalView.renderCeval(ctrl), cevalView.renderPvs(ctrl)])]),
+    div('.metadata', [
+      div(
+        '.color',
+        select(
           {
             on: {
               change(e) {
                 ctrl.setTurn((e.target as HTMLSelectElement).value as Color);
               },
             },
+            props: { value: ctrl.turn },
           },
-          ['whitePlays', 'blackPlays'].map(function (key) {
-            return h(
-              'option',
+          COLORS.map(c =>
+            option(
               {
-                attrs: {
-                  value: key[0] == 'w' ? 'white' : 'black',
-                  selected: ctrl.turn[0] === key[0],
-                },
+                value: c,
+                selected: c === ctrl.turn,
               },
-              ctrl.trans(key)
-            );
-          })
-        )
+              i18n.site[`${c}Plays`],
+            ),
+          ),
+        ),
       ),
-      h('div.castling', [
-        h('strong', ctrl.trans.noarg('castling')),
-        h('div', [
-          castleCheckBox(ctrl, 'K', ctrl.trans.noarg('whiteCastlingKingside'), !!ctrl.options.inlineCastling),
-          castleCheckBox(ctrl, 'Q', 'O-O-O', true),
-        ]),
-        h('div', [
-          castleCheckBox(ctrl, 'k', ctrl.trans.noarg('blackCastlingKingside'), !!ctrl.options.inlineCastling),
-          castleCheckBox(ctrl, 'q', 'O-O-O', true),
-        ]),
+      div('.castling', [
+        strong(i18n.site.castling),
+        ...COLORS.map(c =>
+          div([
+            castleCheckBox(
+              ctrl,
+              c === 'white' ? 'K' : 'k',
+              i18n.site[`${c}CastlingKingside`],
+              !!ctrl.options.inlineCastling,
+            ),
+            castleCheckBox(ctrl, c === 'white' ? 'Q' : 'q', 'O-O-O', true),
+          ]),
+        ),
+      ]),
+      div('.enpassant', [
+        label({ for: 'enpassant-select' }, i18n.site.enPassant),
+        select(
+          '#enpassant-select',
+          {
+            on: {
+              change(e) {
+                ctrl.setEnPassant(parseSquare((e.target as HTMLSelectElement).value));
+              },
+            },
+            props: { value: ctrl.epSquare ? makeSquare(ctrl.epSquare) : '' },
+          },
+          ['', ...[ctrl.turn === 'black' ? 3 : 6].flatMap(r => 'abcdefgh'.split('').map(f => f + r))].map(
+            key =>
+              option(
+                {
+                  value: key,
+                  selected: (key ? parseSquare(key) : undefined) === ctrl.epSquare,
+                  hidden: Boolean(key && !state.enPassantOptions.includes(key)),
+                  disabled: Boolean(key && !state.enPassantOptions.includes(key)) /*Safari*/,
+                },
+                key,
+              ),
+          ),
+        ),
       ]),
     ]),
+    ...(ctrl.cfg.embed || !ctrl.cfg.positions || !ctrl.cfg.endgamePositions
+      ? []
+      : [
+          (() => {
+            const epd = fenToEpd(state.fen);
+            const value =
+              (
+                ctrl.cfg.positions.find(p => p.fen.startsWith(epd)) ||
+                ctrl.cfg.endgamePositions.find(p => p.epd === epd)
+              )?.epd || '';
+            return select(
+              '.positions',
+              {
+                props: { value },
+                on: {
+                  insert(vnode) {
+                    (vnode.elm as HTMLSelectElement).value = fenToEpd(state.fen);
+                  },
+                  change(e) {
+                    const el = e.target as HTMLSelectElement;
+                    const value = el.selectedOptions[0].getAttribute('data-fen');
+                    if (!value || !ctrl.setFen(value)) el.value = '';
+                  },
+                },
+              },
+              [
+                option({ value: '' }, i18n.site.setTheBoard),
+                optgroup(i18n.site.popularOpenings)(ctrl.cfg.positions.map(positionOption)),
+                optgroup(i18n.site.endgamePositions)(ctrl.cfg.endgamePositions.map(endgamePositionOption)),
+              ],
+            );
+          })(),
+        ]),
     ...(ctrl.cfg.embed
       ? [
-          h('div.actions', [
-            h(
-              'a.button.button-empty',
-              {
-                on: {
-                  click() {
-                    ctrl.startPosition();
-                  },
-                },
-              },
-              ctrl.trans.noarg('startPosition')
-            ),
-            h(
-              'a.button.button-empty',
-              {
-                on: {
-                  click() {
-                    ctrl.clearBoard();
-                  },
-                },
-              },
-              ctrl.trans.noarg('clearBoard')
-            ),
+          div('.actions', [
+            chess960PositionIdSelector,
+            fromImageButton(ctrl, licon.Eye),
+            controlsButtonStart(ctrl, licon.Reload),
+            controlsButtonClear(ctrl, licon.Trash),
           ]),
         ]
       : [
-          h('div', [
-            h(
-              'select',
+          div([
+            select(
               {
-                attrs: { id: 'variants' },
+                id: 'variants',
                 on: {
                   change(e) {
-                    ctrl.setRules((e.target as HTMLSelectElement).value as Rules);
+                    const value = (e.target as HTMLSelectElement).value;
+                    if (value === 'chess960') ctrl.setRandom960Position();
+                    ctrl.setVariant(value as VariantKey);
                   },
                 },
               },
-              allVariants.map(x => variant2option(x[0], x[1], ctrl))
+              variants.map(variant => variantOption(variant, ctrl.variant)),
             ),
           ]),
-          h('div.actions', [
-            h(
-              'a.button.button-empty.text',
+          chess960PositionIdSelector,
+          div('.actions', [
+            fromImageButton(ctrl, licon.Eye),
+            controlsButtonStart(ctrl, licon.Reload),
+            controlsButtonClear(ctrl, licon.Trash),
+            button(
+              '.button.button-empty.text',
               {
-                attrs: { 'data-icon': '' },
-                on: {
-                  click() {
-                    ctrl.setFen(EMPTY_FEN);
-                  },
-                },
-              },
-              ctrl.trans.noarg('clearBoard')
-            ),
-            h(
-              'a.button.button-empty.text',
-              {
-                attrs: { 'data-icon': '' },
+                ...dataIcon(licon.ChasingArrows),
+                title: 'Hotkey: f',
                 on: {
                   click() {
                     ctrl.chessground!.toggleOrientation();
-                    ctrl.redraw();
+                    ctrl.onChange();
                   },
                 },
               },
-              ctrl.trans.noarg('flipBoard')
+              i18n.site.flipBoard,
             ),
-            h(
-              'a',
+            a(state.legalFen ? ctrl.makeAnalysisUrl(state.legalFen, ctrl.bottomColor()) : '')(
               {
-                attrs: {
-                  'data-icon': '',
-                  rel: 'nofollow',
-                  ...(state.legalFen ? { href: ctrl.makeAnalysisUrl(state.legalFen) } : {}),
-                },
+                ...dataIcon(licon.Microscope),
+                rel: 'nofollow',
+                title: 'Hotkey: a',
                 class: {
                   button: true,
                   'button-empty': true,
@@ -273,67 +318,53 @@ function controls(ctrl: EditorCtrl, state: EditorState): VNode {
                   disabled: !state.legalFen,
                 },
               },
-              ctrl.trans.noarg('analysis')
+              i18n.site.analysis,
             ),
-            h(
-              'a',
+            button(
               {
-                class: {
-                  button: true,
-                  'button-empty': true,
-                  disabled: !state.playable,
-                },
+                class: { button: true, 'button-empty': true, disabled: !state.playable },
+                disabled: !state.playable,
                 on: {
                   click: () => {
                     if (state.playable)
-                      modal({
-                        content: $('.continue-with'),
+                      domDialog({
+                        closeButton: true,
+                        cash: $('.continue-with'),
+                        modal: true,
+                        easyClose: 'clickOutside',
+                        show: true,
                       });
                   },
                 },
               },
-              [h('span.text', { attrs: { 'data-icon': '' } }, ctrl.trans.noarg('continueFromHere'))]
+              [span('.text', dataIcon(licon.Swords), i18n.site.continueFromHere)],
             ),
             studyButton(ctrl, state),
           ]),
-          h('div.continue-with.none', [
-            h(
-              'a.button',
-              {
-                attrs: {
-                  href: '/?fen=' + state.legalFen + '#ai',
-                  rel: 'nofollow',
-                },
-              },
-              ctrl.trans.noarg('playWithTheMachine')
+          div('.continue-with.none', [
+            a('/?fen=' + state.legalFen + '#ai')(
+              '.button',
+              { rel: 'nofollow' },
+              i18n.site.playAgainstComputer,
             ),
-            h(
-              'a.button',
-              {
-                attrs: {
-                  href: '/?fen=' + state.legalFen + '#friend',
-                  rel: 'nofollow',
-                },
-              },
-              ctrl.trans.noarg('playWithAFriend')
+            a('/?fen=' + state.legalFen + '#friend')(
+              '.button',
+              { rel: 'nofollow' },
+              i18n.site.challengeAFriend,
             ),
           ]),
         ]),
   ]);
 }
 
-function inputs(ctrl: EditorCtrl, fen: string): VNode | undefined {
-  if (ctrl.cfg.embed) return;
-  return h('div.copyables', [
-    h('p', [
-      h('strong', 'FEN'),
-      h('input.copyable', {
-        attrs: {
-          spellcheck: false,
-        },
-        props: {
-          value: fen,
-        },
+function inputs(ctrl: EditorCtrl, fen: FEN): MaybeVNode {
+  if (ctrl.cfg.embed) return undefined;
+
+  return div('.copyables', [
+    p([
+      strong('FEN'),
+      copyMeInput(fen, {
+        inputAttrs: { enterkeyhint: 'done' },
         on: {
           change(e) {
             const el = e.target as HTMLInputElement;
@@ -350,19 +381,33 @@ function inputs(ctrl: EditorCtrl, fen: string): VNode | undefined {
             el.value = ctrl.getFen();
             el.setCustomValidity('');
           },
+          keypress: enter<HTMLInputElement>(el => {
+            const candidateChess960Id = fenToChess960Id(el.value.trim());
+            if (candidateChess960Id !== undefined) {
+              ctrl.chess960PositionId = candidateChess960Id;
+            }
+            el.blur();
+          }),
         },
       }),
     ]),
-    h('p', [
-      h('strong.name', 'URL'),
-      h('input.copyable.autoselect', {
-        attrs: {
-          readonly: true,
-          spellcheck: false,
-          value: ctrl.makeUrl(ctrl.cfg.baseUrl, fen),
-        },
-      }),
+    p([
+      strong('.name', 'URL'),
+      copyMeInput(ctrl.makeEditorUrl(fen, ctrl.bottomColor()), { inputAttrs: { readonly: true } }),
     ]),
+    a(
+      xhrUrl(`${site.asset.baseUrl()}/export/fen.gif`, {
+        fen: ctrl.urlFen(fen),
+        color: ctrl.bottomColor(),
+        theme: document.body.dataset.board,
+        piece: document.body.dataset.pieceSet,
+      }),
+    )(
+      {
+        download: true,
+      },
+      i18n.site.positionAsImage,
+    ),
   ]);
 }
 
@@ -372,19 +417,18 @@ function selectedToClass(s: Selected): string {
 }
 
 let lastTouchMovePos: NumberPair | undefined;
+const piece = makeExoticTag('piece');
 
-function sparePieces(ctrl: EditorCtrl, color: Color, _orientation: Color, position: 'top' | 'bottom'): VNode {
+function sparePieces(ctrl: EditorCtrl, color: Color, position: 'top' | 'bottom'): VNode {
   const selectedClass = selectedToClass(ctrl.selected());
+  const pieces = ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'].map(role => [color, role]);
 
-  const pieces = ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'].map(function (role) {
-    return [color, role];
-  });
-
-  return h(
-    'div',
+  return div(
     {
-      attrs: {
-        class: ['spare', 'spare-' + position, 'spare-' + color].join(' '),
+      class: {
+        spare: true,
+        ['spare-' + position]: true,
+        ['spare-' + color]: true,
       },
     },
     ['pointer', ...pieces, 'trash'].map((s: Selected) => {
@@ -399,12 +443,8 @@ function sparePieces(ctrl: EditorCtrl, color: Color, _orientation: Color, positi
           : {}),
       };
       const selectedSquare =
-        selectedClass === className &&
-        (!ctrl.chessground ||
-          !ctrl.chessground.state.draggable.current ||
-          !ctrl.chessground.state.draggable.current.newPiece);
-      return h(
-        'div',
+        selectedClass === className && !ctrl.chessground?.state.draggable.current?.newPiece;
+      return div(
         {
           class: {
             'no-square': true,
@@ -416,13 +456,13 @@ function sparePieces(ctrl: EditorCtrl, color: Color, _orientation: Color, positi
             mousedown: onSelectSparePiece(ctrl, s, 'mouseup'),
             touchstart: onSelectSparePiece(ctrl, s, 'touchend'),
             touchmove: e => {
-              lastTouchMovePos = eventPosition(e as any);
+              lastTouchMovePos = eventPosition(e);
             },
           },
         },
-        [h('div', [h('piece', { attrs })])]
+        div(piece({ attrs })),
       );
-    })
+    }),
   );
 }
 
@@ -435,15 +475,7 @@ function onSelectSparePiece(ctrl: EditorCtrl, s: Selected, upEvent: string): (e:
     } else {
       ctrl.selected('pointer');
 
-      dragNewPiece(
-        ctrl.chessground!.state,
-        {
-          color: s[0],
-          role: s[1],
-        },
-        e,
-        true
-      );
+      ctrl.chessground?.dragNewPiece({ color: s[0], role: s[1] }, e, true);
 
       document.addEventListener(
         upEvent,
@@ -453,7 +485,7 @@ function onSelectSparePiece(ctrl: EditorCtrl, s: Selected, upEvent: string): (e:
           else ctrl.selected(s);
           ctrl.redraw();
         },
-        { once: true }
+        { once: true },
       );
     }
   };
@@ -463,7 +495,7 @@ function makeCursor(selected: Selected): string {
   if (selected === 'pointer') return 'pointer';
 
   const name = selected === 'trash' ? 'trash' : selected.join('-');
-  const url = lichess.assetUrl('cursors/' + name + '.cur');
+  const url = site.asset.url('cursors/' + name + '.cur');
 
   return `url('${url}'), default !important`;
 }
@@ -472,19 +504,66 @@ export default function (ctrl: EditorCtrl): VNode {
   const state = ctrl.getState();
   const color = ctrl.bottomColor();
 
-  return h(
-    'div.board-editor',
+  return div(`.board-editor.board-editor--${ctrl.variant}`, { on: imageDropEvents(ctrl) }, [
+    sparePieces(ctrl, opposite(color), 'top'),
+    div('.main-board', { attrs: { style: `cursor: ${makeCursor(ctrl.selected())}` } }, chessground(ctrl)),
+    sparePieces(ctrl, color, 'bottom'),
+    controls(ctrl, state),
+    inputs(ctrl, state.legalFen || state.fen),
+  ]);
+}
+
+const imageDropEvents = (ctrl: EditorCtrl): On => ({
+  dragover(e: DragEvent) {
+    if (Array.from(e.dataTransfer?.items || []).some(item => item.type.startsWith('image/'))) {
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).classList.add('image-dragover');
+    }
+  },
+  dragleave(e: DragEvent) {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node))
+      (e.currentTarget as HTMLElement).classList.remove('image-dragover');
+  },
+  drop(e: DragEvent) {
+    (e.currentTarget as HTMLElement).classList.remove('image-dragover');
+    const file = Array.from(e.dataTransfer?.files || []).find(file => file.type.startsWith('image/'));
+    if (file) {
+      e.preventDefault();
+      ctrl.loadFromImage(file);
+    }
+  },
+});
+
+function fromImageButton(ctrl: EditorCtrl, icon?: LiconValue): MaybeVNode {
+  if (!hasFeature('simd') || !hasFeature('dynamicImportFromWorker')) return null;
+  return button(
+    '.button.button-empty',
     {
-      attrs: {
-        style: `cursor: ${makeCursor(ctrl.selected())}`,
+      type: 'button',
+      ...(icon ? dataIcon(icon) : {}),
+      class: { text: Boolean(icon) },
+      on: {
+        async click(e) {
+          e.preventDefault();
+          const file = await new Promise<File | undefined>(resolve => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = isAndroid() && isChrome() ? 'image/*,application/x-nonexistent' : 'image/*';
+            input.multiple = false;
+            input.addEventListener('change', () => resolve(input.files?.[0]), { once: true });
+            input.addEventListener('cancel', () => resolve(undefined), { once: true });
+            input.click();
+          });
+          if (!file) return;
+
+          await ctrl.loadFromImage(file);
+          if (displayColumns() === 1 && isTouchDevice())
+            document
+              .querySelector<HTMLElement>('.main-board')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        },
       },
     },
-    [
-      sparePieces(ctrl, opposite(color), color, 'top'),
-      h('div.main-board', [chessground(ctrl)]),
-      sparePieces(ctrl, color, color, 'bottom'),
-      controls(ctrl, state),
-      inputs(ctrl, state.fen),
-    ]
+    'From image',
   );
 }

@@ -1,100 +1,69 @@
-import play.sbt.PlayImport._
-import sbt._, Keys._
-import bloop.integrations.sbt.BloopKeys.bloopGenerate
+import sbt.*, Keys.*
 
-object BuildSettings {
+object BuildSettings:
 
-  import Dependencies._
+  import Dependencies.*
 
-  val lilaVersion        = "3.2"
-  val globalScalaVersion = "2.13.6"
-
-  val useEpoll = sys.props.get("epoll").fold(false)(_.toBoolean)
-  if (useEpoll) println("--- epoll build ---")
+  val lilaVersion = "4.0"
+  val globalScalaVersion = "3.10.1"
 
   def buildSettings =
-    Defaults.coreDefaultSettings ++ Seq(
-      version := lilaVersion,
-      organization := "org.lichess",
-      resolvers += lilaMaven,
+    // NB: do NOT prepend Defaults.coreDefaultSettings here. Under sbt 2.0 those base settings are
+    // already applied to every project automatically, and re-adding them forces the legacy flat
+    // `target` layout (crossTarget = <proj>/target) instead of sbt 2.0's `target/out/...`. That
+    // legacy layout places compile/package outputs outside the cache root, so sbt 2.0 floods the
+    // log with "Cannot cache task because its output files are outside the output directory".
+    Seq(
+      resolvers ++= Seq(jitpack, lilaMaven, sonashots, Resolver.sonatypeCentralSnapshots),
       scalaVersion := globalScalaVersion,
-      scalacOptions ++= compilerOptions,
-      // No bloop project for tests
-      Test / bloopGenerate := None,
-      // disable publishing doc and sources
+      scalacOptions ++= Def.uncached(compilerOptions),
+      javacOptions ++= Seq("--release", "21"),
+      organization := "org.lichess",
+      version := lilaVersion,
       Compile / doc / sources := Seq.empty,
       Compile / packageDoc / publishArtifact := false,
-      Compile / packageSrc / publishArtifact := false,
-      javaOptions ++= Seq("-Xms64m", "-Xmx256m")
+      Compile / packageSrc / publishArtifact := false
     )
 
   lazy val defaultLibs: Seq[ModuleID] =
-    akka.bundle ++ macwire.bundle ++ Seq(
+    pekko.bundle ++ macwire.bundle ++ scalalib.bundle ++ Seq(
+      cats,
+      alleycats,
       play.api,
-      chess,
-      scalalib,
-      jodaTime,
-      autoconfig
+      chess.core,
+      chess.rating,
+      kittens
     )
-
-  def smallModule(
-      name: String,
-      deps: Seq[sbt.ClasspathDep[sbt.ProjectReference]],
-      libs: Seq[ModuleID]
-  ) =
-    Project(
-      name,
-      file("modules/" + name)
-    ).dependsOn(deps: _*)
-      .settings(
-        libraryDependencies ++= libs,
-        buildSettings,
-        srcMain
-      )
 
   def module(
       name: String,
       deps: Seq[sbt.ClasspathDep[sbt.ProjectReference]],
       libs: Seq[ModuleID]
   ) =
-    smallModule(name, deps, defaultLibs ++ libs)
+    Project(name, file("modules/" + name))
+      .dependsOn(deps*)
+      .settings(
+        libraryDependencies ++= defaultLibs ++ libs,
+        buildSettings,
+        srcMain
+      )
 
   val compilerOptions = Seq(
-    "-explaintypes",
+    // "-Ybackend-parallelism:16", // https://github.com/scala/scala3/pull/15392
+    // "-explaintypes",
+    // "-explain-cyclic",
+    "-indent",
     "-feature",
-    "-language:higherKinds",
-    "-language:implicitConversions",
     "-language:postfixOps",
-    "-Ymacro-annotations",
-    // Warnings as errors!
-    "-Xfatal-warnings",
-    // Linting options
-    "-unchecked",
-    "-Xcheckinit",
-    "-Xlint:adapted-args",
-    "-Xlint:constant",
-    "-Xlint:delayedinit-select",
-    "-Xlint:deprecation",
-    "-Xlint:inaccessible",
-    "-Xlint:infer-any",
-    "-Xlint:missing-interpolator",
-    "-Xlint:nullary-unit",
-    "-Xlint:option-implicit",
-    "-Xlint:package-object-classes",
-    "-Xlint:poly-implicit-overload",
-    "-Xlint:private-shadow",
-    "-Xlint:stars-align",
-    "-Xlint:type-parameter-shadow",
-    "-Wdead-code",
-    "-Wextra-implicit",
-    // "-Wnumeric-widen",
-    // "-Wunused:imports",
-    // "-Wunused:locals",
-    "-Wunused:patvars",
-    // "-Wunused:privates",  // unfortunately doesn't work with wire macros
-    // "-Wunused:implicits", // unfortunately doesn't work with wire macros
-    // "-Wunused:params"     // unfortunately doesn't work with wire macros
-    "-Wvalue-discard"
+    "-language:implicitConversions",
+    "-release:21",
+    "-Wimplausible-patterns",
+    "-Wunused:all",
+    "-Wunused:imports",
+    "-Wconf:msg=method ArrowAssoc in object Predef is deprecated:silent",
+    "-Wconf:msg=class ArrowAssoc is deprecated:silent"
+    // "-Yprofile-enabled",
+    // "-Yprofile-trace:compiler.trace"
   )
 
   val srcMain = Seq(
@@ -103,4 +72,3 @@ object BuildSettings {
   )
 
   def projectToRef(p: Project): ProjectReference = LocalProject(p.id)
-}

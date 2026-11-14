@@ -1,61 +1,48 @@
 package lila.perfStat
 
-import scala.concurrent.duration._
-import reactivemongo.api.ReadPreference
-
-import lila.game.{ Game, GameRepo, Pov, Query }
+import lila.mon.extensions.*
 import lila.rating.PerfType
-import lila.user.User
+import lila.rating.PerfType.GamePerf
 
 final class PerfStatIndexer(
-    gameRepo: GameRepo,
+    gameRepo: lila.core.game.GameRepo,
     storage: PerfStatStorage
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem
-) {
+)(using Executor, Scheduler):
 
-  private val workQueue =
-    new lila.hub.DuctSequencer(maxSize = 64, timeout = 10 seconds, name = "perfStatIndexer")
+  private val workQueue = scalalib.actor.AsyncActorSequencer(
+    maxSize = Max(64),
+    timeout = 10.seconds,
+    name = "perfStatIndexer",
+    lila.mon.asyncActorMonitor.full
+  )
 
-  private[perfStat] def userPerf(user: User, perfType: PerfType): Fu[PerfStat] =
-    workQueue {
-      storage.find(user.id, perfType) getOrElse gameRepo
-        .sortedCursor(
-          Query.user(user.id) ++
-            Query.finished ++
-            Query.turnsGt(2) ++
-            Query.variant(PerfType variantOf perfType),
-          Query.sortChronological,
-          readPreference = ReadPreference.secondaryPreferred
-        )
-        .fold(PerfStat.init(user.id, perfType)) {
-          case (perfStat, game) if game.perfType.contains(perfType) =>
-            Pov.ofUserId(game, user.id).fold(perfStat)(perfStat.agg)
-          case (perfStat, _) => perfStat
-        }
-        .flatMap { ps =>
-          storage insert ps recover lila.db.recoverDuplicateKey(_ => ()) inject ps
-        }
-        .mon(_.perfStat.indexTime)
-    }
+  private[perfStat] def userPerf(user: UserId, perf: GamePerf): Fu[PerfStat] =
+    workQueue:
+      storage
+        .find(user, perf)
+        .getOrElse(buildPerfStat(user, perf))
+
+  private def buildPerfStat(user: UserId, perf: GamePerf): Fu[PerfStat] =
+    gameRepo
+      .sortedCursor(user.id, perf.key)
+      .fold(PerfStat.init(user.id, perf)): (perfStat, game) =>
+        if game.perfKey === perf.key
+        then Pov(game, user.id).fold(perfStat)(perfStat.agg)
+        else perfStat
+      .flatMap: ps =>
+        storage.insert(ps).recover(lila.db.ignoreDuplicateKey).inject(ps)
+      .mon(lila.mon.perfStat.indexTime)
 
   def addGame(game: Game): Funit =
-    game.players
-      .flatMap { player =>
-        player.userId.map { userId =>
-          addPov(Pov(game, player), userId)
-        }
-      }
-      .sequenceFu
-      .void
+    game.players.toList.sequentiallyVoid: player =>
+      player.userId.so: userId =>
+        addPov(Pov(game, player), userId)
 
-  private def addPov(pov: Pov, userId: String): Funit =
-    pov.game.perfType ?? { perfType =>
-      storage.find(userId, perfType) flatMap {
-        _ ?? { perfStat =>
-          storage.update(perfStat, perfStat agg pov)
-        }
-      }
-    }
-}
+  private def addPov(pov: Pov, userId: UserId): Funit =
+    PerfType
+      .gamePerf(pov.game.perfKey)
+      .so: (perf: GamePerf) =>
+        storage
+          .find(userId, perf)
+          .flatMapz: perfStat =>
+            storage.update(perfStat, perfStat.agg(pov))

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="activity">النشاط</string>
+  <string name="activity">الأنشطة</string>
   <string name="hostedALiveStream">بدأ بث مباشر</string>
   <plurals name="supportedNbMonths">
     <item quantity="zero">دعم ليتشيس لمدة %1$s شهر ك%2$s</item>
@@ -11,17 +11,17 @@
     <item quantity="other">دعم lichess.org لمدة %1$s أشهر ك %2$s</item>
   </plurals>
   <plurals name="practicedNbPositions">
-    <item quantity="zero">تم التدريب %1$s موقف على %2$s</item>
-    <item quantity="one">تدرّب على %1$s موقف في %2$s</item>
-    <item quantity="two">تم التدريب %1$s موقفان على %2$s</item>
-    <item quantity="few">تم التدريب عدد %1$s مواقف على %2$s</item>
-    <item quantity="many">تم التدريب عدد %1$s مواقف على %2$s</item>
-    <item quantity="other">تم التدريب عدد %1$s مواقف على %2$s</item>
+    <item quantity="zero">لقد تدربت على %1$s موقف تكتيكي من %2$s</item>
+    <item quantity="one">لقد تدربت على %1$s موقف تكتيكي من %2$s</item>
+    <item quantity="two">لقد تدربت على %1$s موقفين تكتيكيين من %2$s</item>
+    <item quantity="few">لقد تدربت على %1$s مواقف تكتيكية من %2$s</item>
+    <item quantity="many">لقد تدربت على %1$s موقفا تكتيكيا من %2$s</item>
+    <item quantity="other">لقد تدربت على %1$s موقفا تكتيكيا من %2$s</item>
   </plurals>
   <plurals name="solvedNbPuzzles">
     <item quantity="zero">تم حل %s لغز تكتيكي</item>
     <item quantity="one">تم حل %s لغز تكتيكي</item>
-    <item quantity="two">تم حل %s من الالغاز التكتيكية</item>
+    <item quantity="two">تم حل %s من الألغاز التكتيكية</item>
     <item quantity="few">تم حل %s ألغاز تكتيكية</item>
     <item quantity="many">تم حل %s لغز تكتيكي</item>
     <item quantity="other">تم حل %s لغز تكتيكي</item>
@@ -65,6 +65,14 @@
     <item quantity="few">تم اكمال %s مباراة بالمراسلة</item>
     <item quantity="many">تم اكمال %s مباراة بالمراسلة</item>
     <item quantity="other">تم اكمال %s مباراة بالمراسلة</item>
+  </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="zero">تم لعب %2$s %1$s من مباراة المراسلة</item>
+    <item quantity="one">تم لعب %2$s %1$s من مباراة المراسلة</item>
+    <item quantity="two">تم لعب %2$s %1$s من مباراة المراسلة</item>
+    <item quantity="few">تم لعب %2$s %1$s من مباراة المراسلة</item>
+    <item quantity="many">تم لعب %2$s %1$s من مباراة المراسلة</item>
+    <item quantity="other">تم لعب %2$s %1$s من مباراة المراسلة</item>
   </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="zero">تم البدء في متابعة %s لاعب</item>
@@ -115,12 +123,12 @@
     <item quantity="other">تنافس في %s بطولة</item>
   </plurals>
   <plurals name="rankedInTournament">
-    <item quantity="zero">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
-    <item quantity="one">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
-    <item quantity="two">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
-    <item quantity="few">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
-    <item quantity="many">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
-    <item quantity="other">المركز #%1$s (أفضل %2$s%%) ل %3$s مباراة في %4$s</item>
+    <item quantity="zero">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد لعب %3$s مباراة في %4$s</item>
+    <item quantity="one">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد لعب %3$s مباراة في %4$s</item>
+    <item quantity="two">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد خوض %3$s مباراة في %4$s</item>
+    <item quantity="few">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد خوض %3$s مباريات في %4$s</item>
+    <item quantity="many">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد خوض %3$s مباراة في %4$s</item>
+    <item quantity="other">الترتيب #%1$s (ضمن أفضل %2$s%%)، بعد خوض %3$s مباراة في %4$s</item>
   </plurals>
   <plurals name="competedInNbSwissTournaments">
     <item quantity="zero">تنافس في %s بطولة سويسرية</item>
@@ -135,9 +143,9 @@
   <plurals name="joinedNbTeams">
     <item quantity="zero">إنضم ل %s فريق</item>
     <item quantity="one">إنضم ل %s فريق</item>
-    <item quantity="two">إنضم لفريقين %s</item>
-    <item quantity="few">إنضم ل %s فرق</item>
-    <item quantity="many">إنضم ل %s فرقة</item>
-    <item quantity="other">إنضم ل %s فريقًا</item>
+    <item quantity="two">إنضم ل %s فِرَق</item>
+    <item quantity="few">إنضم ل %s فِرَق</item>
+    <item quantity="many">إنضم ل %s فِرَق</item>
+    <item quantity="other">إنضم ل %s فِرَق</item>
   </plurals>
 </resources>

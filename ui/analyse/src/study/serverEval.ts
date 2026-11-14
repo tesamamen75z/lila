@@ -1,122 +1,127 @@
-import AnalyseCtrl from '../ctrl';
-import { h, VNode } from 'snabbdom';
-import { Prop, prop, defined } from 'common';
-import { spinner, bind, onInsert } from '../util';
-import Highcharts from 'highcharts';
+import type { ChartGame, AcplChart } from 'chart';
 
-export interface ServerEvalCtrl {
-  requested: Prop<boolean>;
-  root: AnalyseCtrl;
-  chapterId(): string;
-  request(): void;
-  onMergeAnalysisData(): void;
-  chartEl: Prop<HighchartsHTMLElement | null>;
-  reset(): void;
-  lastPly: Prop<number | false>;
-}
+import { requestIdleCallbackSafe } from 'lib';
+import { licon } from 'lib/licon';
+import { pubsub } from 'lib/pubsub';
+import { alert, bind, confirm, onInsert, spinnerVdom, dataIcon, hl, type VNode } from 'lib/view';
+import { text } from 'lib/xhr';
 
-export function ctrl(root: AnalyseCtrl, chapterId: () => string): ServerEvalCtrl {
-  const requested = prop(false),
-    lastPly = prop<number | false>(false),
-    chartEl = prop<HighchartsHTMLElement | null>(null);
+import type AnalyseCtrl from '../ctrl';
+import type { AnalyseData } from '../interfaces';
+import { stockfishName } from '../serverSideUnderboard';
 
-  function unselect(chart: Highcharts.ChartObject) {
-    chart.getSelectedPoints().forEach(p => p.select(false));
+export const chartSpinner = (): VNode =>
+  hl('div#acpl-chart-container-loader', [
+    hl('span', [stockfishName, hl('br'), 'Server analysis']),
+    spinnerVdom(),
+  ]);
+
+export default class ServerEval {
+  requested = false;
+  chart?: AcplChart;
+
+  constructor(
+    readonly root: AnalyseCtrl,
+    readonly chapterId: () => string,
+  ) {
+    pubsub.on('analysis.server.progress', this.updateChart);
   }
 
-  lichess.pubsub.on('analysis.change', (_fen: string, _path: string, mainlinePly: number | false) => {
-    if (!lichess.advantageChart || lastPly() === mainlinePly) return;
-    const lp = lastPly(typeof mainlinePly === 'undefined' ? lastPly() : mainlinePly),
-      el = chartEl(),
-      chart = el && el.highcharts;
-    if (chart) {
-      if (lp === false) unselect(chart);
-      else {
-        const point = chart.series[0].data[lp - 1 - root.tree.root.ply];
-        if (defined(point)) point.select();
-        else unselect(chart);
-      }
-    } else lastPly(false);
+  reset = () => {
+    this.requested = false;
+  };
+
+  request = () => {
+    this.root.socket.send('requestAnalysis', this.chapterId());
+    this.requested = true;
+  };
+
+  updateChart = (d: AnalyseData) => this.chart?.updateData(d, this.root.mainline);
+}
+
+export function view(ctrl: ServerEval): VNode {
+  const analysis = ctrl.root.mainlineAnalysis;
+
+  if (!analysis) return ctrl.requested ? requested() : requestButtons(ctrl);
+  const mainline = ctrl.root.mainline;
+  const chart = hl('canvas.study__server-eval-canvas.ready.' + analysis.id, {
+    hook: onInsert(el => {
+      requestIdleCallbackSafe(async () => {
+        (await site.asset.loadEsm<ChartGame>('chart.game'))
+          .acpl(el as HTMLCanvasElement, ctrl.root.data, mainline)
+          .then(chart => (ctrl.chart = chart));
+      }, 800);
+    }),
   });
 
-  return {
-    root,
-    reset() {
-      requested(false);
-      lastPly(false);
-    },
-    chapterId,
-    onMergeAnalysisData() {
-      if (lichess.advantageChart) lichess.advantageChart.update(root.data);
-    },
-    request() {
-      root.socket.send('requestAnalysis', chapterId());
-      requested(true);
-    },
-    requested,
-    lastPly,
-    chartEl,
-  };
+  const loading =
+    !ctrl.root.idbTree.hasLocalAnalysis &&
+    !ctrl.root.study?.data.chapter?.serverEval?.done &&
+    mainline.find(ctrl.root.partialAnalysisCallback);
+
+  const chartAction = (icon: 'Cogs' | 'X', title: string, action: () => void, cls = '') =>
+    hl(`button.${cls}`, {
+      attrs: { type: 'button', title, 'aria-label': title, ...dataIcon(licon[icon]) },
+      on: { click: action },
+    });
+
+  return hl('div.study__server-eval.analysis-chart.ready', [
+    chart,
+    loading ? chartSpinner() : undefined,
+    hl('div.analysis-chart-actions', [
+      chartAction('Cogs', i18n.study.analysisEditor, () =>
+        site.asset.loadEsm('analyse.local', { init: ctrl.root }),
+      ),
+      (ctrl.root.idbTree.hasLocalAnalysis ||
+        (ctrl.root.study?.members.canContribute() && ctrl.root.study?.canMergeAnalysisCleanly())) &&
+        chartAction(
+          'X',
+          ctrl.root.idbTree.hasLocalAnalysis ? i18n.study.clearLocal : i18n.study.clearPublished,
+          async () => {
+            if (ctrl.root.idbTree.hasLocalAnalysis) {
+              if (await confirm(i18n.study.clearLocal, i18n.site.delete)) {
+                ctrl.root.idbTree.clear('analysis').then(site.reload);
+              }
+              return;
+            }
+            if (!(await confirm(i18n.study.clearPublished, i18n.site.delete))) return;
+            try {
+              await text(`/analysis/${ctrl.root.opts.study!.id}/${ctrl.chapterId()}`, { method: 'DELETE' });
+              site.reload();
+            } catch (e) {
+              alert(String(e));
+            }
+          },
+          'delete',
+        ),
+    ]),
+  ]);
 }
 
-export function view(ctrl: ServerEvalCtrl): VNode {
-  const analysis = ctrl.root.data.analysis;
+const requested = () => hl('div.study__server-eval.requested.padded', spinnerVdom());
 
-  if (!ctrl.root.showComputer()) return disabled();
-  if (!analysis) return ctrl.requested() ? requested() : requestButton(ctrl);
-
-  return h(
-    'div.study__server-eval.ready.' + analysis.id,
-    {
-      hook: onInsert(el => {
-        ctrl.lastPly(false);
-        lichess.requestIdleCallback(
-          () =>
-            lichess.loadScript('javascripts/chart/acpl.js').then(() => {
-              lichess.advantageChart!(ctrl.root.data, ctrl.root.trans, el);
-              ctrl.chartEl(el as HighchartsHTMLElement);
-            }),
-          800
-        );
-      }),
-    },
-    [h('div.study__message', spinner())]
-  );
-}
-
-function disabled(): VNode {
-  return h('div.study__server-eval.disabled.padded', 'You disabled computer analysis.');
-}
-
-function requested(): VNode {
-  return h('div.study__server-eval.requested.padded', spinner());
-}
-
-function requestButton(ctrl: ServerEvalCtrl) {
+function requestButtons(ctrl: ServerEval) {
   const root = ctrl.root;
-  return h(
-    'div.study__message',
+  return hl(
+    'div.study__analysis',
     root.mainline.length < 5
-      ? h('p', root.trans.noarg('theChapterIsTooShortToBeAnalysed'))
-      : !root.study!.members.canContribute()
-      ? [root.trans.noarg('onlyContributorsCanRequestAnalysis')]
+      ? hl('p', i18n.study.theChapterIsTooShortToBeAnalysed)
       : [
-          h('p', [
-            root.trans.noarg('getAFullComputerAnalysis'),
-            h('br'),
-            root.trans.noarg('makeSureTheChapterIsComplete'),
-          ]),
-          h(
-            'a.button.text',
+          !root.study!.members.canContribute()
+            ? i18n.study.onlyContributorsCanRequestAnalysis
+            : hl(
+                'button.button.text',
+                { hook: bind('click', ctrl.request, root.redraw), attrs: dataIcon(licon.BarChart) },
+                i18n.study.requestAServerAnalysis,
+              ),
+          hl(
+            'button.button.text',
             {
-              attrs: {
-                'data-icon': '',
-                disabled: root.mainline.length < 5,
-              },
-              hook: bind('click', ctrl.request, root.redraw),
+              on: { click: () => site.asset.loadEsm('analyse.local', { init: root }) },
+              attrs: dataIcon(licon.Cogs),
             },
-            root.trans.noarg('requestAComputerAnalysis')
+            i18n.study.analyzeOnYourDevice,
           ),
-        ]
+        ],
   );
 }

@@ -1,54 +1,88 @@
 package lila.round
 
-import chess.format.FEN
-import chess.format.Forsyth
+import chess.format.pgn.SanStr
+import chess.format.{ Fen, Uci }
 import chess.variant.Variant
-import play.api.libs.json._
+import chess.{ Check, Ply, Square }
+import play.api.libs.json.*
 
-import lila.socket.Step
+case class Step(
+    ply: Ply,
+    move: Option[Uci.WithSan],
+    fen: Fen.Full,
+    check: Check,
+    // None when not computed yet
+    dests: Option[Map[Square, List[Square]]],
+    drops: Option[List[Square]],
+    crazyData: Option[chess.variant.Crazyhouse.Data]
+):
+  // who's color plays next
+  def color = ply.turn
 
-object StepBuilder {
+  def toJson = Json.toJson(this)
 
-  private val logger = lila.round.logger.branch("StepBuilder")
+object Step:
 
-  def apply(
-      id: String,
-      pgnMoves: Vector[String],
-      variant: Variant,
-      initialFen: FEN
-  ): JsArray = {
-    chess.Replay.gameMoveWhileValid(pgnMoves, initialFen, variant) match {
-      case (init, games, error) =>
-        error foreach logChessError(id)
-        JsArray {
-          val initStep = Step(
-            ply = init.turns,
-            move = none,
-            fen = Forsyth >> init,
-            check = init.situation.check,
-            dests = None,
-            drops = None,
-            crazyData = init.situation.board.crazyData
-          )
-          val moveSteps = games.map { case (g, m) =>
-            Step(
-              ply = g.turns,
-              move = Step.Move(m.uci, m.san).some,
-              fen = Forsyth >> g,
-              check = g.situation.check,
-              dests = None,
-              drops = None,
-              crazyData = g.situation.board.crazyData
-            )
-          }
-          (initStep :: moveSteps).map(_.toJson)
+  given Writes[Step] = Writes: step =>
+    import play.api.libs.json.*
+    import lila.common.Json.given
+    import step.*
+    Json
+      .obj(
+        "ply" -> ply,
+        "uci" -> move.map(_.uci.uci),
+        "san" -> move.map(_.san),
+        "fen" -> fen
+      )
+      .add("check", check)
+      .add(
+        "dests",
+        dests.map {
+          _.map { (orig, dests) =>
+            s"${orig.asChar}${dests.map(_.asChar).mkString}"
+          }.mkString(" ")
         }
-    }
-  }
+      )
+      .add(
+        "drops",
+        drops.map: drops =>
+          JsString(drops.map(_.key).mkString)
+      )
+      .add("crazy", crazyData)
+
+object StepBuilder:
+
+  def apply(id: GameId, sans: Vector[SanStr], variant: Variant, initialFen: Fen.Full): JsArray =
+    val setup = chess.Position.AndFullMoveNumber(variant, initialFen)
+
+    val moveSteps = new Array[JsValue](sans.size + 1)
+
+    moveSteps(0) = Step(
+      ply = setup.ply,
+      move = none,
+      fen = Fen.write(setup),
+      check = setup.position.check,
+      dests = None,
+      drops = None,
+      crazyData = setup.position.crazyData
+    ).toJson
+
+    val error = setup.position.foreach(sans, setup.ply): step =>
+      moveSteps(step.ply.value - setup.ply.value) = Step(
+        ply = step.ply,
+        move = Uci.WithSan(step.move.toUci, step.move.toSanStr).some,
+        fen = Fen.write(step.next, step.ply.fullMoveNumber),
+        check = step.next.check,
+        dests = None,
+        drops = None,
+        crazyData = step.next.crazyData
+      ).toJson
+
+    error.foreach(logChessError(id.value))
+
+    JsArray(moveSteps)
 
   private val logChessError = (id: String) =>
-    (err: String) => {
-      val path = if (id == "synthetic") "analysis" else id
-      logger.info(s"https://lichess.org/$path ${err.linesIterator.toList.headOption | "?"}")
-    }
-}
+    (err: chess.ErrorStr) =>
+      val path = if id == "synthetic" then "analysis" else id
+      logger.info(s"round.StepBuilder https://lichess.org/$path ${err.value}")

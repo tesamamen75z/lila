@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Izaicinājumi</string>
+  <string name="challengesX">Izaicinājumi: %1$s</string>
   <string name="challengeToPlay">Izaicināt uz spēli</string>
   <string name="challengeDeclined">Izaicinājums noraidīts</string>
   <string name="challengeAccepted">Izaicinājums pieņemts!</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">Šobrīd nevēlos spēlēt šo variantu.</string>
   <string name="declineNoBot">Pašlaik nepieņemu izaicinājumus no botiem.</string>
   <string name="declineOnlyBot">Pieņemu izaicinājumus tikai no botiem.</string>
+  <string name="inviteLichessUser">Vai uzaicināt Lichess lietotāju:</string>
 </resources>

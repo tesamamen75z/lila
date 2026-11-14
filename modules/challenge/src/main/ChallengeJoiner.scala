@@ -1,81 +1,88 @@
 package lila.challenge
 
-import chess.format.Forsyth
-import chess.format.Forsyth.SituationPlus
-import chess.{ Color, Mode, Situation }
-import scala.util.chaining._
+import chess.format.Fen
+import chess.variant.Variant
+import chess.{ ByColor, Position, Rated }
 
-import lila.game.{ Game, Player, Pov, Source }
-import lila.user.User
+import lila.core.user.GameUser
 
 final private class ChallengeJoiner(
     gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    onStart: lila.round.OnStart
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    userApi: lila.core.user.UserApi,
+    onStart: lila.core.game.OnStart
+)(using Executor, Scheduler):
 
-  def apply(c: Challenge, destUser: Option[User], color: Option[Color]): Fu[Option[Pov]] =
-    gameRepo exists c.id flatMap {
-      case true                                                           => fuccess(None)
-      case _ if color.map(Challenge.ColorChoice.apply).has(c.colorChoice) => fuccess(None)
-      case _ =>
-        c.challengerUserId.??(userRepo.byId) flatMap { origUser =>
-          val game = ChallengeJoiner.createGame(c, origUser, destUser, color)
-          (gameRepo insertDenormalized game) >>- onStart(game.id) inject Pov(game, !c.finalColor).some
-        }
-    }
-}
+  def apply(c: Challenge, destUser: GameUser): FuRaise[String, Pov] = for
+    exists <- gameRepo.exists(c.gameId)
+    _ <- raiseIf(exists)("The challenge has already been accepted")
+    origUser <- c.challengerUserId.so(userApi.byIdWithPerf(_, c.perfType))
+    game = ChallengeJoiner.createGame(c, origUser, destUser)
+    _ <- gameRepo.insertDenormalized(game)
+    _ <- onStartOrRetry(game.id).recover: _ =>
+      logger.error(s"onStart failed for game ${game.id}")
+  yield Pov(game, !c.finalColor)
 
-private object ChallengeJoiner {
+  private def onStartOrRetry(id: GameId, retries: Int = 3): Funit =
+    onStart
+      .exec(id)
+      .recoverWith:
+        case _ if retries > 0 =>
+          logger.warn(s"onStart failed for game $id. Retries left: $retries")
+          lila.common.LilaFuture.delay(500.millis)(onStartOrRetry(id, retries - 1))
+      .void
+
+private object ChallengeJoiner:
 
   def createGame(
       c: Challenge,
-      origUser: Option[User],
-      destUser: Option[User],
-      color: Option[Color]
-  ): Game = {
-    def makeChess(variant: chess.variant.Variant): chess.Game =
-      chess.Game(situation = Situation(variant), clock = c.clock.map(_.config.toClock))
-
-    val baseState = c.initialFen.ifTrue(c.variant.fromPosition || c.variant.chess960) flatMap {
-      Forsyth.<<<@(c.variant, _)
-    }
-    val (chessGame, state) = baseState.fold(makeChess(c.variant) -> none[SituationPlus]) {
-      case sp @ SituationPlus(sit, _) =>
-        val game = chess.Game(
-          situation = sit,
-          turns = sp.turns,
-          startedAtTurn = sp.turns,
-          clock = c.clock.map(_.config.toClock)
-        )
-        if (c.variant.fromPosition && Forsyth.>>(game).initial)
-          makeChess(chess.variant.Standard) -> none
-        else game                           -> baseState
-    }
-    val perfPicker = (perfs: lila.user.Perfs) => perfs(c.perfType)
-    Game
-      .make(
+      origUser: GameUser,
+      destUser: GameUser
+  ): Game =
+    val (chessGame, state) = gameSetup(c.variant, c.timeControl, c.initialFen)
+    lila.core.game
+      .newGame(
         chess = chessGame,
-        whitePlayer = Player.make(chess.White, c.finalColor.fold(origUser, destUser), perfPicker),
-        blackPlayer = Player.make(chess.Black, c.finalColor.fold(destUser, origUser), perfPicker),
-        mode = if (chessGame.board.variant.fromPosition) Mode.Casual else c.mode,
-        source = Source.Friend,
+        players = ByColor: color =>
+          lila.game.Player.make(color, if c.finalColor == color then origUser else destUser),
+        rated = c.rated.map(_ && !chessGame.position.variant.fromPosition),
+        source = lila.core.game.Source.Friend,
         daysPerTurn = c.daysPerTurn,
-        pgnImport = None
+        pgnImport = None,
+        rules = c.rules
       )
-      .withId(c.id)
-      .pipe { g =>
-        state.fold(g) { case sit @ SituationPlus(Situation(board, _), _) =>
-          g.copy(
-            chess = g.chess.copy(
-              situation = g.situation.copy(
-                board = g.board.copy(history = board.history)
-              ),
-              turns = sit.turns
-            )
-          )
-        }
-      }
+      .withId(c.gameId)
+      .pipe(addGameHistory(state))
       .start
-  }
-}
+
+  def gameSetup(
+      variant: Variant,
+      tc: Challenge.TimeControl,
+      initialFen: Option[Fen.Full]
+  ): (chess.Game, Option[Position.AndFullMoveNumber]) =
+
+    def makeChess(variant: Variant): chess.Game =
+      chess.Game(position = variant.initialPosition, clock = tc.realTime.map(_.toClock))
+
+    val baseState = initialFen
+      .ifTrue(variant.fromPosition || variant.chess960)
+      .flatMap:
+        Fen.readWithMoveNumber(variant, _)
+
+    baseState.fold(makeChess(variant) -> none[Position.AndFullMoveNumber]): sp =>
+      val game = chess.Game(
+        position = sp.position,
+        ply = sp.ply,
+        startedAtPly = sp.ply,
+        clock = tc.realTime.map(_.toClock)
+      )
+      if variant.fromPosition && Fen.write(game).isInitial then makeChess(chess.variant.Standard) -> none
+      else game -> baseState
+
+  def addGameHistory(position: Option[Position.AndFullMoveNumber])(game: Game): Game =
+    position.fold(game): sp =>
+      game.copy(
+        chess = game.chess.copy(
+          position = game.position.copy(history = sp.position.history),
+          ply = sp.ply
+        )
+      )

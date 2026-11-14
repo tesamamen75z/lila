@@ -1,17 +1,15 @@
 package lila.setup
 
-import chess.format.FEN
+import chess.format.Fen
 
-case class ValidFen(fen: FEN, situation: chess.Situation) {
+case class ValidFen(fen: Fen.Full, board: chess.Position):
 
-  def color = situation.color
-}
+  def color = board.color
 
-object ValidFen {
-  def apply(strict: Boolean)(fen: FEN): Option[ValidFen] =
-    for {
-      parsed <- chess.format.Forsyth <<< fen
-      if parsed.situation playable strict
-      validated = chess.format.Forsyth >> parsed
-    } yield ValidFen(validated, parsed.situation)
-}
+object ValidFen:
+  def apply(strict: Boolean)(fen: Fen.Full): Option[ValidFen] =
+    for
+      parsed <- chess.format.Fen.readWithMoveNumber(fen)
+      if parsed.position.playable(strict)
+      validated = chess.format.Fen.write(parsed)
+    yield ValidFen(validated, parsed.position)

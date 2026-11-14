@@ -1,12 +1,6 @@
-package lila
+package lila.relation
 
-package object relation extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  type Relation = Boolean
-  val Follow: Relation = true
-  val Block: Relation  = false
-
-  private[relation] type ID = String
-
-  private[relation] type OnlineStudyingCache = com.github.blemale.scaffeine.Cache[ID, String]
-}
+export lila.core.relation.{ Relation, Follow }

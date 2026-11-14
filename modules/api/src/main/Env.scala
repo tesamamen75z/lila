@@ -1,34 +1,24 @@
 package lila.api
 
-import akka.actor._
-import com.softwaremill.macwire._
-import play.api.libs.ws.StandaloneWSClient
-import play.api.{ Configuration, Mode }
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import org.apache.pekko.actor.*
+import play.api.Mode
 
-import lila.chat.GetLinkCheck
+import lila.chat.{ GetLinkCheck, IsChatFresh }
 import lila.common.Bus
-import lila.common.config._
-import lila.hub.actorApi.Announce
-import lila.user.User
+import lila.core.misc.lpv.Lpv
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    net: NetConfig,
+    net: lila.core.config.NetConfig,
     securityEnv: lila.security.Env,
     mailerEnv: lila.mailer.Env,
-    teamSearchEnv: lila.teamSearch.Env,
-    forumSearchEnv: lila.forumSearch.Env,
     forumEnv: lila.forum.Env,
     teamEnv: lila.team.Env,
     puzzleEnv: lila.puzzle.Env,
-    explorerEnv: lila.explorer.Env,
-    fishnetEnv: lila.fishnet.Env,
     studyEnv: lila.study.Env,
-    studySearchEnv: lila.studySearch.Env,
+    gameSearch: lila.gameSearch.GameSearchApi,
     coachEnv: lila.coach.Env,
-    evalCacheEnv: lila.evalCache.Env,
     planEnv: lila.plan.Env,
     gameEnv: lila.game.Env,
     chatEnv: lila.chat.Env,
@@ -39,6 +29,7 @@ final class Env(
     userEnv: lila.user.Env,
     streamerEnv: lila.streamer.Env,
     relationEnv: lila.relation.Env,
+    relayEnv: lila.relay.Env,
     analyseEnv: lila.analyse.Env,
     lobbyEnv: lila.lobby.Env,
     simulEnv: lila.simul.Env,
@@ -48,30 +39,47 @@ final class Env(
     challengeEnv: lila.challenge.Env,
     socketEnv: lila.socket.Env,
     msgEnv: lila.msg.Env,
+    pushEnv: lila.push.Env,
+    reportEnv: lila.report.Env,
+    modEnv: lila.mod.Env,
+    appealApi: lila.appeal.AppealApi,
+    shutupEnv: lila.shutup.Env,
+    titleEnv: lila.title.Env,
+    fideEnv: lila.fide.Env,
+    modLogApi: lila.mod.ModlogApi,
+    activityWriteApi: lila.activity.ActivityWriteApi,
+    ublogApi: lila.ublog.UblogApi,
+    picfitUrl: lila.memo.PicfitUrl,
     cacheApi: lila.memo.CacheApi,
-    mongoCacheApi: lila.memo.MongoCache.Api,
-    ws: StandaloneWSClient,
-    val mode: Mode
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+    webConfig: lila.web.WebConfig,
+    manifest: lila.web.AssetManifest,
+    tokenApi: lila.oauth.AccessTokenApi,
+    tv: lila.tv.Tv,
+    activityRead: lila.activity.ActivityReadApi,
+    activityJson: lila.activity.JsonView,
+    clasApi: lila.clas.ClasApi,
+    recapEnv: lila.recap.Env,
+    playerCounter: lila.web.PlayerCounter
+)(using scheduler: Scheduler)(using
+    Mode,
+    Executor,
+    ActorSystem,
+    org.apache.pekko.stream.Materializer,
+    lila.core.i18n.Translator
+):
 
-  val config = ApiConfig loadFrom appConfig
-  import config.{ apiToken, pagerDuty => pagerDutyConfig }
-  import net.{ baseUrl, domain }
+  export net.{ baseUrl, domain }
 
   lazy val pgnDump: PgnDump = wire[PgnDump]
 
+  lazy val textLpvExpand = wire[TextLpvExpand]
+
   lazy val userApi = wire[UserApi]
 
+  export webConfig.apiToken
   lazy val gameApi = wire[GameApi]
 
-  lazy val realPlayers = wire[RealPlayerApi]
-
   lazy val gameApiV2 = wire[GameApiV2]
-
-  lazy val userGameApi = wire[UserGameApi]
 
   lazy val roundApi = wire[RoundApi]
 
@@ -81,30 +89,49 @@ final class Env(
 
   lazy val personalDataExport = wire[PersonalDataExport]
 
-  lazy val referrerRedirect = wire[ReferrerRedirect]
+  lazy val accountTermination = wire[AccountTermination]
+
+  lazy val anySearch = wire[AnySearch]
+
+  lazy val modTimeline = wire[ModTimelineApi]
 
   lazy val cli = wire[Cli]
 
-  private lazy val influxEvent = new InfluxEvent(
-    ws = ws,
-    endpoint = config.influxEventEndpoint,
-    env = config.influxEventEnv
-  )
-  if (mode == Mode.Prod) system.scheduler.scheduleOnce(5 seconds)(influxEvent.start())
+  lazy val mobile = wire[MobileApi]
+
+  lazy val clas = wire[ClasApi]
+
+  lazy val gameStreamByOauthOrigin = wire[GameStreamByOauthOrigin]
 
   private lazy val linkCheck = wire[LinkCheck]
+  lazy val chatFreshness = wire[ChatFreshness]
 
-  private lazy val pagerDuty = wire[PagerDuty]
+  Bus.sub[GetLinkCheck]:
+    case GetLinkCheck(line, source, promise) =>
+      promise.completeWith(linkCheck(line, source))
+  Bus.sub[IsChatFresh]:
+    case IsChatFresh(source, promise) =>
+      promise.completeWith(chatFreshness.of(source))
+  Bus.sub[Lpv]:
+    case Lpv.AllPgnsFromText(text, max, p) => p.completeWith(textLpvExpand.allPgnsFromText(text, max))
+    case Lpv.LinkRenderFromText(text, p) => p.completeWith(textLpvExpand.linkRenderFromText(text))
+  Bus.sub[lila.core.security.GarbageCollect]: gc =>
+    accountTermination.garbageCollect(gc.userId)
+  Bus.sub[lila.core.playban.RageSitClose]: close =>
+    accountTermination.lichessDisable(close.userId)
 
-  Bus.subscribeFun("chatLinkCheck", "announce") {
-    case GetLinkCheck(line, source, promise)                   => promise completeWith linkCheck(line, source)
-    case Announce(msg, date, _) if msg contains "will restart" => pagerDuty.lilaRestart(date).unit
-  }
+  lila.common.Cli.handle():
+    case "push" :: "recap" :: user :: year :: Nil =>
+      for
+        (title, body) <- recapEnv.translateNotif(UserId(user), year)
+        _ <- pushEnv.pushApi.recap(UserId(user), year.toInt, title, body)
+      yield s"""Sent "$title""""
 
-  system.scheduler.scheduleWithFixedDelay(1 minute, 1 minute) { () =>
-    lila.mon.bus.classifiers.update(lila.common.Bus.size)
+  lila.i18n.Registry.asyncLoadLanguages()
+
+  scheduler.scheduleWithFixedDelay(1.minute, 1.minute): () =>
+    lila.mon.bus.classifiers.update(lila.common.Bus.size())
+    lila.mon.jvm.threads()
     // ensure the Lichess user is online
-    socketEnv.remoteSocket.onlineUserIds.getAndUpdate(_ + User.lichessId)
-    userEnv.repo.setSeenAt(User.lichessId)
-  }
-}
+    socketEnv.remoteSocket.onlineUserIds.getAndUpdate(_ + UserId.lichess)
+    userEnv.repo.setSeenAt(UserId.lichess)

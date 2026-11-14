@@ -1,105 +1,110 @@
 package lila.swiss
 
-private case class SwissSheet(outcomes: List[SwissSheet.Outcome]) {
-  import SwissSheet._
+import org.apache.pekko.stream.scaladsl.*
+import reactivemongo.pekkostream.cursorProducer
 
-  def points =
-    Swiss.Points {
-      outcomes.foldLeft(0) { case (acc, out) => acc + pointsFor(out) }
-    }
-}
+import lila.db.dsl.{ *, given }
 
-private object SwissSheet {
+import BsonHandlers.given
 
-  sealed trait Outcome
-  case object Bye     extends Outcome
-  case object Late    extends Outcome // missed the first round
-  case object Absent  extends Outcome
-  case object Ongoing extends Outcome
-  case object Win     extends Outcome
-  case object Loss    extends Outcome
-  case object Draw    extends Outcome
+private case class SwissSheet(outcomes: List[SwissSheet.Outcome]):
+  def points = SwissSheet.pointsFor(outcomes)
+  def pointsAfterRound(round: SwissRoundNumber) = SwissSheet.pointsFor(outcomes.take(round.value))
 
-  def pointsFor(outcome: Outcome) =
-    outcome match {
-      case Win | Bye   => 2
+private object SwissSheet:
+
+  case class OfPlayer private (player: SwissPlayer, sheet: SwissSheet)
+  object OfPlayer:
+    def withSheetPoints(player: SwissPlayer, sheet: SwissSheet): OfPlayer =
+      OfPlayer(player.copy(points = sheet.points), sheet)
+
+  enum Outcome:
+    case Bye
+    case Late // missed the first round
+    case Absent
+    case Ongoing
+    case Win
+    case Loss
+    case Draw
+    case ForfeitLoss
+    case ForfeitWin
+
+  import Outcome.*
+
+  def pointsFor(outcomes: List[Outcome]): SwissPoints = SwissPoints.fromDoubled:
+    outcomes.foldLeft(0): (acc, out) =>
+      acc + pointsFor(out).doubled
+
+  def pointsFor(outcome: Outcome): SwissPoints = SwissPoints.fromDoubled:
+    outcome match
+      case Win | Bye | ForfeitWin => 2
       case Late | Draw => 1
-      case _           => 0
-    }
+      case _ => 0
 
   def many(
       swiss: Swiss,
       players: List[SwissPlayer],
       pairingMap: SwissPairing.PairingMap
   ): List[SwissSheet] =
-    players.map { player =>
-      one(swiss, ~pairingMap.get(player.userId), player)
-    }
+    many(swiss.allRounds, players, pairingMap)
+
+  def many(
+      rounds: List[SwissRoundNumber],
+      players: List[SwissPlayer],
+      pairingMap: SwissPairing.PairingMap
+  ): List[SwissSheet] =
+    players.map: player =>
+      one(rounds, ~pairingMap.get(player.userId), player)
 
   def one(
       swiss: Swiss,
-      pairingMap: Map[SwissRound.Number, SwissPairing],
+      pairingMap: Map[SwissRoundNumber, SwissPairing],
+      player: SwissPlayer
+  ): SwissSheet = one(swiss.allRounds, pairingMap, player)
+
+  def one(
+      rounds: List[SwissRoundNumber],
+      pairingMap: Map[SwissRoundNumber, SwissPairing],
       player: SwissPlayer
   ): SwissSheet =
-    SwissSheet {
-      swiss.allRounds.map { round =>
-        pairingMap get round match {
+    SwissSheet:
+      rounds.map: round =>
+        pairingMap.get(round) match
           case Some(pairing) =>
-            pairing.status match {
-              case Left(_)            => Ongoing
-              case Right(None)        => Draw
-              case Right(Some(color)) => if (pairing(color) == player.userId) Win else Loss
-            }
+            pairing.status match
+              case Left(_) => Ongoing
+              case Right(None) => Draw
+              case Right(Some(color)) if pairing.isForfeit =>
+                if pairing(color) == player.userId then ForfeitWin else ForfeitLoss
+              case Right(Some(color)) => if pairing(color) == player.userId then Win else Loss
           case None if player.byes(round) => Bye
-          case None if round.value == 1   => Late
-          case None                       => Absent
-        }
-      }
-    }
+          case None if round.value == 1 => Late
+          case None => Absent
 
-}
-
-final private class SwissSheetApi(colls: SwissColls)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    mat: akka.stream.Materializer
-) {
-
-  import akka.stream.scaladsl._
-  import org.joda.time.DateTime
-  import reactivemongo.akkastream.cursorProducer
-  import reactivemongo.api.ReadPreference
-  import lila.db.dsl._
-  import BsonHandlers._
+final private class SwissSheetApi(mongo: SwissMongo)(using
+    Executor,
+    org.apache.pekko.stream.Materializer
+):
 
   def source(
       swiss: Swiss,
       sort: Bdoc
-  ): Source[(SwissPlayer, Map[SwissRound.Number, SwissPairing], SwissSheet), _] = {
-    val readPreference =
-      if (swiss.finishedAt.exists(_ isBefore DateTime.now.minusSeconds(10)))
-        ReadPreference.secondaryPreferred
-      else ReadPreference.primary
+  ): Source[(SwissPlayer, Map[SwissRoundNumber, SwissPairing], SwissSheet), ?] =
+    val readPref: ReadPref =
+      if swiss.finishedAt.exists(_.isBefore(nowInstant.minusSeconds(10))) then _.sec else _.pri
     SwissPlayer
-      .fields { f =>
-        colls.player
-          .find($doc(f.swissId -> swiss.id))
-          .sort(sort)
-      }
-      .cursor[SwissPlayer](readPreference)
+      .fields: f =>
+        mongo.player.find(bdoc(f.swissId -> swiss.id)).sort(sort)
+      .cursor[SwissPlayer](readPref)
       .documentSource()
-      .mapAsync(4) { player =>
-        SwissPairing.fields { f =>
-          colls.pairing.list[SwissPairing](
-            $doc(f.swissId -> swiss.id, f.players -> player.userId),
-            readPreference
-          ) dmap { player -> _ }
-        }
-      }
-      .map { case (player, pairings) =>
-        val pairingMap = pairings.map { p =>
-          p.round -> p
-        }.toMap
+      .mapAsync(4): player =>
+        SwissPairing.fields: f =>
+          mongo.pairing
+            .list[SwissPairing](
+              bdoc(f.swissId -> swiss.id, f.players -> player.userId),
+              readPref
+            )
+            .dmap(player -> _)
+      .map: (player, pairings) =>
+        val pairingMap = pairings.mapBy(_.round)
         (player, pairingMap, SwissSheet.one(swiss, pairingMap, player))
-      }
-  }
-}

@@ -1,20 +1,24 @@
 package lila.history
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
 
-import lila.common.config.CollName
+import lila.core.config.CollName
 
 @Module
 final class Env(
-    mongoCache: lila.memo.MongoCache.Api,
-    userRepo: lila.user.UserRepo,
+    userApi: lila.core.user.UserApi,
     cacheApi: lila.memo.CacheApi,
-    db: lila.db.Db
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    db: lila.db.AsyncDb @@ lila.db.YoloDb
+)(using Executor, Scheduler):
 
-  private lazy val coll = db(CollName("history3"))
+  private lazy val coll = db(CollName("history4")).failingSilently()
 
   lazy val api = wire[HistoryApi]
 
   lazy val ratingChartApi = wire[RatingChartApi]
-}
+
+  lila.common.Bus.sub[lila.core.game.PerfsUpdate]:
+    case lila.core.game.PerfsUpdate(game, bothPerfs) =>
+      bothPerfs.mapList: uwp =>
+        api.add(uwp.user, game, uwp.perfs)

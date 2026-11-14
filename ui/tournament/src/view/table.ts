@@ -1,106 +1,79 @@
-import { h, VNode } from 'snabbdom';
-import { opposite } from 'chessground/util';
-import { player as renderPlayer, bind, onInsert } from './util';
-import { Duel, DuelPlayer, DuelTeams, TeamBattle, FeaturedGame } from '../interfaces';
-import { teamName } from './battle';
-import TournamentController from '../ctrl';
+import { opposite } from '@lichess-org/chessground/util';
 
-function featuredPlayer(game: FeaturedGame, color: Color) {
+import { licon } from 'lib/licon';
+import { type VNode, bind, onInsert, hl, initMiniGames, icon } from 'lib/view';
+
+import type TournamentController from '../ctrl';
+import type { Duel, DuelPlayer, FeaturedGame, TournamentOpts } from '../interfaces';
+import { teamName } from './battle';
+import { player as renderPlayer } from './util';
+
+function featuredPlayer(game: FeaturedGame, color: Color, opts: TournamentOpts) {
   const player = game[color];
-  const clock = game.c || game.clock; // temporary BC, remove me
-  return h('span.mini-game__player', [
-    h('span.mini-game__user', [
-      h('strong', '#' + player.rank),
-      renderPlayer(player, true, true, false),
-      player.berserk
-        ? h('i', {
-            attrs: {
-              'data-icon': '',
-              title: 'Berserk',
-            },
-          })
-        : null,
+  return hl('span.mini-game__player', [
+    hl('span.mini-game__user', [
+      hl('strong', '#' + player.rank),
+      renderPlayer(player, true, opts.showRatings, false),
+      player.berserk && icon(licon.Berserk)('.berserk', { title: 'Berserk' }),
     ]),
-    clock
-      ? h(`span.mini-game__clock.mini-game__clock--${color}`, {
-          attrs: {
-            'data-time': clock[color],
-            'data-managed': 1,
-          },
+    game.c
+      ? hl(`span.mini-game__clock.mini-game__clock--${color}`, {
+          attrs: { 'data-time': game.c[color], 'data-managed': 1 },
         })
-      : h('span.mini-game__result', game.winner ? (game.winner == color ? 1 : 0) : '½'),
+      : hl('span.mini-game__result', game.winner ? (game.winner === color ? '1' : '0') : '½'),
   ]);
 }
 
-function featured(game: FeaturedGame): VNode {
-  return h(
+function featured(game: FeaturedGame, opts: TournamentOpts): VNode {
+  return hl(
     `div.tour__featured.mini-game.mini-game-${game.id}.mini-game--init.is2d`,
     {
-      attrs: {
-        'data-state': `${game.fen},${game.orientation},${game.lastMove}`,
-        'data-live': game.id,
-      },
-      hook: onInsert(lichess.powertip.manualUserIn),
+      attrs: { 'data-state': `${game.fen},${game.orientation},${game.lastMove}`, 'data-live': game.id },
+      hook: onInsert(site.powertip.manualUserIn),
     },
     [
-      featuredPlayer(game, opposite(game.orientation)),
-      h('a.cg-wrap', {
-        attrs: {
-          href: `/${game.id}/${game.orientation}`,
-        },
-      }),
-      featuredPlayer(game, game.orientation),
-    ]
+      featuredPlayer(game, opposite(game.orientation), opts),
+      hl('a.cg-wrap', { attrs: { href: `/game/${game.id}/${game.orientation}` } }),
+      featuredPlayer(game, game.orientation, opts),
+    ],
   );
 }
 
-function duelPlayerMeta(p: DuelPlayer) {
-  return [h('em.rank', '#' + p.k), p.t ? h('em.utitle', p.t) : null, h('em.rating', '' + p.r)];
-}
+const duelPlayerMeta = (p: DuelPlayer, ctrl: TournamentController) => [
+  hl('em.rank', '#' + p.k),
+  p.t && hl('em.utitle', p.t),
+  ctrl.opts.showRatings && hl('em.rating', p.r),
+];
 
-function renderDuel(battle?: TeamBattle, duelTeams?: DuelTeams) {
+function renderDuel(ctrl: TournamentController) {
+  const battle = ctrl.data.teamBattle;
+  const duelTeams = ctrl.data.duelTeams;
   return (d: Duel) =>
-    h(
-      'a.glpt',
-      {
-        key: d.id,
-        attrs: { href: '/' + d.id },
-      },
-      [
-        battle && duelTeams
-          ? h(
-              'line.t',
-              [0, 1].map(i => teamName(battle, duelTeams[d.p[i].n.toLowerCase()]))
-            )
-          : undefined,
-        h('line.a', [h('strong', d.p[0].n), h('span', duelPlayerMeta(d.p[1]).reverse())]),
-        h('line.b', [h('span', duelPlayerMeta(d.p[0])), h('strong', d.p[1].n)]),
-      ]
-    );
+    hl('a.glpt.force-ltr', { key: d.id, attrs: { href: '/game/' + d.id } }, [
+      battle &&
+        duelTeams &&
+        hl(
+          'line.t',
+          d.p.map(p => {
+            const teamId = duelTeams[p.n.toLowerCase()];
+            return teamId && teamName(battle, teamId);
+          }),
+        ),
+      hl('line.a', [hl('strong', d.p[0].n), hl('span', duelPlayerMeta(d.p[1], ctrl).reverse())]),
+      hl('line.b', [hl('span', duelPlayerMeta(d.p[0], ctrl)), hl('strong', d.p[1].n)]),
+    ]);
 }
 
-const initMiniGame = (node: VNode) => lichess.miniGame.initAll(node.elm as HTMLElement);
+const initMiniGame = (node: VNode) => initMiniGames(node.elm as HTMLElement);
 
 export default function (ctrl: TournamentController): VNode {
-  return h(
-    'div.tour__table',
-    {
-      hook: {
-        insert: initMiniGame,
-        postpatch: initMiniGame,
-      },
-    },
-    [
-      ctrl.data.featured ? featured(ctrl.data.featured) : null,
-      ctrl.data.duels.length
-        ? h(
-            'section.tour__duels',
-            {
-              hook: bind('click', _ => !ctrl.disableClicks),
-            },
-            [h('h2', 'Top games')].concat(ctrl.data.duels.map(renderDuel(ctrl.data.teamBattle, ctrl.data.duelTeams)))
-          )
-        : null,
-    ]
-  );
+  return hl('div.tour__table', { hook: { insert: initMiniGame, postpatch: initMiniGame } }, [
+    ctrl.data.featured && featured(ctrl.data.featured, ctrl.opts),
+    ctrl.data.duels.length > 0 &&
+      hl(
+        'section.tour__duels',
+        { hook: bind('click', _ => !ctrl.disableClicks) },
+        [hl('h2', i18n.site.topGames)].concat(ctrl.data.duels.map(renderDuel(ctrl))),
+      ),
+  ]);
 }

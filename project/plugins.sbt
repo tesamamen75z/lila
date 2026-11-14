@@ -1,7 +1,9 @@
-resolvers += Resolver.url(
-  "lila-maven-sbt",
-  url("https://raw.githubusercontent.com/ornicar/lila-maven/master")
-)(Resolver.ivyStylePatterns)
-addSbtPlugin("com.typesafe.play" % "sbt-plugin"   % "2.8.7-lila_1.6")
-addSbtPlugin("org.scalameta"     % "sbt-scalafmt" % "2.4.3")
-addSbtPlugin("ch.epfl.scala"     % "sbt-bloop"    % "1.4.8")
+resolvers += "jitpack".at("https://jitpack.io")
+
+addSbtPlugin("com.github.lichess-org.liplay" % "sbt-plugin" % "3.2.0")
+
+addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.13.0")
+
+addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.14.10")
+addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.6.2")
+addSbtPlugin("ch.epfl.scala" % "sbt-bloop" % "2.1.3")

@@ -1,20 +1,25 @@
 package lila.memo
 
-import scala.util.matching.Regex
-import scala.util.Try
+import play.api.data.*
+import play.api.data.Forms.*
 import reactivemongo.api.bson.BSONHandler
+import scalalib.Iso
 
-import lila.db.dsl._
-import play.api.data._, Forms._
+import scala.util.Try
+import scala.util.matching.Regex
+
+import lila.core.data.{ Ints, Strings, Text, UserIds }
+import lila.core.perm.Permission
+import lila.db.dsl.*
 
 final class SettingStore[A: BSONHandler: SettingStore.StringReader: SettingStore.Formable] private (
     coll: Coll,
     val id: String,
     val default: A,
     val text: Option[String],
-    persist: Boolean,
+    val perm: Permission,
     init: SettingStore.Init[A]
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
   import SettingStore.{ dbField, ConfigValue, DbValue }
 
@@ -22,93 +27,86 @@ final class SettingStore[A: BSONHandler: SettingStore.StringReader: SettingStore
 
   def get(): A = value
 
-  def set(v: A): Funit = {
+  def set(v: A): Funit =
     value = v
-    persist ?? coll.update.one(dbId, $set(dbField -> v), upsert = true).void
-  }
+    coll.update.one(dbId, bset(dbField -> v), upsert = true).void
 
-  def form: Form[_] = implicitly[SettingStore.Formable[A]] form value
+  def form: Form[?] = summon[SettingStore.Formable[A]].form(value)
 
-  def setString(str: String): Funit = (implicitly[SettingStore.StringReader[A]] read str) ?? set
+  def setString(str: String): Funit = (summon[SettingStore.StringReader[A]].read(str)).so(set)
 
-  private val dbId = $id(id)
+  private val dbId = bid(id)
 
-  persist ?? coll.primitiveOne[A](dbId, dbField) map2 { (v: A) =>
+  coll.primitiveOne[A](dbId, dbField).map2 { (v: A) =>
     value = init(ConfigValue(default), DbValue(v))
   }
-}
 
-object SettingStore {
+object SettingStore:
 
   case class ConfigValue[A](value: A)
   case class DbValue[A](value: A)
 
   type Init[A] = (ConfigValue[A], DbValue[A]) => A
 
-  final class Builder(db: lila.db.Db, config: MemoConfig)(implicit ec: scala.concurrent.ExecutionContext) {
+  final class Builder(db: lila.db.Db, config: MemoConfig)(using Executor):
     val coll = db(config.configColl)
     def apply[A: BSONHandler: StringReader: Formable](
         id: String,
         default: A,
-        text: Option[String] = None,
-        persist: Boolean = true,
+        text: Option[String],
+        perm: Permission.Selector = _.SuperAdmin,
         init: Init[A] = (_: ConfigValue[A], db: DbValue[A]) => db.value
-    ) = new SettingStore[A](coll, id, default, text, persist = persist, init = init)
-  }
+    ) = SettingStore[A](coll, id, default, text, perm(Permission), init = init)
 
   final class StringReader[A](val read: String => Option[A])
 
-  object StringReader {
-    implicit val booleanReader = new StringReader[Boolean]({
-      case "on" | "yes" | "true" | "1"  => true.some
+  object StringReader:
+    given StringReader[Boolean] = StringReader[Boolean]:
+      case "on" | "yes" | "true" | "1" => true.some
       case "off" | "no" | "false" | "0" => false.some
-      case _                            => none
-    })
-    implicit val intReader                          = new StringReader[Int](_.toIntOption)
-    implicit val stringReader                       = new StringReader[String](some)
-    def fromIso[A](iso: lila.common.Iso[String, A]) = new StringReader[A](v => iso.from(v).some)
-  }
+      case _ => none
+    given StringReader[Int] = StringReader(_.toIntOption)
+    given StringReader[Float] = StringReader(_.toFloatOption)
+    given StringReader[String] = StringReader(some)
+    def fromIso[A](using iso: Iso.StringIso[A]) = StringReader(v => iso.from(v).some)
 
-  object Strings {
-    val stringsIso                  = lila.common.Iso.strings(",")
-    implicit val stringsBsonHandler = lila.db.dsl.isoHandler(stringsIso)
-    implicit val stringsReader      = StringReader.fromIso(stringsIso)
-  }
-  object UserIds {
-    val userIdsIso                  = lila.common.Iso.userIds(",")
-    implicit val userIdsBsonHandler = lila.db.dsl.isoHandler(userIdsIso)
-    implicit val userIdsReader      = StringReader.fromIso(userIdsIso)
-  }
-  object Ints {
-    val intsIso                  = lila.common.Iso.ints(",")
-    implicit val intsBsonHandler = lila.db.dsl.isoHandler(intsIso)
-    implicit val intsReader      = StringReader.fromIso(intsIso)
-  }
-  object Regex {
-    val regexIso                  = lila.common.Iso.string[Regex](_.r, _.toString)
-    implicit val regexBsonHandler = lila.db.dsl.isoHandler(regexIso)
-    implicit val regexReader      = StringReader.fromIso(regexIso)
-  }
+  object Strings:
+    val stringsIso = lila.common.Iso.strings(",")
+    given BSONHandler[Strings] = lila.db.dsl.isoHandler(using stringsIso)
+    given StringReader[Strings] = StringReader.fromIso(using stringsIso)
+  object UserIds:
+    val userIdsIso = Strings.stringsIso.map[lila.core.data.UserIds](
+      strs => lila.core.data.UserIds(UserStr.from(strs.value).map(_.id)),
+      uids => lila.core.data.Strings(UserId.raw(uids.value))
+    )
+    given BSONHandler[UserIds] = lila.db.dsl.isoHandler(using userIdsIso)
+    given StringReader[UserIds] = StringReader.fromIso(using userIdsIso)
+  object Ints:
+    val intsIso = lila.common.Iso.ints(",")
+    given BSONHandler[Ints] = lila.db.dsl.isoHandler(using intsIso)
+    given StringReader[Ints] = StringReader.fromIso(using intsIso)
+  object Regex:
+    val regexIso = Iso.string[Regex](_.r, _.toString)
+    given BSONHandler[Regex] = lila.db.dsl.isoHandler(using regexIso)
+    given StringReader[Regex] = StringReader.fromIso(using regexIso)
+  object Text:
+    val textIso = Iso.string[Text](lila.core.data.Text(_), _.value)
+    given BSONHandler[Text] = lila.db.dsl.isoHandler(using textIso)
+    given StringReader[Text] = StringReader.fromIso(using textIso)
 
-  final class Formable[A](val form: A => Form[_])
-  object Formable {
-    implicit val regexFormable = new Formable[Regex](v =>
-      Form(
-        single(
-          "v" -> text.verifying(t => Try(t.r).isSuccess)
-        )
-      ) fill v.toString
-    )
-    implicit val booleanFormable = new Formable[Boolean](v => Form(single("v" -> boolean)) fill v)
-    implicit val intFormable     = new Formable[Int](v => Form(single("v" -> number)) fill v)
-    implicit val stringFormable  = new Formable[String](v => Form(single("v" -> text)) fill v)
-    implicit val stringsFormable = new Formable[lila.common.Strings](v =>
-      Form(single("v" -> text)) fill Strings.stringsIso.to(v)
-    )
-    implicit val userIdsFormable = new Formable[lila.common.UserIds](v =>
-      Form(single("v" -> text)) fill UserIds.userIdsIso.to(v)
-    )
-  }
+  final class Formable[A](val form: A => Form[?])
+  object Formable:
+    import lila.common.Form.*
+    def stringIsoForm[A](using iso: Iso.StringIso[A]): Formable[A] = Formable[A]: v =>
+      Form(single("v" -> text)).fill(iso.to(v))
+    given Formable[Regex] =
+      Formable(v => Form(single("v" -> text.verifying(t => Try(t.r).isSuccess))).fill(v.toString))
+    given Formable[Boolean] = Formable[Boolean](v => Form(single("v" -> boolean)).fill(v))
+    given Formable[Int] = Formable[Int](v => Form(single("v" -> number)).fill(v))
+    given Formable[Float] = Formable[Float](v => Form(single("v" -> bigDecimal)).fill(BigDecimal(v)))
+    given Formable[String] = stringIsoForm(using Iso.string(identity, identity))
+    given Formable[Strings] = stringIsoForm(using Strings.stringsIso)
+    given Formable[UserIds] = stringIsoForm(using UserIds.userIdsIso)
+    given Formable[Text] = Formable(v => Form(single[Text]("v" -> text.iso(using Text.textIso))).fill(v))
 
   private val dbField = "setting"
-}

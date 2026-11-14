@@ -1,3 +1,4 @@
-package lila
+package lila.irc
 
-package object irc extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

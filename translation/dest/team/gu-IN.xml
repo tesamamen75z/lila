@@ -1,7 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="team">ટીમ</string>
+  <string name="teams">ટીમો</string>
   <plurals name="nbMembers">
     <item quantity="one">%s સદસ્ય</item>
     <item quantity="other">%s સદસ્યો</item>
+  </plurals>
+  <string name="allTeams">બધી ટીમો</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">વિજેતા ટીમો</string>
+  <string name="newTeam">નવી ટીમ</string>
+  <string name="myTeams">મારી ટીમો</string>
+  <string name="noTeamFound">કોઈ ટીમ મળી નથી</string>
+  <string name="joinTeam">ટીમમાં જોડાઓ</string>
+  <string name="quitTeam">ટીમ છોડો</string>
+  <plurals name="teamLeaders">
+    <item quantity="one">ટીમ લીડર</item>
+    <item quantity="other">ટીમ લીડરો</item>
+  </plurals>
+  <string name="teamRecentMembers">તાજેતરના સભ્યો</string>
+  <string name="willBeReviewed">તમારી જોડાવાની વિનંતીની ટીમ લીડર દ્વારા સમીક્ષા કરવામાં આવશે.</string>
+  <string name="beingReviewed">તમારી જોડાવાની વિનંતીની ટીમ લીડર દ્વારા સમીક્ષા થઈ રહી છે.</string>
+  <string name="requestDeclined">તમારી જોડાવાની વિનંતી ટીમ લીડર દ્વારા અસ્વીકાર કરવામાં આવી હતી.</string>
+  <string name="teamBattle">ટીમ બેટલ</string>
+  <string name="teamBattleOverview">બહુવિધ ટીમોની લડાઈ, દરેક ખેલાડી તેમની ટીમ માટે પોઈન્ટ મેળવે છે</string>
+  <string name="teamTournament">ટીમ ટુર્નામેન્ટ</string>
+  <string name="teamTournamentOverview">એક એરેના ટુર્નામેન્ટ જેમાં ફક્ત તમારી ટીમના સભ્યો જ જોડાઈ શકે છે</string>
+  <string name="swissTournamentOverview">એક સ્વિસ ટુર્નામેન્ટ જેમાં ફક્ત તમારી ટીમના સભ્યો જ જોડાઈ શકે છે</string>
+  <string name="teamsIlead">હું જે ટીમોનું નેતૃત્વ કરું છું</string>
+  <string name="leadersChat">લીડર્સ ચેટ</string>
+  <string name="introduction">પરિચય</string>
+  <string name="entryCode">ટીમ એન્ટ્રી કોડ</string>
+  <string name="entryCodeDescriptionForLeader">(વૈકલ્પિક) એક એન્ટ્રી કોડ જે નવા સભ્યોએ આ ટીમમાં જોડાવા માટે જાણવો જરૂરી છે.</string>
+  <string name="incorrectEntryCode">ખોટો એન્ટ્રી કોડ.</string>
+  <string name="teamAlreadyExists">આ ટીમ પહેલેથી જ અસ્તિત્વમાં છે.</string>
+  <string name="upcomingTournaments">આગામી ટૂર્નામેન્ટ્સ</string>
+  <string name="completedTourns">પૂર્ણ થયેલી ટૂર્નામેન્ટ્સ</string>
+  <string name="joinLichessVariantTeam">સમાચાર અને ઇવેન્ટ્સ માટે સત્તાવાર %s ટીમ માં જોડાઓ</string>
+  <string name="innerTeam">આંતરિક ટીમ</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="one">%s ટીમોનું યુદ્ધ (બેટલ)</item>
+    <item quantity="other">%s ટીમોનું યુદ્ધ (બેટલ)</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="one">ટીમ દીઠ એક નેતા (લીડર)</item>
+    <item quantity="other">ટીમ દીઠ %s નેતાઓ (લીડરો)</item>
   </plurals>
 </resources>

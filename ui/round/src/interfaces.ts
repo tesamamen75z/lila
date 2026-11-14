@@ -1,29 +1,27 @@
-import { VNode } from 'snabbdom';
-import { GameData, Status } from 'game';
-import { ClockData, Seconds, Centis } from './clock/clockCtrl';
-import { CorresClockData } from './corresClock/corresClockCtrl';
-import RoundController from './ctrl';
-import { ChatCtrl, ChatPlugin } from 'chat';
-import * as cg from 'chessground/types';
+import type { MoveMetadata as CgMoveMetadata } from '@lichess-org/chessground/types';
 
-export type MaybeVNode = VNode | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
+import type { ChatOpts as BaseChatOpts, ChatCtrl, ChatPlugin } from 'lib/chat/interfaces';
+import type { GameData, Status, RoundStep } from 'lib/game';
+import type { ClockData } from 'lib/game/clock/clockCtrl';
+import * as Prefs from 'lib/prefs';
+import type { EnhanceOpts } from 'lib/richText';
+import type { NodeCrazy } from 'lib/tree/types';
+import type { VNode } from 'lib/view';
 
-export type Redraw = () => void;
+import type { CorresClockData } from './corresClock/corresClockCtrl';
+import type { RoundSocket } from './socket';
 
-export interface Untyped {
-  [key: string]: any;
-}
+export { type RoundSocket } from './socket';
+export { type CorresClockData } from './corresClock/corresClockCtrl';
+export type { RoundStep as Step } from 'lib/game';
+export type { default as RoundController } from './ctrl';
+export type { ClockData } from 'lib/game/clock/clockCtrl';
 
 export interface NvuiPlugin {
-  render(ctrl: RoundController): VNode;
-}
-
-export interface SocketOpts {
-  sign: string;
-  ackable: boolean;
-  withLag?: boolean;
-  millis?: number;
+  submitMove?: (submitStoredPremove?: boolean) => void;
+  playPremove: () => void;
+  premoveInput: string;
+  render(): VNode;
 }
 
 export interface SocketMove {
@@ -31,36 +29,102 @@ export interface SocketMove {
   b?: 1;
 }
 export interface SocketDrop {
-  role: cg.Role;
-  pos: cg.Key;
+  role: Role;
+  pos: Key;
   b?: 1;
 }
 
-export type EncodedDests =
-  | string
-  | {
-      [key: string]: string;
-    };
-export type Dests = cg.Dests;
+export interface EventsWithPayload {
+  rep: { n: string };
+  flag: Color;
+  move: SocketMove;
+  drop: SocketDrop;
+}
+
+export type EventsWithoutPayload =
+  | 'moretime'
+  | 'berserk'
+  | 'rematch-yes'
+  | 'rematch-no'
+  | 'takeback-yes'
+  | 'takeback-no'
+  | 'draw-yes'
+  | 'draw-no'
+  | 'blindfold-yes'
+  | 'blindfold-no'
+  | 'draw-force'
+  | 'bye2'
+  | 'resign-force'
+  | 'draw-claim'
+  | 'resign'
+  | 'abort';
+
+export interface RoundSocketSend {
+  <K extends keyof EventsWithPayload>(
+    type: K,
+    data: EventsWithPayload[K],
+    opts?: { ackable?: boolean },
+    noRetry?: boolean,
+  ): void;
+  <K extends EventsWithoutPayload>(
+    type: K,
+    data?: undefined,
+    opts?: { ackable?: boolean },
+    noRetry?: boolean,
+  ): void;
+}
+
+export type TakeBackOffers = { white?: true; black?: true };
+
+export interface Reloads {
+  rematchOffer: (color?: Color) => void;
+  rematchTaken: (nextId: string) => void;
+  drawOffer: (by?: Color) => void;
+}
+
+export interface ReloadEvent<T extends keyof Reloads> {
+  t: T;
+  d: Parameters<Reloads[T]>;
+}
+
+export interface SocketInEvents {
+  berserk: (color: Color) => void;
+  move: (move: ApiMove) => boolean;
+  drop: (move: ApiMove) => boolean;
+  takebackOffers: (offers: TakeBackOffers) => void;
+  reload: (d: ReloadEvent<keyof Reloads>) => void;
+  redirect: (d: { id: string; url: string }) => void;
+  clockInc: (o: { color: Color; time: Centis; total: Centis }) => void;
+  cclock: (o: ByColor<number>) => void;
+  crowd: (o: ByColor<boolean>) => void;
+  endData: (end: ApiEnd) => void;
+  checkCount: (d: ByColor<number>) => void;
+  simulPlayerMove: (gameId: string) => void;
+  simulEnd: (d: { id: string; name: string }) => void;
+  // From lila-ws
+  gone: (gone: boolean) => void;
+  goneIn: (goneIn: Seconds) => void;
+}
+
+export type EncodedDests = string | Record<string, string>;
 
 export interface RoundData extends GameData {
   clock?: ClockData;
   pref: Pref;
-  steps: Step[];
+  steps: RoundStep[];
   possibleMoves?: EncodedDests;
   possibleDrops?: string;
   forecastCount?: number;
-  crazyhouse?: CrazyData;
-  correspondence: CorresClockData;
-  url: {
-    socket: string;
-    round: string;
-  };
+  opponentSignal?: number;
+  crazyhouse?: NodeCrazy;
+  correspondence?: CorresClockData;
   tv?: Tv;
   userTv?: {
-    id: string;
+    id: UserId;
   };
   expiration?: Expiration;
+  local?: RoundProxy;
+  noab?: boolean;
 }
 
 export interface Expiration {
@@ -74,89 +138,80 @@ export interface Tv {
   flip: boolean;
 }
 
-interface CrazyData {
-  pockets: [CrazyPocket, CrazyPocket];
-}
-
-interface CrazyPocket {
-  [role: string]: number;
+export interface RoundProxy extends Omit<RoundSocket, 'handlers'> {
+  handlers: Record<string, (...args: unknown[]) => void>;
+  analyse(): void;
+  newOpponent(): void;
 }
 
 export interface RoundOpts {
   data: RoundData;
   userId?: string;
-  socketSend: SocketSend;
+  noab?: boolean;
+  socketSend?: RoundSocketSend;
   onChange(d: RoundData): void;
-  element: HTMLElement;
-  crosstableEl: HTMLElement;
-  i18n: I18nDict;
+  element?: HTMLElement;
+  crosstableEl?: HTMLElement;
   chat?: ChatOpts;
 }
 
-export interface ChatOpts {
-  preset: 'start' | 'end' | undefined;
-  parseMoves?: boolean;
+export interface ChatOpts extends BaseChatOpts {
+  preset?: 'start' | 'end';
+  enhance?: EnhanceOpts;
   plugin?: ChatPlugin;
   alwaysEnabled: boolean;
   noteId?: string;
   noteAge?: number;
   noteText?: string;
-  instance?: Promise<ChatCtrl>;
+  instance?: ChatCtrl;
 }
 
-export interface Step {
-  ply: Ply;
-  fen: Fen;
-  san: San;
-  uci: Uci;
-  check?: boolean;
-  crazy?: StepCrazy;
-}
-
-export interface ApiMove extends Step {
-  dests: EncodedDests;
+export interface ApiMove {
+  dests: string | Record<string, string>;
+  ply: number;
+  fen: string;
+  san: string;
+  uci: string;
   clock?: {
     white: Seconds;
     black: Seconds;
     lag?: Centis;
   };
-  status: Status;
+  status?: Status;
   winner?: Color;
-  check: boolean;
-  threefold: boolean;
-  wDraw: boolean;
-  bDraw: boolean;
-  crazyhouse?: CrazyData;
-  role?: cg.Role;
+  check?: boolean;
+  threefold?: boolean;
+  fiftyMoves?: boolean;
+  wDraw?: boolean;
+  bDraw?: boolean;
+  crazyhouse?: NodeCrazy;
+  role?: Role;
   drops?: string;
   promotion?: {
-    key: cg.Key;
-    pieceClass: cg.Role;
+    key: Key;
+    pieceClass: Role;
   };
   castle?: {
-    king: [cg.Key, cg.Key];
-    rook: [cg.Key, cg.Key];
+    king: [Key, Key];
+    rook: [Key, Key];
     color: Color;
   };
   isMove?: true;
   isDrop?: true;
+  volume?: number;
 }
 
 export interface ApiEnd {
   winner?: Color;
   status: Status;
-  ratingDiff?: {
-    white: number;
-    black: number;
-  };
-  boosted: boolean;
+  abortedBy?: Color;
+  ratingDiff?: ByColor<number>;
+  boosted?: true;
   clock?: {
     wc: Centis;
     bc: Centis;
   };
 }
-
-export interface StepCrazy extends Untyped {}
 
 export interface Pref {
   animationDuration: number;
@@ -172,30 +227,22 @@ export interface Pref {
   highlight: boolean;
   is3d: boolean;
   keyboardMove: boolean;
+  voiceMove: boolean;
   moveEvent: Prefs.MoveEvent;
+  ratings: boolean;
   replay: Prefs.Replay;
-  rookCastle: boolean;
+  rookCastle?: boolean;
   showCaptured: boolean;
   submitMove: boolean;
   resizeHandle: Prefs.ShowResizeHandle;
 }
 
-export interface MoveMetadata {
-  premove?: boolean;
-  justDropped?: cg.Role;
-  justCaptured?: cg.Piece;
+export interface MoveMetadata extends CgMoveMetadata {
+  preConfirmed?: boolean;
+  justDropped?: Role;
+  justCaptured?: Piece;
 }
 
-export type Position = 'top' | 'bottom';
-
-export interface MaterialDiffSide {
-  [role: string]: number;
-}
-export interface MaterialDiff {
-  white: MaterialDiffSide;
-  black: MaterialDiffSide;
-}
-export interface CheckCount {
-  white: number;
-  black: number;
+export interface RoundTour {
+  corresRematchOffline: () => void;
 }

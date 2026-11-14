@@ -42,6 +42,11 @@
     <item quantity="few">Završio/la %s partije dopisnog šaha</item>
     <item quantity="other">Završio/la %s partija dopisnog šaha</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Završena %1$s partija %2$s dopisnog šaha</item>
+    <item quantity="few">Završene %1$s partije %2$s dopisnog šaha</item>
+    <item quantity="other">Završeno %1$s partija %2$s dopisnog šaha</item>
+  </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">Počeo/la pratiti %s igrača</item>
     <item quantity="few">Počeo/la pratiti %s igrača</item>
@@ -76,6 +81,11 @@
     <item quantity="one">Rangiran/rangirana #%1$s (prvih %2$s%%) s %3$s odigranom partijom u turniru %4$s</item>
     <item quantity="few">Rangiran/rangirana #%1$s (prvih %2$s%%) s %3$s odigrane partije u turniru %4$s</item>
     <item quantity="other">Rangiran/rangirana #%1$s (prvih %2$s%%) s %3$s odigranih partija u turniru %4$s</item>
+  </plurals>
+  <plurals name="competedInNbSwissTournaments">
+    <item quantity="one">Natjecao se u %s švicarskom turniru</item>
+    <item quantity="few">Natjecao se u %s švicarska turniru</item>
+    <item quantity="other">Natjecao se u %s švicarskih turnira</item>
   </plurals>
   <string name="rankedInSwissTournament">Rangiran #%1$s u %2$s</string>
   <string name="signedUp">Registrirao/la se na lichess</string>

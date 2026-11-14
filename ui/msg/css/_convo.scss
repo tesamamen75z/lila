@@ -6,7 +6,7 @@
 
     flex: 1 1 100%;
 
-    @include breakpoint($mq-not-small) {
+    @media (max-width: at-most($small)) {
       flex: 1 0 100%;
       display: none;
 
@@ -36,7 +36,7 @@
         padding: 0 1em;
         font-size: 1.5em;
 
-        @include breakpoint($mq-small) {
+        @media (min-width: at-least($small)) {
           display: none;
         }
       }
@@ -48,20 +48,26 @@
         color: $c-font-clear;
         font-size: 1.4em;
 
-        .utitle {
-          margin-right: 0.7ch;
-        }
-
         .line {
           flex: 0 0 auto;
           font-size: 1.5em;
+
+          @include if-rtl {
+            transform: scaleX(-1);
+          }
         }
+      }
+
+      bad {
+        @extend %flex-center-nowrap;
+
+        margin-inline-start: 0.5em;
       }
 
       &__actions {
         @extend %flex-center-nowrap;
 
-        margin-right: 1.2em;
+        margin-inline-end: 0.7em;
       }
     }
 
@@ -104,25 +110,23 @@
         @extend %msg-input-focus;
 
         flex: 1 1 100%;
-        border-radius: 1.5em;
+        border-radius: calc($box-radius-size * 2);
         background: $c-bg-box;
         resize: none;
       }
 
       &__submit {
         outline: 0;
-        margin-left: 1em;
-        border-radius: 99px;
-        background: $c-font-dimmer;
+        margin-inline-start: 1em;
+        border-radius: calc($box-radius-size * 2);
 
-        &.connected,
-        &.connected:hover {
-          background: $c-msg;
+        &:disabled {
+          background: $c-font-dimmer;
         }
       }
     }
 
-    @include breakpoint($mq-not-xx-small) {
+    @media (max-width: at-most($xx-small)) {
       &__head__back {
         padding: 0 0.5em;
       }

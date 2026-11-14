@@ -1,8 +1,12 @@
-import LobbyController from '../../ctrl';
-import { bind } from '../util';
-import { h, VNode } from 'snabbdom';
-import { Hook } from '../../interfaces';
-import perfIcons from 'common/perfIcons';
+import { h, type VNode } from 'snabbdom';
+
+import perfIcons from 'lib/game/perfIcons';
+import { licon } from 'lib/licon';
+import { bind, onInsert } from 'lib/view';
+import { profileUrl } from 'lib/view/userLink';
+
+import type LobbyController from '@/ctrl';
+import type { Hook } from '@/interfaces';
 
 const percents = (v: number) => v + '%';
 
@@ -12,14 +16,14 @@ function ratingY(e?: number) {
   const rating = Math.max(1000, Math.min(2200, e || 1500));
   let ratio: number;
   const mid = 2 / 5;
-  if (rating == 1500) {
+  if (rating === 1500) {
     ratio = mid;
   } else if (rating > 1500) {
     ratio = mid + (ratingLog(rating - 1500) / ratingLog(1300)) * 2 * mid;
   } else {
     ratio = mid - (ratingLog(1500 - rating) / ratingLog(500)) * mid;
   }
-  return Math.round(ratio * 94);
+  return Math.round(ratio * 92);
 }
 
 const clockMax = 2000;
@@ -30,53 +34,54 @@ const clockX = (dur: number) => {
 };
 
 function renderPlot(ctrl: LobbyController, hook: Hook) {
-  const bottom = Math.max(0, ratingY(hook.rating) - 2),
-    left = Math.max(0, clockX(hook.t) - 2),
-    klass = [hook.id, 'plot.new', hook.ra ? 'rated' : 'casual', hook.action === 'cancel' ? 'cancel' : ''].join('.');
+  const bottom = Math.max(0, ratingY(hook.rating));
+  const left = Math.max(0, clockX(hook.t));
+  const klass = [
+    hook.id,
+    'plot.new',
+    hook.ra ? 'rated' : 'casual',
+    hook.action === 'cancel' ? 'cancel' : '',
+  ].join('.');
   return h('span#' + klass, {
     key: hook.id,
-    attrs: {
-      'data-icon': perfIcons[hook.perf],
-      style: `bottom:${percents(bottom)};left:${percents(left)}`,
-    },
+    attrs: { 'data-icon': perfIcons[hook.perf], style: `bottom:${percents(bottom)};left:${percents(left)}` },
     hook: {
-      insert(vnode) {
-        $(vnode.elm as HTMLElement).powerTip({
-          placement: hook.rating && hook.rating > 1800 ? 'se' : 'ne',
+      ...onInsert(el => {
+        $(el).powerTip({
+          placement: hook.rating && hook.rating > 1800 ? 's' : 'n',
           closeDelay: 200,
+          defaultSize: [120, 80],
           popupId: 'hook',
-          preRender() {
+          async render() {
             $('#hook')
               .html(renderHook(ctrl, hook))
               .find('.inner-clickable')
               .on('click', () => ctrl.clickHook(hook.id));
           },
         });
-        setTimeout(function () {
-          (vnode.elm as HTMLElement).classList.remove('new');
+        setTimeout(() => {
+          el.classList.remove('new');
         }, 20);
-      },
-      destroy(vnode) {
-        $.powerTip.hide(vnode.elm as HTMLElement, true);
-        $.powerTip.destroy(vnode.elm as HTMLElement);
-      },
+      }),
+      destroy: vnode => $.powerTip.destroy(vnode.elm),
     },
   });
 }
 
 function renderHook(ctrl: LobbyController, hook: Hook): string {
-  const color = hook.c || 'random';
   let html = '<div class="inner">';
   if (hook.rating) {
-    html += '<a class="opponent ulpt is color-icon ' + color + '" href="/@/' + hook.u + '">';
-    html += ' ' + hook.u + ' (' + hook.rating + (hook.prov ? '?' : '') + ')';
+    html += `<a class="opponent ulpt is color-icon" href="${hook.u ? profileUrl(hook.u) : '#'}">`;
+    html += ' ' + hook.u;
+    if (ctrl.opts.showRatings) html += ' (' + hook.rating + (hook.prov ? '?' : '') + ')';
     html += '</a>';
   } else {
-    html += '<span class="opponent anon ' + color + '">' + ctrl.trans('anonymous') + '</span>';
+    html += '<span class="opponent anon">' + i18n.site.anonymous + '</span>';
   }
   html += '<div class="inner-clickable">';
   html += `<div>${hook.clock}</div>`;
-  html += '<i data-icon="' + perfIcons[hook.perf] + '"> ' + ctrl.trans(hook.ra ? 'rated' : 'casual') + '</i>';
+  html +=
+    '<icon data-icon="' + perfIcons[hook.perf] + '"> ' + i18n.site[hook.ra ? 'rated' : 'casual'] + '</icon>';
   html += '</div></div>';
   return html;
 }
@@ -88,18 +93,8 @@ function renderXAxis() {
   xMarks.forEach(v => {
     const l = clockX(v * 60);
     tags.push(
-      h(
-        'span.x.label',
-        {
-          attrs: { style: 'left:' + percents(l - 1.5) },
-        },
-        '' + v
-      )
-    );
-    tags.push(
-      h('div.grid.vert', {
-        attrs: { style: 'width:' + percents(l) },
-      })
+      h('span.x.label', { attrs: { style: 'left:' + percents(l - 1.5) } }, v),
+      h('div.grid.vert', { attrs: { style: 'width:' + percents(l) } }),
     );
   });
   return tags;
@@ -112,28 +107,18 @@ function renderYAxis() {
   yMarks.forEach(function (v) {
     const b = ratingY(v);
     tags.push(
-      h(
-        'span.y.label',
-        {
-          attrs: { style: 'bottom:' + percents(b + 1) },
-        },
-        '' + v
-      )
-    );
-    tags.push(
-      h('div.grid.horiz', {
-        attrs: { style: 'height:' + percents(b + 0.8) },
-      })
+      h('span.y.label', { attrs: { style: 'bottom:' + percents(b + 1) } }, v),
+      h('div.grid.horiz', { attrs: { style: 'height:' + percents(b + 0.8) } }),
     );
   });
   return tags;
 }
 
 export function toggle(ctrl: LobbyController) {
-  return h('i.toggle', {
+  return h('button.toggle', {
     key: 'set-mode-list',
-    attrs: { title: ctrl.trans.noarg('list'), 'data-icon': '' },
-    hook: bind('mousedown', _ => ctrl.setMode('list'), ctrl.redraw),
+    attrs: { title: i18n.site.list, 'data-icon': licon.List },
+    hook: bind('click', _ => ctrl.setMode('list'), ctrl.redraw),
   });
 }
 
@@ -145,12 +130,13 @@ export function render(ctrl: LobbyController, hooks: Hook[]) {
         hook: bind(
           'click',
           e => {
-            if ((e.target as HTMLElement).classList.contains('plot')) ctrl.clickHook((e.target as HTMLElement).id);
+            if ((e.target as HTMLElement).classList.contains('plot'))
+              ctrl.clickHook((e.target as HTMLElement).id);
           },
-          ctrl.redraw
+          ctrl.redraw,
         ),
       },
-      hooks.map(hook => renderPlot(ctrl, hook))
+      hooks.map(hook => renderPlot(ctrl, hook)),
     ),
     ...renderYAxis(),
     ...renderXAxis(),

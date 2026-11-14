@@ -1,94 +1,99 @@
-import { bind, titleNameToId, onInsert } from '../util';
-import { h, VNode } from 'snabbdom';
-import { snabModal } from 'common/modal';
-import { prop, Prop } from 'common';
-import { StudyMemberMap } from './interfaces';
-import { AnalyseSocketSend } from '../socket';
+import { h } from 'snabbdom';
+
+import { propWithEffect, type Prop } from 'lib';
+import { licon } from 'lib/licon';
+import { pubsub } from 'lib/pubsub';
+import { storedSet, type StoredSet } from 'lib/storage';
+import { bind, dataIcon, onInsert, snabDialog, type Dialog } from 'lib/view';
+import { userComplete } from 'lib/view/userComplete';
+
+import type { AnalyseSocketSend } from '../socket';
+import { titleNameToId } from '../view/util';
+import type { StudyMemberMap } from './interfaces';
 
 export interface StudyInviteFormCtrl {
-  open: Prop<boolean>;
   members: Prop<StudyMemberMap>;
   spectators: Prop<string[]>;
-  toggle(): void;
+  show(): void;
   invite(titleName: string): void;
   redraw(): void;
-  trans: Trans;
+  previouslyInvited: StoredSet<string>;
 }
 
 export function makeCtrl(
   send: AnalyseSocketSend,
   members: Prop<StudyMemberMap>,
   setTab: () => void,
-  redraw: () => void,
-  trans: Trans
 ): StudyInviteFormCtrl {
-  const open = prop(false),
-    spectators = prop<string[]>([]);
-  return {
-    open,
+  let dialog: Dialog | undefined;
+  const redraw = () => dialog?.redraw();
+  const spectators = propWithEffect<string[]>([], redraw);
+  pubsub.on('analysis.closeAll', () => dialog?.close());
+
+  const previouslyInvited = storedSet<string>('study.previouslyInvited', 10);
+  const ctrl: StudyInviteFormCtrl = {
     members,
     spectators,
-    toggle() {
-      open(!open());
+    async show() {
+      pubsub.emit('analysis.closeAll');
+      dialog = await snabDialog({
+        closeButton: true,
+        class: 'study__invite study-modal',
+        show: true,
+        modal: true,
+        noScrollable: true,
+        easyClose: 'clickOutside',
+        render: () => view(ctrl),
+      });
     },
     invite(titleName: string) {
-      send('invite', titleNameToId(titleName));
+      const userId = titleNameToId(titleName);
+      send('invite', userId);
+      setTimeout(() => previouslyInvited(userId), 1000);
       setTab();
     },
     redraw,
-    trans,
+    previouslyInvited,
   };
+  return ctrl;
 }
 
-export function view(ctrl: ReturnType<typeof makeCtrl>): VNode {
-  const candidates = ctrl
-    .spectators()
+function view(ctrl: StudyInviteFormCtrl) {
+  const candidates = [...new Set([...ctrl.spectators(), ...ctrl.previouslyInvited()])]
     .filter(s => !ctrl.members()[titleNameToId(s)]) // remove existing members
     .sort();
-  return snabModal({
-    class: 'study__invite',
-    onClose() {
-      ctrl.open(false);
-      ctrl.redraw();
-    },
-    content: [
-      h('h2', ctrl.trans.noarg('inviteToTheStudy')),
-      h('p.info', { attrs: { 'data-icon': '' } }, ctrl.trans.noarg('pleaseOnlyInvitePeopleYouKnow')),
-      h('div.input-wrapper', [
-        // because typeahead messes up with snabbdom
-        h('input', {
-          attrs: { placeholder: ctrl.trans.noarg('searchByUsername') },
-          hook: onInsert<HTMLInputElement>(input =>
-            lichess.userComplete().then(uac => {
-              uac({
-                input,
-                tag: 'span',
-                onSelect(v) {
-                  input.value = '';
-                  ctrl.invite(v.name);
-                  ctrl.redraw();
-                },
-              });
-              input.focus();
-            })
+  return [
+    h('h2', i18n.study.inviteToTheStudy),
+    h('p.info', { attrs: dataIcon(licon.InfoCircle) }, i18n.study.pleaseOnlyInvitePeopleYouKnow),
+    h('div.input-wrapper', [
+      // because typeahead messes up with snabbdom
+      h('input', {
+        attrs: { placeholder: i18n.study.searchByUsername, spellcheck: 'false' },
+        hook: onInsert<HTMLInputElement>(input =>
+          userComplete({
+            input,
+            focus: true,
+            tag: 'span',
+            onSelect(v) {
+              input.value = '';
+              ctrl.invite(v.name);
+              ctrl.redraw();
+            },
+          }),
+        ),
+      }),
+    ]),
+    candidates.length
+      ? h(
+          'div.users',
+          candidates.map((username: string) =>
+            h(
+              'span.button.button-metal',
+              { key: username, hook: bind('click', () => ctrl.invite(username)) },
+              username,
+            ),
           ),
-        }),
-      ]),
-      candidates.length
-        ? h(
-            'div.users',
-            candidates.map(function (username: string) {
-              return h(
-                'span.button.button-metal',
-                {
-                  key: username,
-                  hook: bind('click', _ => ctrl.invite(username)),
-                },
-                username
-              );
-            })
-          )
-        : undefined,
-    ],
-  });
+        )
+      : undefined,
+  ];
 }

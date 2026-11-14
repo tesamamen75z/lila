@@ -1,16 +1,13 @@
 package lila.forum
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-
-import lila.common.config._
-import lila.hub.actorApi.team.CreateTeam
-import lila.mod.ModlogApi
-import lila.notify.NotifyApi
-import lila.relation.RelationApi
-import lila.pref.PrefApi
 import play.api.libs.ws.StandaloneWSClient
+
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
+import lila.core.forum.ForumPostMiniView
+import lila.core.relation.RelationApi
 
 @Module
 final private class ForumConfig(
@@ -22,53 +19,57 @@ final private class ForumConfig(
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    modLog: ModlogApi,
-    spam: lila.security.Spam,
-    promotion: lila.security.PromotionApi,
-    captcher: lila.hub.actors.Captcher,
-    timeline: lila.hub.actors.Timeline,
-    shutup: lila.hub.actors.Shutup,
-    forumSearch: lila.hub.actors.ForumSearch,
-    notifyApi: NotifyApi,
+    spam: lila.core.security.SpamApi,
+    promotion: lila.core.security.PromotionApi,
+    captcha: lila.core.captcha.CaptchaApi,
+    shutupApi: lila.core.shutup.ShutupApi,
+    notifyApi: lila.core.notify.NotifyApi,
     relationApi: RelationApi,
-    prefApi: PrefApi,
-    userRepo: lila.user.UserRepo,
+    prefApi: lila.core.pref.PrefApi,
+    modLog: lila.core.mod.LogApi,
+    userApi: lila.core.user.UserApi,
+    teamApi: lila.core.team.TeamApi,
     cacheApi: lila.memo.CacheApi,
+    markdown: lila.memo.MarkdownCache,
+    picfitApi: lila.memo.PicfitApi,
     ws: StandaloneWSClient
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, Scheduler, org.apache.pekko.stream.Materializer):
 
-  private val config = appConfig.get[ForumConfig]("forum")(AutoConfig.loader)
+  private val config = appConfig.get[ForumConfig]("forum")(using AutoConfig.loader)
 
-  lazy val categRepo = new CategRepo(db(CollName("f_categ")))
-  lazy val topicRepo = new TopicRepo(db(CollName("f_topic")))
-  lazy val postRepo  = new PostRepo(db(CollName("f_post")))
+  lazy val categRepo = new ForumCategRepo(db(CollName("f_categ")))
+  lazy val topicRepo = new ForumTopicRepo(db(CollName("f_topic")))
+  lazy val postRepo = new ForumPostRepo(db(CollName("f_post")))
 
   private lazy val detectLanguage =
-    new DetectLanguage(ws, appConfig.get[DetectLanguage.Config]("detectlanguage.api"))
+    DetectLanguage(ws, appConfig.get[DetectLanguage.Config]("detectlanguage.api"))
+
+  lazy val textExpand = wire[ForumTextExpand]
 
   lazy val paginator: ForumPaginator = wire[ForumPaginator]
 
-  lazy val categApi: CategApi = {
-    val mk = (env: Env) => wire[CategApi]
-    mk(this)
-  }
+  lazy val categApi: ForumCategApi = wire[ForumCategApi]
 
-  lazy val topicApi: TopicApi = {
-    val mk = (env: Env) => wire[TopicApi]
-    mk(this)
-  }
+  lazy val topicApi: ForumTopicApi = wire[ForumTopicApi]
 
-  lazy val postApi: PostApi = {
-    val mk = (env: Env) => wire[PostApi]
-    mk(this)
-  }
+  lazy val postApi: ForumPostApi = wire[ForumPostApi]
+
+  lazy val delete: ForumDelete = wire[ForumDelete]
 
   lazy val mentionNotifier: MentionNotifier = wire[MentionNotifier]
-  lazy val forms                            = wire[ForumForm]
-  lazy val recent                           = wire[ForumRecent]
+  lazy val forms = wire[ForumForm]
 
-  lila.common.Bus.subscribeFun("team", "gdprErase") {
-    case CreateTeam(id, name, _)        => categApi.makeTeam(id, name).unit
-    case lila.user.User.GDPRErase(user) => postApi.eraseFromSearchIndex(user).unit
-  }
-}
+  lazy val recentTeamPosts = RecentTeamPosts: id =>
+    postRepo.recentIdsInCateg(ForumCateg.fromTeamId(id), 6).flatMap(postApi.miniViews)
+
+  lazy val access = wire[ForumAccess]
+
+  lila.common.Bus.sub[lila.core.team.TeamCreate]:
+    case lila.core.team.TeamCreate(t) => categApi.makeTeam(t.id, t.name, t.userId)
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    postRepo.eraseAllBy(del.id)
+
+private type RecentTeamPostsType = TeamId => Fu[List[ForumPostMiniView]]
+opaque type RecentTeamPosts <: RecentTeamPostsType = RecentTeamPostsType
+object RecentTeamPosts extends TotalWrapper[RecentTeamPosts, RecentTeamPostsType]

@@ -1,59 +1,62 @@
-import { VNode } from 'snabbdom';
+import type { VNode } from 'snabbdom';
 
-export interface NotifyOpts {
+export type NotifyOpts = {
+  el: Element;
   data?: NotifyData;
   incoming: boolean;
   isVisible(): boolean;
-  setCount(nb: number): void;
+  updateUnread(nb: number | 'increment'): boolean; // true if changed
   show(): void;
   setNotified(): void;
   pulse(): void;
-}
+};
 
-export interface NotifyData {
+export type NotifyData = {
   pager: Paginator<Notification>;
   unread: number;
-  i18n: I18nDict;
-}
+};
 
-interface NotificationUser {
+export type BumpUnread = object;
+
+type NotificationUser = {
   id: string;
   name: string;
   patron?: boolean;
-}
+};
 
-interface NotificationContent {
+type NotificationContent = {
   text: string;
-  user: NotificationUser;
+  user?: NotificationUser;
   [key: string]: any;
-}
+};
 
-export interface Notification {
+export type Notification = {
   content: NotificationContent;
   type: string;
   read: boolean;
   date: number;
-}
+};
 
-export interface Ctrl {
-  update(data: NotifyData, incoming: boolean): void;
+export type Ctrl = {
   data(): NotifyData | undefined;
   initiating(): boolean;
   scrolling(): boolean;
+  update(data: NotifyData): void;
+  bumpUnread(): void;
   nextPage(): void;
   previousPage(): void;
   loadPage(page: number): void;
-  setVisible(): void;
+  onShow(): void;
   setMsgRead(user: string): void;
-}
+  setAllRead(): void;
+  clear(): void;
+};
 
 export type Redraw = () => void;
 
-export interface Renderers {
-  [key: string]: Renderer;
-}
+export type Renderers = Record<string, Renderer>;
 
-interface Renderer {
+export type Renderer = {
   html(n: Notification): VNode;
   text(n: Notification): string;
-}
+};

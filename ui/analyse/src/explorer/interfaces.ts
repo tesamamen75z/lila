@@ -1,59 +1,34 @@
-import { Prop } from 'common';
-import { StoredProp, StoredJsonProp } from 'common/storage';
-
 export interface Hovering {
-  fen: Fen;
+  fen: FEN;
   uci: Uci;
 }
 
-export type ExplorerDb = 'lichess' | 'masters';
-
-export type ExplorerSpeed = 'bullet' | 'blitz' | 'rapid' | 'classical';
+export type ExplorerDb = 'lichess' | 'masters' | 'player';
+export type ExplorerMode = 'casual' | 'rated';
+export type ExplorerSpeed = Speed;
 
 export interface ExplorerOpts {
   endpoint: string;
   tablebaseEndpoint: string;
-}
-
-export interface ExplorerConfigData {
-  open: Prop<boolean>;
-  db: {
-    available: ExplorerDb[];
-    selected: StoredProp<ExplorerDb>;
-  };
-  rating: {
-    available: number[];
-    selected: StoredJsonProp<number[]>;
-  };
-  speed: {
-    available: ExplorerSpeed[];
-    selected: StoredJsonProp<ExplorerSpeed[]>;
-  };
-}
-
-export interface ExplorerConfigCtrl {
-  trans: Trans;
-  redraw(): void;
-  data: ExplorerConfigData;
-  toggleOpen(): void;
-  toggleDb(db: ExplorerDb): void;
-  toggleRating(rating: number): void;
-  toggleSpeed(speed: string): void;
-  fullHouse(): boolean;
+  showRatings: boolean;
 }
 
 export interface ExplorerData {
-  fen: Fen;
+  fen: FEN;
   moves: MoveStats[];
   isOpening?: true;
   tablebase?: true;
 }
 
 export interface OpeningData extends ExplorerData {
+  white: number;
+  black: number;
+  draws: number;
   moves: OpeningMoveStats[];
   topGames?: OpeningGame[];
   recentGames?: OpeningGame[];
   opening?: Opening;
+  queuePosition?: number;
 }
 
 export interface Opening {
@@ -67,6 +42,10 @@ export interface OpeningGame {
   black: OpeningPlayer;
   winner?: Color;
   year?: string;
+  month?: string;
+  speed?: Speed;
+  mode?: ExplorerMode;
+  uci?: string;
 }
 
 interface OpeningPlayer {
@@ -74,16 +53,30 @@ interface OpeningPlayer {
   rating: number;
 }
 
+export type TablebaseCategory =
+  | 'loss'
+  | 'unknown'
+  | 'syzygy-loss'
+  | 'maybe-loss'
+  | 'blessed-loss'
+  | 'draw'
+  | 'cursed-win'
+  | 'maybe-win'
+  | 'syzygy-win'
+  | 'win';
+
 export interface TablebaseData extends ExplorerData {
   moves: TablebaseMoveStats[];
-  wdl: number | null;
-  dtz: number | null;
-  dtm: number | null;
-  checkmate: boolean;
-  stalemate: boolean;
-  variant_win: boolean;
-  variant_loss: boolean;
-  insufficient_material: boolean;
+  dtz?: number;
+  dtm?: number;
+  dtw?: number;
+  dtc?: number;
+  checkmate?: boolean;
+  stalemate?: boolean;
+  variant_win?: boolean;
+  variant_loss?: boolean;
+  insufficient_material?: boolean;
+  category: TablebaseCategory;
 }
 
 export interface MoveStats {
@@ -95,54 +88,33 @@ export interface OpeningMoveStats extends MoveStats {
   white: number;
   black: number;
   draws: number;
-  averageRating: number;
+  averageRating?: number;
+  averageOpponentRating?: number;
+  performance?: number;
+  game?: OpeningGame;
+  opening?: Opening;
 }
 export interface TablebaseMoveStats extends MoveStats {
-  wdl: number | null;
-  dtz: number | null;
-  dtm: number | null;
-  checkmate: boolean;
-  stalemate: boolean;
-  variant_win: boolean;
-  variant_loss: boolean;
-  insufficient_material: boolean;
-  zeroing: boolean;
-}
-export interface TablebaseMoveStatsWithDtz extends TablebaseMoveStats {
-  dtz: number;
-}
-
-export function isOpening(m: ExplorerData): m is OpeningData {
-  return !!m.isOpening;
-}
-export function isTablebase(m: ExplorerData): m is TablebaseData {
-  return !!m.tablebase;
-}
-export function hasDtz(m: TablebaseMoveStats): m is TablebaseMoveStatsWithDtz {
-  return m.dtz !== null;
+  dtz?: number;
+  dtm?: number;
+  dtw?: number;
+  dtc?: number;
+  checkmate?: boolean;
+  stalemate?: boolean;
+  variant_win?: boolean;
+  variant_loss?: boolean;
+  insufficient_material?: boolean;
+  zeroing?: boolean;
+  conversion?: boolean;
+  category: TablebaseCategory;
 }
 
-export interface SimpleTablebaseHit {
-  fen: Fen;
+export const isOpening = (m: ExplorerData): m is OpeningData => !!m.isOpening;
+
+export const isTablebase = (m: ExplorerData): m is TablebaseData => !!m.tablebase;
+
+export type SimpleTablebaseHit = {
+  fen: FEN;
   best?: Uci; // no move if checkmate/stalemate
-  winner: Color | undefined;
-}
-
-export interface ExplorerCtrl {
-  allowed: Prop<boolean>;
-  loading: Prop<boolean>;
-  enabled: Prop<boolean>;
-  failing: Prop<Error | null>;
-  movesAway: Prop<number>;
-  config: ExplorerConfigCtrl;
-  withGames: boolean;
-  gameMenu: Prop<string | null>;
-  current(): ExplorerData | undefined;
-  hovering: Prop<Hovering | null>;
-  setNode(): void;
-  toggle(): void;
-  disable(): void;
-  setHovering(fen: Fen, uci: Uci | null): void;
-  fetchMasterOpening(fen: Fen): Promise<OpeningData>;
-  fetchTablebaseHit(fen: Fen): Promise<SimpleTablebaseHit>;
-}
+  winner?: Color;
+};

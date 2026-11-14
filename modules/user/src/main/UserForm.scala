@@ -1,85 +1,76 @@
 package lila.user
+import play.api.data.*
+import play.api.data.Forms.*
 
-import play.api.data._
-import play.api.data.validation.Constraints
-import play.api.data.Forms._
+import lila.common.Form.{
+  cleanFewSymbolsAndNonEmptyText,
+  cleanFewSymbolsText,
+  cleanNonEmptyText,
+  cleanTextWithSymbols,
+  into,
+  playerTitle,
+  readonly
+}
+import lila.core.user.{ FlagCode, Profile, RealName }
 
-import User.ClearPassword
-import lila.common.Form.{ cleanNonEmptyText, cleanText }
+final class UserForm:
 
-final class UserForm(authenticator: Authenticator) {
-
-  val note = Form(
-    mapping(
-      "text" -> cleanText(minLength = 3, maxLength = 2000),
-      "mod"  -> boolean,
-      "dox"  -> optional(boolean)
-    )(NoteData.apply)(NoteData.unapply)
-  )
-
-  case class NoteData(text: String, mod: Boolean, dox: Option[Boolean])
-
-  def username(user: User): Form[String] =
-    Form(
-      single(
-        "username" -> cleanNonEmptyText.verifying(
+  def username(user: User): Form[UserName] = Form(
+    single(
+      "username" -> cleanNonEmptyText
+        .into[UserName]
+        .verifying(
           "changeUsernameNotSame",
-          name => name.toLowerCase == user.username.toLowerCase && name != user.username
+          name => name.id == user.username.id && name != user.username
         )
-      )
-    ).fill(user.username)
+        .verifying(
+          "usernameUnacceptable",
+          name => !LameName.hasTitle(name.value) || LameName.hasTitle(user.username.value)
+        )
+    )
+  ).fill(user.username)
 
-  def usernameOf(user: User) = username(user) fill user.username
+  def usernameOf(user: User) = username(user).fill(user.username)
 
-  val profile = Form(
+  def profileOf(user: User, fixedRealName: Option[RealName]) = Form:
     mapping(
-      "country"    -> optional(text.verifying(Countries.codeSet contains _)),
-      "location"   -> optional(cleanNonEmptyText(maxLength = 80)),
-      "bio"        -> optional(cleanNonEmptyText(maxLength = 400)),
-      "firstName"  -> nameField,
-      "lastName"   -> nameField,
-      "fideRating" -> optional(number(min = 600, max = 3000)),
+      "flag" -> optional(text.into[FlagCode].verifying(Flags.codeSet contains _)),
+      "location" -> optional(cleanFewSymbolsAndNonEmptyText(maxLength = 80)),
+      "bio" -> optional(cleanFewSymbolsAndNonEmptyText(maxLength = 400, maxSymbols = 10)),
+      "realName" -> fixedRealName.match
+        case None => optional(cleanFewSymbolsText(minLength = 1, maxLength = 100).into[RealName])
+        case Some(name) => optional(readonly(user.profile.flatMap(_.realName) | name)),
+      "fideRating" -> optional(number(min = 1400, max = 3000)),
       "uscfRating" -> optional(number(min = 100, max = 3000)),
-      "ecfRating"  -> optional(number(min = 0, max = 3000)),
-      "rcfRating"  -> optional(number(min = 0, max = 3000)),
-      "cfcRating"  -> optional(number(min = 0, max = 3000)),
-      "dsbRating"  -> optional(number(min = 0, max = 3000)),
-      "links"      -> optional(cleanNonEmptyText(maxLength = 3000))
-    )(Profile.apply)(Profile.unapply)
-  )
+      "ecfRating" -> optional(number(min = 0, max = 3000)),
+      "rcfRating" -> optional(number(min = 0, max = 3000)),
+      "cfcRating" -> optional(number(min = 200, max = 3000)),
+      "dsbRating" -> optional(number(min = 0, max = 3000)),
+      "links" -> optional(cleanFewSymbolsAndNonEmptyText(maxLength = 3000))
+    )(Profile.apply)(unapply)
+  .fill(user.profileOrDefault)
 
-  def profileOf(user: User) = profile fill user.profileOrDefault
+  def flair(asMod: Boolean) = Form[Option[Flair]]:
+    single(FlairApi.formPair(asMod))
 
-  private def nameField = optional(cleanText(minLength = 2, maxLength = 20))
+object UserForm:
 
-  case class Passwd(
-      oldPasswd: String,
-      newPasswd1: String,
-      newPasswd2: String
-  ) {
-    def samePasswords = newPasswd1 == newPasswd2
-  }
+  val note = Form:
+    mapping(
+      "text" -> cleanTextWithSymbols(minLength = 3, maxLength = 2000),
+      "noteType" -> text
+    )((text, noteType) => NoteData(text, noteType == "mod" || noteType == "dox", noteType == "dox"))(_ =>
+      none
+    )
 
-  def passwd(u: User)(implicit ec: scala.concurrent.ExecutionContext) =
-    authenticator loginCandidate u map { candidate =>
-      Form(
-        mapping(
-          "oldPasswd"  -> nonEmptyText.verifying("incorrectPassword", p => candidate.check(ClearPassword(p))),
-          "newPasswd1" -> text(minLength = 2),
-          "newPasswd2" -> text(minLength = 2)
-        )(Passwd.apply)(Passwd.unapply).verifying("newPasswordsDontMatch", _.samePasswords)
-      )
-    }
-}
+  val apiNote = Form:
+    mapping(
+      "text" -> cleanTextWithSymbols(minLength = 3, maxLength = 2000),
+      "mod" -> boolean,
+      "dox" -> default(boolean, false)
+    )(NoteData.apply)(unapply)
 
-object UserForm {
+  case class NoteData(text: String, mod: Boolean, dox: Boolean)
 
-  val title = Form(single("title" -> optional(nonEmptyText)))
-
-  lazy val historicalUsernameConstraints = Seq(
-    Constraints minLength 2,
-    Constraints maxLength 30,
-    Constraints.pattern(regex = User.historicalUsernameRegex)
-  )
-  lazy val historicalUsernameField = text.verifying(historicalUsernameConstraints: _*)
-}
+  val title = Form:
+    single("title" -> optional(playerTitle.field))

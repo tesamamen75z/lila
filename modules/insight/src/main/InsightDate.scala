@@ -1,27 +1,23 @@
 package lila.insight
 
-import org.joda.time.DateTime
+case class DateRange(min: Instant, max: Instant)
 
-case class DateRange(min: DateTime, max: DateTime)
-
-case class Period(days: Int) {
-  def max = DateTime.now
-  def min = max minusDays days
+case class Period(days: Int):
+  def max = nowInstant
+  def min = max.minusDays(days)
 
   override def toString =
-    days match {
-      case 1             => "Last 24 hours"
-      case d if d < 14   => s"Last $d days"
-      case d if d == 14  => s"Last week"
-      case d if d < 30   => s"Last ${d / 7} weeks"
-      case d if d == 30  => s"Last month"
-      case d if d < 365  => s"Last ${d / 30} months"
+    days match
+      case 1 => "Last 24 hours"
+      case d if d < 14 => s"Last $d days"
+      case d if d == 14 => s"Last week"
+      case d if d < 30 => s"Last ${d / 7} weeks"
+      case d if d == 30 => s"Last month"
+      case d if d < 365 => s"Last ${d / 30} months"
       case d if d == 365 => s"Last year"
-      case d             => s"Last ${d / 365} years"
-    }
-}
+      case d => s"Last ${d / 365} years"
 
-object Period {
+object Period:
 
   val selector: List[Period] = List(
     1,
@@ -36,5 +32,4 @@ object Period {
     365 * 3,
     365 * 5,
     365 * 10
-  ) map Period.apply
-}
+  ).map(Period.apply)

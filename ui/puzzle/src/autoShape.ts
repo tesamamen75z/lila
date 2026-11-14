@@ -1,73 +1,93 @@
-import { winningChances, CevalCtrl } from 'ceval';
-import { DrawModifiers, DrawShape } from 'chessground/draw';
-import { Vm } from './interfaces';
-import { Api as CgApi } from 'chessground/api';
-import { opposite } from 'chessground/util';
+import type { DrawModifiers, DrawShape } from '@lichess-org/chessground/draw';
+import type { NormalMove } from 'chessops/types';
+import { opposite, parseUci, makeSquare } from 'chessops/util';
 
-interface Opts {
-  vm: Vm;
-  ceval: CevalCtrl;
-  ground: CgApi;
-  nextNodeBest?: Uci;
-  threatMode: boolean;
-}
+import { winningChances } from 'lib/ceval';
+import { fenColor } from 'lib/game';
+import { annotationShapes } from 'lib/game/glyphs';
+import type { Glyph, TreeNode } from 'lib/tree/types';
 
-function makeAutoShapesFromUci(uci: Uci, brush: string, modifiers?: DrawModifiers): DrawShape[] {
+// import { makeGooglyShapes } from '../../bits/src/bits.googlyHorsey';
+import type PuzzleCtrl from './ctrl';
+
+function makeAutoShapesFromUci(
+  color: Color,
+  uci: Uci,
+  brush: string,
+  modifiers?: DrawModifiers,
+): DrawShape[] {
+  const move = parseUci(uci)! as NormalMove; // no crazyhouse
+  const to = makeSquare(move.to);
   return [
-    {
-      orig: uci.slice(0, 2) as Key,
-      dest: uci.slice(2, 4) as Key,
-      brush: brush,
-      modifiers: modifiers,
-    },
+    { orig: makeSquare(move.from), dest: to, brush, modifiers },
+    ...(move.promotion
+      ? [{ orig: to, piece: { color, role: move.promotion, scale: 0.8 }, brush: 'green' }]
+      : []),
   ];
 }
 
-export default function (opts: Opts): DrawShape[] {
-  const n = opts.vm.node,
-    hovering = opts.ceval.hovering(),
-    color = opts.ground.state.movable.color;
+export default function (ctrl: PuzzleCtrl): DrawShape[] {
+  const n = ctrl.node;
+  const hovering = ctrl.ceval.hovering();
+  const color = fenColor(n.fen);
   let shapes: DrawShape[] = [];
-  if (hovering && hovering.fen === n.fen) shapes = shapes.concat(makeAutoShapesFromUci(hovering.uci, 'paleBlue'));
-  if (opts.vm.showAutoShapes() && opts.vm.showComputer()) {
-    if (n.eval) shapes = shapes.concat(makeAutoShapesFromUci(n.eval.best!, 'paleGreen'));
+  if (hovering && hovering.fen === n.fen)
+    shapes = shapes.concat(makeAutoShapesFromUci(color, hovering.uci, 'paleBlue'));
+  if (ctrl.showEvaluation() && ctrl.ceval.storedPv() > 0) {
+    if (n.eval) shapes = shapes.concat(makeAutoShapesFromUci(color, n.eval.best!, 'paleGreen'));
     if (!hovering) {
-      let nextBest: Uci | undefined = opts.nextNodeBest;
-      if (!nextBest && opts.ceval.enabled() && n.ceval) nextBest = n.ceval.pvs[0].moves[0];
-      if (nextBest) shapes = shapes.concat(makeAutoShapesFromUci(nextBest, 'paleBlue'));
-      if (
-        opts.ceval.enabled() &&
-        n.ceval &&
-        n.ceval.pvs &&
-        n.ceval.pvs[1] &&
-        !(opts.threatMode && n.threat && n.threat.pvs[2])
-      ) {
-        n.ceval.pvs.forEach(function (pv) {
+      let nextBest: Uci | undefined = ctrl.nextNodeBest();
+      if (!nextBest && ctrl.cevalEnabled() && n.ceval) nextBest = n.ceval.pvs[0]?.moves[0];
+      if (nextBest) shapes = shapes.concat(makeAutoShapesFromUci(color, nextBest, 'paleBlue'));
+      if (ctrl.cevalEnabled() && n.ceval?.pvs?.[1] && !(ctrl.threatMode() && n.threat?.pvs[2])) {
+        n.ceval.pvs.forEach(pv => {
           if (pv.moves[0] === nextBest) return;
-          const shift = winningChances.povDiff(color as Color, n.ceval!.pvs[0], pv);
+          const shift = winningChances.povDiff(color, n.ceval!.pvs[0], pv);
           if (shift > 0.2 || isNaN(shift) || shift < 0) return;
           shapes = shapes.concat(
-            makeAutoShapesFromUci(pv.moves[0], 'paleGrey', {
+            makeAutoShapesFromUci(color, pv.moves[0], 'paleGrey', {
               lineWidth: Math.round(12 - shift * 50), // 12 to 2
-            })
+            }),
           );
         });
       }
     }
   }
-  if (opts.ceval.enabled() && opts.threatMode && n.threat) {
+  if (ctrl.cevalEnabled() && ctrl.threatMode() && n.threat) {
     if (n.threat.pvs[1]) {
-      shapes = shapes.concat(makeAutoShapesFromUci(n.threat.pvs[0].moves[0], 'paleRed'));
-      n.threat.pvs.slice(1).forEach(function (pv) {
-        const shift = winningChances.povDiff(opposite(color as Color), pv, n.threat!.pvs[0]);
+      shapes = shapes.concat(makeAutoShapesFromUci(opposite(color), n.threat.pvs[0].moves[0], 'paleRed'));
+      n.threat.pvs.slice(1).forEach(pv => {
+        const shift = winningChances.povDiff(opposite(color), pv, n.threat!.pvs[0]);
         if (shift > 0.2 || isNaN(shift) || shift < 0) return;
         shapes = shapes.concat(
-          makeAutoShapesFromUci(pv.moves[0], 'paleRed', {
+          makeAutoShapesFromUci(opposite(color), pv.moves[0], 'paleRed', {
             lineWidth: Math.round(11 - shift * 45), // 11 to 2
-          })
+          }),
         );
       });
-    } else shapes = shapes.concat(makeAutoShapesFromUci(n.threat.pvs[0].moves[0], 'red'));
+    } else shapes = shapes.concat(makeAutoShapesFromUci(opposite(color), n.threat.pvs[0].moves[0], 'red'));
   }
-  return shapes;
+  const feedback = feedbackAnnotation(n);
+  const hint =
+    ctrl.hintSquare() !== undefined ? { orig: makeSquare(ctrl.hintSquare()!), brush: 'green' } : undefined;
+  return [
+    ...shapes,
+    ...annotationShapes(n),
+    ...(feedback ? annotationShapes(feedback) : []),
+    ...(hint ? [hint] : []),
+    ...(ctrl.googlyEyes ? ctrl.googlyEyes() : []),
+  ];
+}
+
+function feedbackAnnotation(n: TreeNode): TreeNode | undefined {
+  let glyph: Glyph | undefined;
+  switch (n.puzzle) {
+    case 'good':
+    case 'win':
+      glyph = { id: 7, name: 'good', symbol: '✓' };
+      break;
+    case 'fail':
+      glyph = { id: 4, name: 'fail', symbol: '✗' };
+  }
+  return glyph && { ...n, glyphs: [glyph] };
 }

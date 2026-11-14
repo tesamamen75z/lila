@@ -1,132 +1,172 @@
 package lila.puzzle
 
-import cats.implicits._
-import org.goochjs.glicko2.{ Rating, RatingCalculator, RatingPeriodResults }
-import org.joda.time.DateTime
-import scala.concurrent.duration._
-import scala.util.chaining._
+import chess.rating.IntRatingDiff
+import chess.rating.glicko.{ Glicko, GlickoCalculator }
+import chess.{ ByColor, Rated }
+import scalalib.actor.AsyncActorSequencers
 
 import lila.common.Bus
-import lila.db.dsl._
-import lila.rating.Perf
-import lila.rating.{ Glicko, PerfType }
-import lila.user.{ User, UserRepo }
+import lila.core.perf.Perf
+import lila.db.dsl.{ *, given }
+import lila.puzzle.PuzzleForm.batch.Solution
+import lila.rating.GlickoExt.{ cap, sanityCheck }
+import lila.rating.PerfExt.*
+import lila.rating.PerfType
 
 final private[puzzle] class PuzzleFinisher(
     api: PuzzleApi,
-    userRepo: UserRepo,
-    historyApi: lila.history.HistoryApi,
+    userApi: lila.core.user.UserApi,
+    historyApi: lila.core.history.HistoryApi,
     colls: PuzzleColls
-)(implicit ec: scala.concurrent.ExecutionContext, system: akka.actor.ActorSystem, mode: play.api.Mode) {
+)(using Executor, lila.core.config.RateLimit)(using scheduler: Scheduler):
 
-  import BsonHandlers._
+  private val sequencer = AsyncActorSequencers[PuzzleId](
+    maxSize = Max(64),
+    expiration = 5.minutes,
+    timeout = 5.seconds,
+    name = "puzzle.finish",
+    lila.mon.asyncActorMonitor.full
+  )
 
-  private val sequencer =
-    new lila.hub.DuctSequencers(
-      maxSize = 64,
-      expiration = 5 minutes,
-      timeout = 5 seconds,
-      name = "puzzle.finish"
-    )
+  private val calculator = GlickoCalculator()
+
+  def batch(
+      angle: PuzzleAngle,
+      solutions: List[Solution]
+  )(using me: Me, perf: Perf): Fu[List[(PuzzleRound, IntRatingDiff)]] =
+    solutions
+      .foldM((perf, List.empty[(PuzzleRound, IntRatingDiff)])):
+        case ((perf, rounds), sol) =>
+          apply(sol.id, angle, sol.win, sol.rated)(using me, perf).map:
+            case Some(round, newPerf) =>
+              val rDiff = IntRatingDiff(newPerf.intRating.value - perf.intRating.value)
+              (newPerf, (round, rDiff) :: rounds)
+            case None => (perf, rounds)
+      .map: (_, rounds) =>
+        rounds.reverse
 
   def apply(
-      id: Puzzle.Id,
-      theme: PuzzleTheme.Key,
-      user: User,
-      result: Result
-  ): Fu[Option[(PuzzleRound, Perf)]] =
-    if (api.casual(user, id)) fuccess {
-      PuzzleRound(
-        id = PuzzleRound.Id(user.id, id),
-        win = result.win,
-        fixedAt = none,
-        date = DateTime.now
-      ) -> user.perfs.puzzle
-    } dmap some
+      id: PuzzleId,
+      angle: PuzzleAngle,
+      win: PuzzleWin,
+      rated: Rated
+  )(using me: Me, perf: Perf): Fu[Option[(PuzzleRound, Perf)]] =
+    if api.casual(me.value, id) then
+      fuccess:
+        some:
+          PuzzleRound(
+            id = PuzzleRound.Id(me.userId, id),
+            win = win,
+            fixedAt = none,
+            date = nowInstant
+          ) -> perf
     else
-      sequencer(id.value) {
-        api.round.find(user, id) flatMap { prevRound =>
-          api.puzzle.find(id) flatMap {
-            _ ?? { puzzle =>
-              val now              = DateTime.now
-              val formerUserRating = user.perfs.puzzle.intRating
-
-              val (round, newPuzzleGlicko, userPerf) = prevRound match {
-                case Some(prev) =>
-                  (
-                    prev.updateWithWin(result.win),
-                    none,
-                    user.perfs.puzzle
-                  )
-                case None =>
-                  val userRating = user.perfs.puzzle.toRating
-                  val puzzleRating = new Rating(
-                    puzzle.glicko.rating atLeast Glicko.minRating,
-                    puzzle.glicko.deviation,
-                    puzzle.glicko.volatility,
-                    puzzle.plays,
-                    null
-                  )
-                  updateRatings(userRating, puzzleRating, result.glicko)
-                  val newPuzzleGlicko = !user.perfs.dubiousPuzzle ?? ponder
-                    .puzzle(
-                      theme,
-                      result,
-                      puzzle.glicko -> Glicko(
-                        rating = puzzleRating.getRating
-                          .atMost(puzzle.glicko.rating + Glicko.maxRatingDelta)
-                          .atLeast(puzzle.glicko.rating - Glicko.maxRatingDelta),
-                        deviation = puzzleRating.getRatingDeviation,
-                        volatility = puzzleRating.getVolatility
-                      ).cap,
-                      player = user.perfs.puzzle.glicko
-                    )
-                    .some
-                    .filter(puzzle.glicko !=)
-                    .filter(_.sanityCheck)
-                  val round =
-                    PuzzleRound(
-                      id = PuzzleRound.Id(user.id, puzzle.id),
-                      win = result.win,
-                      fixedAt = none,
-                      date = DateTime.now
-                    )
-                  val userPerf =
-                    user.perfs.puzzle
-                      .addOrReset(_.puzzle.crazyGlicko, s"puzzle ${puzzle.id}")(userRating, now) pipe { p =>
-                      p.copy(glicko =
-                        ponder.player(theme, result, user.perfs.puzzle.glicko -> p.glicko, puzzle.glicko)
+      sequencer(id):
+        api.round
+          .find(me.value, id)
+          .zip(api.puzzle.find(id))
+          .flatMap:
+            case (_, None) => fuccess(none)
+            case (prevRound, Some(puzzle)) =>
+              val now = nowInstant
+              prevRound
+                .match
+                  case Some(prev) =>
+                    fuccess:
+                      (prev.updateWithWin(win), none, perf)
+                  case None if rated.no =>
+                    fuccess:
+                      val round = PuzzleRound(
+                        id = PuzzleRound.Id(me.userId, puzzle.id),
+                        win = win,
+                        fixedAt = none,
+                        date = now
                       )
-                    }
-                  (round, newPuzzleGlicko, userPerf)
-              }
-              api.round.upsert(round, theme) zip
-                colls.puzzle {
-                  _.update
-                    .one(
-                      $id(puzzle.id),
-                      $inc(Puzzle.BSONFields.plays -> $int(1)) ++ newPuzzleGlicko.?? { glicko =>
-                        $set(Puzzle.BSONFields.glicko -> Glicko.glickoBSONHandler.write(glicko))
-                      }
-                    )
-                    .void
-                } zip
-                (userPerf != user.perfs.puzzle).?? {
-                  userRepo.setPerf(user.id, PerfType.Puzzle, userPerf.clearRecent) zip
-                    historyApi.addPuzzle(user = user, completedAt = now, perf = userPerf) void
-                } >>- {
-                  if (prevRound.isEmpty)
-                    Bus.publish(
-                      Puzzle.UserResult(puzzle.id, user.id, result, formerUserRating -> userPerf.intRating),
-                      "finishPuzzle"
-                    )
-                } inject (round -> userPerf).some
-            }
-          }
-        }
-      }
+                      (round, none, perf)
+                  case None =>
+                    // for rating computation, we treat the solve as a game
+                    // where the player is white and the puzzle is black
+                    val (userGlicko, puzzleGlicko) =
+                      val players = ByColor(
+                        perf.toGlickoPlayer,
+                        chess.rating.glicko.Player(puzzle.glicko.cap, puzzle.plays, none)
+                      )
+                      calculator
+                        .computeGame:
+                          chess.rating.glicko.Game(players, chess.Outcome(Color.fromWhite(win.yes).some))
+                        .map(_.map(_.glicko))
+                        .fold(
+                          err =>
+                            logger.error(s"Failed to compute glicko for puzzle ${puzzle.id}", err)
+                            players.map(_.glicko).toPair
+                          ,
+                          _.toPair
+                        )
+                    userApi
+                      .dubiousPuzzle(me.userId, perf)
+                      .map: dubiousPlayer =>
+                        val updatePuzzleGlicko =
+                          !dubiousPlayer && canUpdatePuzzleRating(me.userId, false)(true)
+                        val newPuzzleGlicko = updatePuzzleGlicko.so:
+                          ponder
+                            .puzzle(
+                              angle,
+                              win,
+                              puzzle.glicko -> puzzleGlicko
+                                .copy(
+                                  rating = puzzleGlicko.rating
+                                    .atMost(puzzle.glicko.rating + lila.rating.Glicko.maxRatingDelta)
+                                    .atLeast(puzzle.glicko.rating - lila.rating.Glicko.maxRatingDelta)
+                                )
+                                .cap,
+                              player = perf.glicko
+                            )
+                            .some
+                            .filter(puzzle.glicko !=)
+                            .filter(_.sanityCheck)
+                        val round =
+                          PuzzleRound(
+                            id = PuzzleRound.Id(me.userId, puzzle.id),
+                            win = win,
+                            fixedAt = none,
+                            date = now
+                          )
+                        val userPerf = perf
+                          .addOrReset(lila.mon.puzzle.crazyGlicko, s"puzzle ${puzzle.id}")(userGlicko, now)
+                          .pipe: p =>
+                            p.copy(glicko = ponder.player(angle, win, perf.glicko -> p.glicko, puzzle.glicko))
+                        (round, newPuzzleGlicko, userPerf)
+                .flatMap: (round, newPuzzleGlicko, userPerf) =>
+                  import lila.rating.Glicko.glickoHandler
+                  for
+                    _ <- api.round
+                      .upsert(round, angle)
+                      .zip:
+                        (userPerf != perf).so:
+                          userApi
+                            .setPerf(me.userId, PerfType.Puzzle, userPerf.clearRecent)
+                            .zip(historyApi.addPuzzle(user = me.value, completedAt = now, perf = userPerf))
+                            .void
+                    _ <- colls.puzzle.map:
+                      _.updateUnchecked(
+                        bid(puzzle.id),
+                        inc(Puzzle.BSONFields.plays -> bint(1)) ++ newPuzzleGlicko.so { glicko =>
+                          set(Puzzle.BSONFields.glicko -> glicko)
+                        }
+                      )
+                    _ = if prevRound.isEmpty then
+                      Bus.pub:
+                        Puzzle.UserResult(
+                          puzzle.id,
+                          me.userId,
+                          win,
+                          perf.intRating -> userPerf.intRating
+                        )
+                  yield (round -> userPerf).some
 
-  private object ponder {
+  private val canUpdatePuzzleRating = lila.memo.RateLimit[UserId](300, 1.day, "puzzle.canUpdatePuzzleRating")
+
+  private object ponder:
 
     // themes that don't hint at the solution
     private val nonHintingThemes: Set[PuzzleTheme.Key] = Set(
@@ -153,49 +193,24 @@ final private[puzzle] class PuzzleFinisher(
       PuzzleTheme.doubleCheck,
       PuzzleTheme.mateIn1,
       PuzzleTheme.castling
-    ).map(_.key)
+    ).map(_.key) ++ PuzzleTheme.allMates
 
-    private def weightOf(theme: PuzzleTheme.Key, result: Result) =
-      if (theme == PuzzleTheme.mix.key) 1
-      else if (isObvious(theme)) {
-        if (result.win) 0.2f else 0.6f
-      } else if (isHinting(theme)) {
-        if (result.win) 0.3f else 0.7f
-      } else {
-        if (result.win) 0.7f else 0.8f
-      }
+    private def weightOf(angle: PuzzleAngle, win: PuzzleWin) =
+      angle.asTheme.fold(1f): theme =>
+        if theme == PuzzleTheme.mix.key then 1
+        else if isObvious(theme) then if win.yes then 0.1f else 0.4f
+        else if isHinting(theme) then if win.yes then 0.2f else 0.7f
+        else if win.yes then 0.7f
+        else 0.8f
 
-    def player(theme: PuzzleTheme.Key, result: Result, glicko: (Glicko, Glicko), puzzle: Glicko) = {
-      val provisionalPuzzle = puzzle.provisional ?? {
-        if (result.win) -0.2f else -0.7f
-      }
-      glicko._1.average(glicko._2, (weightOf(theme, result) + provisionalPuzzle) atLeast 0.1f)
-    }
+    def player(angle: PuzzleAngle, win: PuzzleWin, glicko: (Glicko, Glicko), puzzle: Glicko) =
+      val provisionalPuzzle = puzzle.provisional.yes.so:
+        if win.yes then -0.2f else -0.7f
+      glicko._1.average(glicko._2, (weightOf(angle, win) + provisionalPuzzle).atLeast(0.1f))
 
-    def puzzle(theme: PuzzleTheme.Key, result: Result, glicko: (Glicko, Glicko), player: Glicko) =
-      if (player.clueless) glicko._1
-      else glicko._1.average(glicko._2, weightOf(theme, result))
-  }
+    def puzzle(angle: PuzzleAngle, win: PuzzleWin, glicko: (Glicko, Glicko), player: Glicko) =
+      if player.clueless then glicko._1
+      else glicko._1.average(glicko._2, weightOf(angle, win))
 
-  private val VOLATILITY = Glicko.default.volatility
-  private val TAU        = 0.75d
-  private val calculator = new RatingCalculator(VOLATILITY, TAU)
-
-  def incPuzzlePlays(puzzleId: Puzzle.Id): Funit =
-    colls.puzzle.map(_.incFieldUnchecked($id(puzzleId), Puzzle.BSONFields.plays))
-
-  private def updateRatings(u1: Rating, u2: Rating, result: Glicko.Result): Unit = {
-    val results = new RatingPeriodResults()
-    result match {
-      case Glicko.Result.Draw => results.addDraw(u1, u2)
-      case Glicko.Result.Win  => results.addResult(u1, u2)
-      case Glicko.Result.Loss => results.addResult(u2, u1)
-    }
-    try {
-      calculator.updateRatings(results)
-    } catch {
-      case e: Exception => logger.error("finisher", e)
-    }
-  }
-
-}
+  def incPuzzlePlays(puzzleId: PuzzleId): Funit =
+    colls.puzzle.map(_.incFieldUnchecked(bid(puzzleId), Puzzle.BSONFields.plays))

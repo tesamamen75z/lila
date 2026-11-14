@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Wyzwania</string>
+  <string name="challengesX">Wyzwania: %1$s</string>
   <string name="challengeToPlay">Zaproś do gry</string>
   <string name="challengeDeclined">Wyzwanie odrzucone</string>
   <string name="challengeAccepted">Wyzwanie zaakceptowane!</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">Nie chcę grać teraz tego wariantu.</string>
   <string name="declineNoBot">Nie przyjmuję wyzwań od botów.</string>
   <string name="declineOnlyBot">Przyjmuję tylko wyzwania od botów.</string>
+  <string name="inviteLichessUser">Lub zaproś użytkownika Lichess:</string>
 </resources>

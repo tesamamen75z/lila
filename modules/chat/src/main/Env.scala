@@ -1,17 +1,15 @@
 package lila.chat
 
-import akka.actor.ActorSystem
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import scala.concurrent.duration.FiniteDuration
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
+import lila.core.user.LightUserApi
 
 private case class ChatConfig(
     @ConfigName("collection.chat") chatColl: CollName,
     @ConfigName("collection.timeout") timeoutColl: CollName,
-    @ConfigName("actor.name") actorName: String,
     @ConfigName("timeout.duration") timeoutDuration: FiniteDuration,
     @ConfigName("timeout.check_every") timeoutCheckEvery: FiniteDuration
 )
@@ -20,32 +18,29 @@ private case class ChatConfig(
 final class Env(
     appConfig: Configuration,
     netDomain: NetDomain,
-    userRepo: lila.user.UserRepo,
+    userApi: lila.core.user.UserApi,
+    lightUserApi: LightUserApi,
+    userRepo: lila.core.user.UserRepo,
     db: lila.db.Db,
-    flood: lila.security.Flood,
-    spam: lila.security.Spam,
-    shutup: lila.hub.actors.Shutup,
+    flood: lila.core.security.FloodApi,
+    spam: lila.core.security.SpamApi,
+    shutupApi: lila.core.shutup.ShutupApi,
     cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+)(using Executor)(using scheduler: Scheduler):
 
-  private val config = appConfig.get[ChatConfig]("chat")(AutoConfig.loader)
-  import config._
+  private val config = appConfig.get[ChatConfig]("chat")(using AutoConfig.loader)
+  import config.*
 
-  lazy val timeout = new ChatTimeout(
+  lazy val timeout = ChatTimeout(
     coll = db(timeoutColl),
     duration = timeoutDuration
   )
 
   lazy val coll = db(chatColl)
 
+  lazy val json = wire[ChatJsonView]
+
   lazy val api = wire[ChatApi]
 
-  lazy val panic = wire[ChatPanic]
-
-  system.scheduler.scheduleWithFixedDelay(timeoutCheckEvery, timeoutCheckEvery) { () =>
-    timeout.checkExpired foreach api.userChat.reinstate
-  }
-}
+  scheduler.scheduleWithFixedDelay(timeoutCheckEvery, timeoutCheckEvery): () =>
+    timeout.checkExpired.foreach(api.userChat.reinstate)

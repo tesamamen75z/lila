@@ -1,61 +1,81 @@
 package lila.lobby
 
-import akka.actor._
-import akka.stream.scaladsl._
-import play.api.libs.json._
-import scala.concurrent.duration._
+import org.apache.pekko.actor.Cancellable
+import org.apache.pekko.stream.scaladsl.*
+import play.api.libs.json.*
 
 import lila.common.Bus
+import lila.core.pool.PoolFrom
+import lila.core.socket.Sri
 
 final class BoardApiHookStream(
-    trouper: LobbyTrouper
-)(implicit ec: scala.concurrent.ExecutionContext, system: ActorSystem) {
-
-  private case object SetOnline
+    lobby: LobbySyncActor,
+    userApi: lila.core.user.UserApi,
+    poolApi: lila.core.pool.PoolApi
+)(using scheduler: Scheduler)(using Executor):
 
   private val blueprint =
-    Source.queue[Option[JsObject]](16, akka.stream.OverflowStrategy.dropHead)
+    Source.queue[Option[JsObject]](4, org.apache.pekko.stream.OverflowStrategy.dropHead)
 
-  def apply(hook: Hook): Source[Option[JsObject], _] =
-    blueprint mapMaterializedValue { queue =>
-      val actor = system.actorOf(Props(mkActor(hook, queue)))
-      queue.watchCompletion().foreach { _ =>
-        actor ! PoisonPill
-      }
-    }
+  def apply(hook: Hook): Source[Option[JsObject], ?] = asPool(hook) | asHook(hook)
 
-  private def mkActor(hook: Hook, queue: SourceQueueWithComplete[Option[JsObject]]) =
-    new Actor {
+  private def asHook(hook: Hook): Source[Option[JsObject], ?] =
 
-      val classifiers = List(s"hookRemove:${hook.id}")
+    val channels = List(s"hookRemove:${hook.id}", s"hookRemove:${hook.sri}")
 
-      override def preStart(): Unit = {
-        super.preStart()
-        Bus.subscribe(self, classifiers)
-        trouper ! actorApi.AddHook(hook)
-      }
+    blueprint.mapMaterializedValue: queue =>
+      val busHandler = scalalib.bus.Tellable:
+        case RemoveHook(_) => queue.complete()
 
-      override def postStop() = {
-        super.postStop()
-        Bus.unsubscribe(self, classifiers)
-        trouper ! actorApi.CancelHook(hook.sri)
-        queue.complete()
-      }
+      Bus.subscribeDyn(busHandler, channels*)
 
-      self ! SetOnline
+      val keepAlive = periodicBlankLine(queue)
 
-      def receive = {
+      queue
+        .watchCompletion()
+        .addEffectAnyway:
+          keepAlive.cancel()
+          Bus.unsubscribeDyn(busHandler, channels)
+          lobby ! CancelHook(hook.sri)
 
-        case actorApi.RemoveHook(_) => self ! PoisonPill
+      lobby ! SetupBus.AddHook(hook)
 
-        case SetOnline =>
-          context.system.scheduler
-            .scheduleOnce(3 second) {
-              // gotta send a message to check if the client has disconnected
-              queue offer None
-              self ! SetOnline
-            }
-            .unit
-      }
-    }
-}
+  private def asPool(hook: Hook): Option[Source[Option[JsObject], ?]] = for
+    poolId <- poolApi.poolOf(hook.clock)
+    if hook.seemsCompatibleWithPools
+    member <- Hook.asPoolMember(hook, PoolFrom.Api)
+  yield
+    val channel = s"hookRemove:${member.sri}"
+
+    blueprint.mapMaterializedValue: queue =>
+      val busHandler = scalalib.bus.Tellable:
+        // lets the mobile withdraw from pool with `DELETE /api/board/seek
+        case RemoveHook(_) => queue.complete()
+        case _: lila.core.pool.Pairing => queue.complete()
+
+      Bus.subscribeDyn(busHandler, channel)
+
+      val keepAlive = periodicBlankLine(queue)
+
+      queue
+        .watchCompletion()
+        .addEffectAnyway:
+          keepAlive.cancel()
+          Bus.unsubscribeDyn(busHandler, List(channel))
+          poolApi.leave(poolId, member.userId)
+
+      poolApi.join(poolId, member)
+
+  private def periodicBlankLine(queue: SourceQueue[Option[JsObject]]): Cancellable =
+    scheduler.scheduleWithFixedDelay(10.seconds, 10.seconds): () =>
+      queue.offer(None)
+
+  def cancel(sri: Sri, reqSri: Option[Sri]) =
+    remove(sri)
+    reqSri.filter(_ != sri).foreach(remove)
+
+  private def remove(sri: Sri) = Bus.publishDyn(RemoveHook(sri.value), s"hookRemove:${sri}")
+
+  def mustPlayAsColor(chosen: TriColor)(using me: Option[Me]): Fu[Option[Color]] =
+    (chosen != TriColor.Random).so:
+      me.map(_.userId).so(userApi.mustPlayAsColor).map(_.filter(_ != chosen.resolve()))

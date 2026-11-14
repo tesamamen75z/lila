@@ -1,166 +1,158 @@
 package lila.setup
 
-import chess.Mode
-import lila.lobby.Color
-import lila.lobby.{ Hook, Seek }
-import lila.rating.RatingRange
-import lila.user.User
+import chess.variant.Variant
+import chess.{ Clock, IntRating, Rated }
+import scalalib.model.Days
+
+import lila.core.id.SessionId
+import lila.core.perf.UserWithPerfs
+import lila.core.rating.RatingRange
+import lila.lobby.{ Hook, Seek, TriColor }
+import lila.rating.RatingRange.withinLimits
 
 case class HookConfig(
     variant: chess.variant.Variant,
     timeMode: TimeMode,
-    time: Double,
-    increment: Int,
-    days: Int,
-    mode: Mode,
-    color: Color,
+    time: Double, // minutes
+    increment: Clock.IncrementSeconds,
+    days: Days,
+    rated: Rated,
+    color: TriColor,
     ratingRange: RatingRange
-) extends HumanConfig {
+) extends HumanConfig:
 
-  def withinLimits(user: Option[User]): HookConfig =
-    (for {
-      pt <- perfType
-      me <- user
-    } yield copy(
-      ratingRange = ratingRange.withinLimits(
-        rating = me.perfs(pt).intRating,
-        delta = 400,
-        multipleOf = 50
-      )
-    )) | this
+  def withinLimits(using me: Option[Me], perf: Perf): HookConfig =
+    if me.isEmpty then this
+    else copy(ratingRange = ratingRange.withinLimits(perf.intRating, 500))
 
-  private def perfType = lila.game.PerfPicker.perfType(makeSpeed, variant, makeDaysPerTurn)
-
-  def makeSpeed = chess.Speed(makeClock)
-
-  def fixColor =
-    copy(
-      color =
-        if (
-          mode == Mode.Rated &&
-          lila.game.Game.variantsWhereWhiteIsBetter(variant) &&
-          color != Color.Random
-        ) Color.Random
-        else color
-    )
-
-  def >> =
-    (variant.id, timeMode.id, time, increment, days, mode.id.some, ratingRange.toString.some, color.name).some
+  def >> = (
+    variant.id,
+    timeMode.id,
+    time,
+    increment,
+    days,
+    rated.id.some,
+    ratingRange.toString.some,
+    color.name.some
+  ).some
 
   def withTimeModeString(tc: Option[String]) =
-    tc match {
-      case Some("realTime")       => copy(timeMode = TimeMode.RealTime)
+    tc match
+      case Some("realTime") => copy(timeMode = TimeMode.RealTime)
       case Some("correspondence") => copy(timeMode = TimeMode.Correspondence)
-      case Some("unlimited")      => copy(timeMode = TimeMode.Unlimited)
-      case _                      => this
-    }
+      case Some("unlimited") => copy(timeMode = TimeMode.Unlimited)
+      case _ => this
 
   def hook(
-      sri: lila.socket.Socket.Sri,
-      user: Option[User],
-      sid: Option[String],
-      blocking: Set[String]
+      sri: lila.core.socket.Sri,
+      user: Option[UserWithPerfs],
+      sid: Option[SessionId],
+      blocking: lila.core.pool.Blocking
   ): Either[Hook, Option[Seek]] =
-    timeMode match {
+    timeMode match
       case TimeMode.RealTime =>
         val clock = justMakeClock
-        Left(
+        Left:
           Hook.make(
             sri = sri,
             variant = variant,
             clock = clock,
-            mode = if (lila.game.Game.allowRated(variant, clock.some)) mode else Mode.Casual,
-            color = color.name,
+            rated = if lila.core.game.allowRated(variant, clock.some) then rated else Rated.No,
+            color = color,
             user = user,
             blocking = blocking,
             sid = sid,
             ratingRange = ratingRange
           )
-        )
       case _ =>
-        Right(user map { u =>
-          Seek.make(
-            variant = variant,
-            daysPerTurn = makeDaysPerTurn,
-            mode = mode,
-            color = color.name,
-            user = u,
-            blocking = blocking,
-            ratingRange = ratingRange
-          )
-        })
-    }
+        Right:
+          user.map: u =>
+            Seek.make(
+              variant = variant,
+              daysPerTurn = makeDaysPerTurn,
+              rated = rated,
+              user = u,
+              blocking = blocking,
+              ratingRange = ratingRange
+            )
 
-  def noRatedUnlimited = mode.casual || hasClock || makeDaysPerTurn.isDefined
-
-  def updateFrom(game: lila.game.Game) =
-    copy(
+  def updateFrom(game: Game) =
+    val h1 = copy(
       variant = game.variant,
-      timeMode = TimeMode ofGame game,
+      timeMode = TimeMode.ofGame(game),
       time = game.clock.map(_.limitInMinutes) | time,
       increment = game.clock.map(_.incrementSeconds) | increment,
       days = game.daysPerTurn | days,
-      mode = game.mode
+      rated = game.rated
     )
+    val h2 = if h1.isRatedUnlimited then h1.copy(rated = Rated.No) else h1
+    if !h2.validClock then h2.copy(time = 1) else h2
 
-  def withRatingRange(str: Option[String]) = copy(ratingRange = RatingRange orDefault str)
-}
+  def withRatingRange(ratingRange: String) =
+    copy(ratingRange = RatingRange.orDefault(ratingRange))
+  def withRatingRange(rating: Option[IntRating], deltaMin: Option[String], deltaMax: Option[String]) =
+    copy(ratingRange = lila.rating.RatingRange.orDefault(rating, deltaMin, deltaMax))
 
-object HookConfig extends BaseHumanConfig {
+object HookConfig extends BaseConfig:
 
-  def from(v: Int, tm: Int, t: Double, i: Int, d: Int, m: Option[Int], e: Option[String], c: String) = {
-    val realMode = m.fold(Mode.default)(Mode.orDefault)
+  def from(
+      v: Variant.Id,
+      tm: Int,
+      t: Double,
+      i: Clock.IncrementSeconds,
+      d: Days,
+      m: Option[Int],
+      e: Option[String],
+      c: Option[String]
+  ) =
     new HookConfig(
-      variant = chess.variant.Variant(v) err s"Invalid game variant $v",
-      timeMode = TimeMode(tm) err s"Invalid time mode $tm",
+      variant = chess.variant.Variant.orDefault(v),
+      timeMode = TimeMode(tm).err(s"Invalid time mode $tm"),
       time = t,
       increment = i,
       days = d,
-      mode = realMode,
-      ratingRange = e.fold(RatingRange.default)(RatingRange.orDefault),
-      color = Color(c) err s"Invalid color $c"
+      rated = m.fold(Rated.default)(Rated.orDefault),
+      color = TriColor.orDefault(c),
+      ratingRange = e.fold(RatingRange.default)(RatingRange.orDefault)
     )
-  }
 
-  def default(auth: Boolean): HookConfig = default.copy(mode = Mode(auth))
+  def default(auth: Boolean): HookConfig = default.copy(rated = Rated(auth))
 
   private val default = HookConfig(
     variant = variantDefault,
     timeMode = TimeMode.RealTime,
     time = 5d,
-    increment = 3,
-    days = 2,
-    mode = Mode.default,
+    increment = Clock.IncrementSeconds(3),
+    days = Days(2),
+    rated = Rated.default,
     ratingRange = RatingRange.default,
-    color = Color.default
+    color = TriColor.default
   )
 
   import lila.db.BSON
-  import lila.db.dsl._
+  import lila.db.dsl.{ *, given }
 
-  implicit private[setup] val hookConfigBSONHandler = new BSON[HookConfig] {
+  private[setup] given BSON[HookConfig] with
 
     def reads(r: BSON.Reader): HookConfig =
       HookConfig(
-        variant = chess.variant.Variant orDefault (r int "v"),
-        timeMode = TimeMode orDefault (r int "tm"),
-        time = r double "t",
-        increment = r int "i",
-        days = r int "d",
-        mode = Mode orDefault (r int "m"),
-        color = Color.Random,
-        ratingRange = r strO "e" flatMap RatingRange.apply getOrElse RatingRange.default
+        variant = Variant.idOrDefault(r.getO[Variant.Id]("v")),
+        timeMode = TimeMode.orDefault(r.int("tm")),
+        time = r.double("t"),
+        increment = r.get("i"),
+        days = r.get("d"),
+        rated = Rated.orDefault(r.int("m")),
+        color = TriColor.Random,
+        ratingRange = r.strO("e").flatMap(RatingRange.parse).getOrElse(RatingRange.default)
       )
 
     def writes(w: BSON.Writer, o: HookConfig) =
-      $doc(
-        "v"  -> o.variant.id,
+      bdoc(
+        "v" -> o.variant.id,
         "tm" -> o.timeMode.id,
-        "t"  -> o.time,
-        "i"  -> o.increment,
-        "d"  -> o.days,
-        "m"  -> o.mode.id,
-        "e"  -> o.ratingRange.toString
+        "t" -> o.time,
+        "i" -> o.increment,
+        "d" -> o.days,
+        "m" -> o.rated.id,
+        "e" -> o.ratingRange.toString
       )
-  }
-}

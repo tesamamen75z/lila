@@ -16,15 +16,18 @@
   <string name="otherWaysToHelp">いろんな方法</string>
   <string name="areThereWebsitesBasedOnLichess">Lichess を基に生まれたサイトは他にありますか？</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">はい。Lichess の%1$s、%2$s、%3$sを使ったオープンソースのサイトが生まれています。</string>
+  <string name="keyboardShortcuts">操作のショートカットキーはありますか？</string>
+  <string name="keyboardShortcutsExplanation">Lichess にはショートカットキーが使えるページがあります。研究、解析、問題、対局のページで 「?」キーを押すと、使えるショートカットキーの一覧が表示されます。</string>
   <string name="fairPlay">フェアプレイについて</string>
   <string name="whenAmIEligibleRatinRefund">不正な相手に奪われたレーティングが回復するのはいつですか？</string>
-  <string name="ratingRefundExplanation">あるプレイヤーに不正行為のマークが付いたら、1 分後に、その人の最近 3 日間の最新の勝局 40 局について回復が行われます。あなたがこれらの対局の相手で、レーティングが暫定でない場合、数字が回復します。ただしあなたの最高レーティングとその後の変動によって回復の幅には上限があります。
-  （たとえばその人との対局後にあなたのレーティングが大きく上がっていれば、回復は部分的かゼロになることもあります。）また回復は 150 点が上限です。</string>
+  <string name="ratingRefundExplanation">あるプレイヤーに不正行為のマークが付いたら、1 分後に、その人の最近 5 日間の最新のレート戦 40 局について回復が行われます。あなたがこれらの対局の相手で、レーティングが暫定でない場合、数字が回復します。ただしあなたの最高レーティングとその後の変動によって回復の幅には上限があります（たとえばその後にあなたのレーティングが大きく上がっていれば、回復は部分的かゼロになることもあります）。また回復は 150 点が上限です。</string>
   <string name="preventLeavingGameWithoutResigning">投了せずに対局からいなくなる人にはどう対処していますか？</string>
   <string name="leavingGameWithoutResigningExplanation">何度も対局を中止／放置する人は対戦禁止 (play ban) になります。つまり対局が一時的にできなくなります。このことはプロフィールには表示されません。同じ行為がさらに続くと対戦禁止の期間は長くなっていき、最後にはアカウントが停止されることがあります。</string>
   <string name="howCanIBecomeModerator">どうすればモデレーターになれますか？</string>
   <string name="youCannotApply">自分から申請してモデレーターになることはできません。当方から、適任だと思った人にコンタクトを取ります。</string>
   <string name="isCorrespondenceDifferent">通信戦のルールはふつうのチェスと違うのですか？</string>
+  <string name="pleaseReadFairPlayPage">詳しくは %s をお読みください</string>
+  <string name="fairPlayPage">フェアプレイ規定のページ</string>
   <string name="youCanUseOpeningBookNoEngine">Lichess では通信戦のルール上の主な違いは序盤の定跡調査が認められていることです。エンジン（ソフト）の使用は禁止されており、使うとエンジン使用者の表示が付くことがあります。[通信戦の国際団体] ICCF はエンジンの使用を認めていますが、Lichess は認めません。</string>
   <string name="gameplay">対局について</string>
   <string name="howBulletBlitzEtcDecided">ブレット、ブリッツなど持時間の区分の基準は？</string>
@@ -45,6 +48,7 @@
   <string name="lichessFollowFIDErules">一方のプレイヤーが時間切れになると、通常は負けになります。ただし、時間を残したプレイヤーがいかなる合法な手順でも相手のキングをメイトできない場合はドローになります（%1$s）。
  まれな場合には自動での判定が難しいことがあります（強制手順、フォートレスの存在など）。Lichess では常に時間を残した方に有利に判定しています。
  一方がビショップかナイト 1 個だけでも、他方にキング以外の駒が残っていればメイトの可能性があることに注意してください。</string>
+  <string name="fideHandbook">FIDE ハンドブック</string>
   <string name="fideHandbookX">FIDE ハンドブック %s</string>
   <string name="discoveringEnPassant">ポーンがすでに通過したマスで取られてしまうのですが…？（アンパッサンについて）</string>
   <string name="explainingEnPassant">それは「アンパッサン (en passant)」というルールです。ウィキペディアの記事がまず%1$sになるでしょう。
@@ -52,10 +56,10 @@
 「相手のポーンが元のマスから 1 手で 2 マス進んだ時、この相手のポーンと同じランクで隣のファイルにいるポーンは、相手のポーンが 1 マス進んだ時と同じように相手のポーンを取ることができる。これは相手のポーンが進んだ直後の手でしか行えず、『アンパッサン』と呼ばれる」
 %3$sでアンパッサンを練習することができます。</string>
   <string name="goodIntroduction">参考</string>
-  <string name="officialRulesPDF">公式ルール (pdf)</string>
   <string name="lichessTraining">Lichess のトレーニング機能</string>
+  <string name="watchIMRosenCheckmate">IM Eric Rosen が&lt;a href=\'%s\' target=\'_blank\'&gt;アンパッサンで&lt;/a&gt;メイトするところをご覧ください。</string>
   <string name="threefoldRepetition">同形三復について</string>
-  <string name="threefoldRepetitionExplanation">同じ局面が 3 回起きたら、申し立てをすることで%1$sのドローになります。Lichess は FIDE の公式ルール、%2$sの第 9.2 (d) 項を実装しています。</string>
+  <string name="threefoldRepetitionExplanation">同じ局面が 3 回起きたら、申し立てをすることで%1$sのドローになります。Lichess は FIDE の公式ルール、%2$sの第 9.2 項を実装しています。</string>
   <string name="threefoldRepetitionLowerCase">同形三復</string>
   <string name="notRepeatedMoves">同じ手は指していないのに、なぜ同形三復（repetition）でドローなのですか？</string>
   <string name="repeatedPositionsThatMatters">同形三復は同じ%1$sの繰り返しを言うのであって、同じ手ではありません。繰り返しが連続で起きる必要はないのです。</string>
@@ -83,7 +87,6 @@
   <string name="usernamesCannotBeChanged">いえ、変えられません。技術上・実務上の理由があります。 ユーザー名はデータベース、エクスポート、ログ、人の頭の中とあまりにも多くの場所にあるからです。大文字小文字の区別は一度だけ変更できます。</string>
   <string name="uniqueTrophies">独特なトロフィー</string>
   <string name="ownerUniqueTrophies">このトロフィーは Lichess 史上唯一のもので、与えられたのは今後を含めて %1$s だけです。</string>
-  <string name="wayOfBerserkExplanation">ユーザー hiimgosu は %s で全局バーサークして100%%の勝率を上げたのです。</string>
   <string name="aHourlyBulletTournament">毎時のブレット・トーナメント</string>
   <string name="goldenZeeExplanation">ユーザー ZugAddict はストリーム配信をしながら 1+0 の持時間でレベル 8 の AI に勝とうと 2 時間奮闘しましたがうまくいきませんでした。Thibault は彼に、配信中に勝ったら特製のトロフィーをあげると言いました。1 時間後、彼はみごと Stockfish を破り、約束が守られたというわけです。</string>
   <string name="lichessRatings">Lichess のレーティング</string>
@@ -120,4 +123,40 @@
   <string name="lichessCanOptionnalySendPopUps">Lichess では、たとえば自分の手番やメッセージが来たなどの通知をポップアップで表示するかどうかが選べます。 
  ブラウザの URL バーで錠のアイコンをクリックしてください。
  そして Lichess からの通知を認めるかブロックするかを選びます。</string>
+  <string name="enableAutoplayForSoundsQ">サウンドの自動再生を有効にするには？</string>
+  <string name="mostBrowsersPreventSoundAutoplay">通常のブラウザではユーザーを守るため、新たに読み込んだページのサウンド再生がオフになっています。
+
+ブラウザが lichess.org のサウンド再生を阻止すると、赤のミュートアイコンが表示されます。通常、何かをクリックするとこの制限は解除されます。
+一部のモバイル用ブラウザでは、駒のタッチ＆ドラッグはクリックしたことになりません。その場合は対局の初めにボードをタップして音声をオンにする必要があります。
+
+この状態を示すために赤のミュートアイコンが表示されます。ほとんどのブラウザでは設定で lichess.org のサウンド再生を許可できます。以下によく使われるブラウザの最近のバージョンでの操作方法をまとめました。</string>
+  <string name="desktop">デスクトップ</string>
+  <string name="enableAutoplayForSoundsFirefox">1. lichess.org に行く
+2. Linux/Windows なら Ctrl+i を、MacOS なら cmd+i を押す
+3. 許可設定タブをクリック
+4. lichess.org の音声と動画を許可する</string>
+  <string name="enableAutoplayForSoundsChromeSiteInformation" comment="Guidance for Google Chrome users on how to enable audio auto-play if they have sound issues.">1. lichess.org へ行く
+2. URL の左のサイト情報アイコンをクリック
+3. 「サイトの設定」をクリック
+4. 「音声」を「許可する」</string>
+  <string name="enableAutoplayForSoundsSafari">1. lichess.org に行く
+2. メニューバーで Safari をクリック
+3. lichess.org の設定をクリック
+4. 「すべてのメディアを自動再生」を許可する</string>
+  <string name="enableAutoplayForSoundsMicrosoftEdge">1. 右上の点 3 つのアイコンをクリック
+2. 「設定」をクリック
+3. 「Cookie とサイトのアクセス許可」をクリック
+4. スクロールして「メディアの自動再生」をクリック
+5. 「許可」に lichess.org を追加</string>
+  <string name="makeBotTitle">Lichess で動くボットを作るには？</string>
+  <string name="makeBotDescription">Lichess で動く&lt;a href=\'%1$s\'&gt;独自のチェスボット&lt;/a&gt;の作り方については、&lt;a href=\'%2$s\'&gt;このブログ記事&lt;/a&gt;をお読みください。</string>
+  <string name="stopMyselfFromPlaying">チェスのやりすぎを止めるには？</string>
+  <string name="mentalHealthCondition">独立した疾病</string>
+  <string name="lichessUserstyles">Lichess ユーザースタイル</string>
+  <string name="fewerLobbyPools">ロビーのプール数を減らせます</string>
+  <string name="adviceOnMitigatingAddiction">Lichess には、チェスのやりすぎを止めるにはどうすればいいか、という相談がよく寄せられます。
+
+Lichess がユーザーを追放やブロックするのは規約違反の時だけなので、やりすぎを防ぐには外部ツールの利用をおすすめします。ウェブサイトブロッカーとして %1$s、%2$s、%3$s などがよく使われます。また Lichess は続けたいが短い持時間は避けたいという場合は %4$s を使うこともできます。一例として %5$s。
+
+チェスのやりすぎが依存症にまでなっていると感じる人もいます。WHO（世界保健機関）ではすでに「ゲーム障害」を%6$sと認定しています。その主な症状は 1) ゲーム活動をコントロールできない、2) 生活の中でゲーム活動の比重が高まっていく、3) 悪い影響が出ているのにゲーム活動がエスカレートしていく、です。あなたのチェスがこういうパターンにはまっていると思うなら、友だちや家族、専門家に相談することをおすすめします。</string>
 </resources>

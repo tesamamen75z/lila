@@ -1,32 +1,31 @@
 package lila.puzzle
 
-import chess.format.{ FEN, Uci }
-import reactivemongo.api.bson._
+import chess.format.{ Fen, Uci }
+import chess.rating.glicko.Glicko
+import reactivemongo.api.bson.*
+
 import scala.util.{ Success, Try }
 
 import lila.db.BSON
-import lila.db.dsl._
-import lila.game.Game
-import lila.rating.Glicko
+import lila.db.dsl.{ *, given }
 
-object BsonHandlers {
+private object BsonHandlers:
 
-  implicit val PuzzleIdBSONHandler = stringIsoHandler(Puzzle.idIso)
+  import Puzzle.BSONFields.*
+  import lila.rating.Glicko.glickoHandler
 
-  import Puzzle.BSONFields._
-
-  implicit private[puzzle] val PuzzleBSONReader = new BSONDocumentReader[Puzzle] {
-    def readDocument(r: BSONDocument) = for {
-      id      <- r.getAsTry[Puzzle.Id](id)
-      gameId  <- r.getAsTry[Game.ID](gameId)
-      fen     <- r.getAsTry[FEN](fen)
+  private[puzzle] given puzzleReader: BSONDocumentReader[Puzzle] with
+    def readDocument(r: BSONDocument) = for
+      id <- r.getAsTry[PuzzleId](id)
+      gameId <- r.getAsTry[GameId](gameId)
+      fen <- r.getAsTry[Fen.Full](fen)
       lineStr <- r.getAsTry[String](line)
-      line    <- lineStr.split(' ').toList.flatMap(Uci.Move.apply).toNel.toTry("Empty move list?!")
-      glicko  <- r.getAsTry[Glicko](glicko)
-      plays   <- r.getAsTry[Int](plays)
-      vote    <- r.getAsTry[Float](vote)
-      themes  <- r.getAsTry[Set[PuzzleTheme.Key]](themes)
-    } yield Puzzle(
+      line <- lineStr.split(' ').toList.flatMap(Uci.Move.apply).toNel.toTry("Empty move list?!")
+      glicko <- r.getAsTry[Glicko](glicko)
+      plays <- r.getAsTry[Int](plays)
+      vote <- r.getAsTry[Float](vote)
+      themes <- r.getAsTry[Set[PuzzleTheme.Key]](themes)
+    yield Puzzle(
       id = id,
       gameId = gameId,
       fen = fen,
@@ -34,57 +33,51 @@ object BsonHandlers {
       glicko = glicko,
       plays = plays,
       vote = vote,
-      themes = themes
+      themes = themes.diff(PuzzleTheme.hiddenThemesKey)
     )
-  }
 
-  implicit private[puzzle] val RoundIdHandler = tryHandler[PuzzleRound.Id](
+  private[puzzle] given roundIdHandler: BSONHandler[PuzzleRound.Id] = tryHandler[PuzzleRound.Id](
     { case BSONString(v) =>
-      v split PuzzleRound.idSep match {
-        case Array(userId, puzzleId) => Success(PuzzleRound.Id(userId, Puzzle.Id(puzzleId)))
-        case _                       => handlerBadValue(s"Invalid puzzle round id $v")
-      }
+      v.split(PuzzleRound.idSep) match
+        case Array(userId, puzzleId) => Success(PuzzleRound.Id(UserId(userId), PuzzleId(puzzleId)))
+        case _ => handlerBadValue(s"Invalid puzzle round id $v")
     },
     id => BSONString(id.toString)
   )
 
-  implicit private[puzzle] val RoundThemeHandler = tryHandler[PuzzleRound.Theme](
+  private[puzzle] given BSONHandler[PuzzleRound.Theme] = tryHandler[PuzzleRound.Theme](
     { case BSONString(v) =>
       PuzzleTheme
-        .find(v.tail)
+        .findAny(v.tail)
         .fold[Try[PuzzleRound.Theme]](handlerBadValue(s"Invalid puzzle round theme $v")) { theme =>
           Success(PuzzleRound.Theme(theme.key, v.head == '+'))
         }
     },
-    rt => BSONString(s"${if (rt.vote) "+" else "-"}${rt.theme}")
+    rt => BSONString(s"${if rt.vote then "+" else "-"}${rt.theme}")
   )
 
-  implicit private[puzzle] val RoundHandler = new BSON[PuzzleRound] {
-    import PuzzleRound.BSONFields._
+  given roundHandler: BSON[PuzzleRound] with
+    import PuzzleRound.BSONFields.*
     def reads(r: BSON.Reader) = PuzzleRound(
       id = r.get[PuzzleRound.Id](id),
-      win = r.bool(win),
+      win = r.get[PuzzleWin](win),
       fixedAt = r.dateO(fixedAt),
       date = r.date(date),
       vote = r.intO(vote),
       themes = r.getsD[PuzzleRound.Theme](themes)
     )
     def writes(w: BSON.Writer, r: PuzzleRound) =
-      $doc(
-        id      -> r.id,
-        win     -> r.win,
+      bdoc(
+        id -> r.id,
+        win -> r.win,
         fixedAt -> r.fixedAt,
-        date    -> r.date,
-        vote    -> r.vote,
-        themes  -> w.listO(r.themes)
+        date -> r.date,
+        vote -> r.vote,
+        themes -> w.listO(r.themes)
       )
-  }
 
-  implicit private[puzzle] val PathIdBSONHandler: BSONHandler[PuzzlePath.Id] = stringIsoHandler(
-    PuzzlePath.pathIdIso
-  )
+  import PuzzlePath.given
+  private[puzzle] given pathIdHandler: BSONHandler[PuzzlePath.Id] = stringIsoHandler
 
-  implicit private[puzzle] val ThemeKeyBSONHandler: BSONHandler[PuzzleTheme.Key] = stringIsoHandler(
-    PuzzleTheme.keyIso
-  )
-}
+  import PuzzleAngle.given
+  private[puzzle] given BSONHandler[PuzzleAngle] = stringIsoHandler

@@ -1,16 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="team">Lið</string>
   <string name="teams">Lið</string>
   <plurals name="nbMembers">
     <item quantity="one">%s meðlimir</item>
     <item quantity="other">%s meðlimir</item>
   </plurals>
   <string name="allTeams">Öll lið</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">Lið liðsstjóra</string>
   <string name="newTeam">Nýtt lið</string>
   <string name="myTeams">Liðin mín</string>
   <string name="noTeamFound">Ekkert lið fannst</string>
   <string name="joinTeam">Ganga í lið</string>
   <string name="quitTeam">Ganga úr liði</string>
-  <string name="teamBestPlayers">Bestu liðsmenn</string>
+  <plurals name="teamLeaders">
+    <item quantity="one">Liðsstjóri</item>
+    <item quantity="other">Liðsstjórar</item>
+  </plurals>
   <string name="teamRecentMembers">Nýjustu liðsmenn</string>
+  <string name="willBeReviewed">Liðsstjóri mun fara yfir beiðni þína um að gerast meðlimur.</string>
+  <string name="beingReviewed">Liðsstjóri er að fara yfir beiðni þína um að gerast meðlimur.</string>
+  <string name="requestDeclined">Liðsstjóri hafnaði beiðni þinni um að gerast meðlimur.</string>
+  <string name="teamBattle">Liðsorrusta</string>
+  <string name="teamBattleOverview">Orrusta margra liða, hver skákmaður skorar stig fyrir sitt lið</string>
+  <string name="teamTournament">Liðsmót</string>
+  <string name="teamTournamentOverview">Arena-mót sem aðeins meðlimir liðsins þíns geta tekið þátt í</string>
+  <string name="swissTournamentOverview">Swiss-mót sem eingöngu meðlimir liðs þíns geta tekið þátt í</string>
+  <string name="teamsIlead">Lið sem ég stjórna</string>
+  <string name="leadersChat">Liðsstjóraspjall</string>
+  <string name="introduction">Kynning</string>
+  <string name="entryCode">Aðgöngukóði liðs</string>
+  <string name="entryCodeDescriptionForLeader">(Valfrjálst) Aðgöngukóði sem nýir meðlimir verða að kunna til þess að fá inngöngu í þetta lið.</string>
+  <string name="incorrectEntryCode">Rangur aðgöngukóði.</string>
+  <string name="teamAlreadyExists">Þetta lið er nú þegar til.</string>
+  <string name="upcomingTournaments">Mót á döfinni</string>
+  <string name="completedTourns">Lokin mót</string>
+  <string name="joinLichessVariantTeam">Skráðu þig í opinbera liðið fyrir %s til þess að nálgast fréttir og viðburði</string>
+  <string name="innerTeam">Innra liðið</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="one">Orrusta á milli %s liðs</item>
+    <item quantity="other">Orrusta á milli %s liða</item>
+  </plurals>
+  <plurals name="nbLeadersPerTeam">
+    <item quantity="one">Einn liðstjóri á lið</item>
+    <item quantity="other">%s liðsstjórar á lið</item>
+  </plurals>
 </resources>

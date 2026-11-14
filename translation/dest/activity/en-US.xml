@@ -34,6 +34,10 @@
     <item quantity="one">Completed %s correspondence game</item>
     <item quantity="other">Completed %s correspondence games</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Completed %1$s %2$s correspondence game</item>
+    <item quantity="other">Completed %1$s %2$s correspondence games</item>
+  </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">Started following %s player</item>
     <item quantity="other">Started following %s players</item>
@@ -55,16 +59,16 @@
     <item quantity="other">Created %s new studies</item>
   </plurals>
   <plurals name="competedInNbTournaments">
-    <item quantity="one">Competed in %s tournament</item>
-    <item quantity="other">Competed in %s tournaments</item>
+    <item quantity="one">Competed in %s Arena tournament</item>
+    <item quantity="other">Competed in %s Arena tournaments</item>
   </plurals>
   <plurals name="rankedInTournament">
     <item quantity="one">Ranked #%1$s (top %2$s%%) with %3$s game in %4$s</item>
     <item quantity="other">Ranked #%1$s (top %2$s%%) with %3$s games in %4$s</item>
   </plurals>
   <plurals name="competedInNbSwissTournaments">
-    <item quantity="one">Competed in %s swiss tournament</item>
-    <item quantity="other">Competed in %s swiss tournaments</item>
+    <item quantity="one">Competed in %s Swiss tournament</item>
+    <item quantity="other">Competed in %s Swiss tournaments</item>
   </plurals>
   <string name="rankedInSwissTournament">Ranked #%1$s in %2$s</string>
   <string name="signedUp">Signed up to lichess.org</string>

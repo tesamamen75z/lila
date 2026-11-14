@@ -1,70 +1,95 @@
 package lila.swiss
 
-import org.joda.time.DateTime
-import reactivemongo.api.ReadPreference
-import scala.concurrent.duration._
+import scalalib.HeapSort
 
-import lila.common.Heapsort
-import lila.db.dsl._
-import lila.hub.LightTeam.TeamID
+import lila.core.swiss.FeaturedIdNames
+import lila.db.dsl.{ *, given }
 import lila.memo.CacheApi
-import lila.memo.CacheApi._
+import lila.memo.CacheApi.*
 
 final class SwissFeature(
-    colls: SwissColls,
+    mongo: SwissMongo,
     cacheApi: CacheApi,
     swissCache: SwissCache
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, Scheduler)
+    extends lila.core.swiss.SwissFeatureApi:
 
-  import BsonHandlers._
+  import BsonHandlers.given
 
-  private val lichessTeamId = "lichess-swiss"
-
-  def get(teams: Seq[TeamID]) =
-    cache.getUnit zip getForTeams(teams :+ lichessTeamId distinct) map { case (cached, teamed) =>
-      FeaturedSwisses(
-        created = (teamed.created ::: cached.created).distinct,
-        started = (teamed.started ::: cached.started).distinct
-      )
-    }
-
-  private val startsAtOrdering = Ordering.by[Swiss, Long](_.startsAt.getMillis)
-
-  private def getForTeams(teams: Seq[TeamID]): Fu[FeaturedSwisses] =
-    teams.map(swissCache.featuredInTeam.get).sequenceFu.map(_.flatten) flatMap { ids =>
-      colls.swiss.byIds[Swiss](ids.map(_.value), ReadPreference.secondaryPreferred)
-    } map {
-      _.filter(_.isNotFinished).partition(_.isCreated) match {
-        case (created, started) =>
-          FeaturedSwisses(
-            created = Heapsort.topN(created, 10, startsAtOrdering.reverse),
-            started = Heapsort.topN(started, 10, startsAtOrdering)
+  val onHomepage = cacheApi.unit[Option[Swiss]]("swiss.onHomepage"):
+    _.refreshAfterWrite(30.seconds).buildAsyncTimeout(): _ =>
+      mongo.swiss
+        .find:
+          bdoc(
+            "teamId" -> lichessTeamId,
+            "startsAt".gt(nowInstant.minusMinutes(5)).lt(nowInstant.plusMinutes(10))
           )
-      }
-    }
+        .sort(sort.asc("startsAt"))
+        .one[Swiss]
 
-  private val cache = cacheApi.unit[FeaturedSwisses] {
-    _.refreshAfterWrite(10 seconds)
-      .buildAsyncFuture { _ =>
-        val now = DateTime.now
-        cacheCompute($doc("$gt" -> now, "$lt" -> now.plusHours(1))) zip
-          cacheCompute($doc("$gt" -> now.minusHours(3), "$lt" -> now)) map { case (created, started) =>
-            FeaturedSwisses(created, started)
-          }
-      }
-  }
-
-  private def cacheCompute(startsAtRange: Bdoc): Fu[List[Swiss]] =
-    colls.swiss
-      .find(
-        $doc(
-          "featurable" -> true,
-          "settings.i" $lte 600, // hits the partial index
-          "startsAt" -> startsAtRange,
-          "garbage" $ne true
+  def get(teams: Seq[TeamId]): Fu[FeaturedSwisses] =
+    cache.getUnit
+      .zip(getForTeams((teams :+ lichessTeamId).distinct))
+      .map: (cached, teamed) =>
+        FeaturedSwisses(
+          created = (teamed.created ::: cached.created).distinctBy(_.id),
+          started = (teamed.started ::: cached.started).distinctBy(_.id)
         )
-      )
-      .sort($sort desc "nbPlayers")
-      .cursor[Swiss]()
-      .list(5)
-}
+
+  def idNames: Fu[FeaturedIdNames] = get(Nil).map: f =>
+    FeaturedIdNames(f.created.map(_.idName), f.started.map(_.idName))
+
+  private val startsAtOrdering = Ordering.by[Swiss, Long](_.startsAt.toMillis)
+
+  private def getForTeams(teams: Seq[TeamId]): Fu[FeaturedSwisses] =
+    teams
+      .traverse(swissCache.featuredInTeam.get)
+      .dmap(_.flatten)
+      .flatMap: ids =>
+        mongo.swiss.byIds[Swiss, SwissId](ids, _.sec)
+      .map: tours =>
+        val (created, started) = tours.filter(_.isNotFinished).partition(_.isCreated)
+        FeaturedSwisses(
+          created = HeapSort.topN(created, 10)(using startsAtOrdering.reverse),
+          started = HeapSort.topN(started, 10)(using startsAtOrdering)
+        )
+
+  private val cache = cacheApi.unit[FeaturedSwisses]("swiss.featured"):
+    _.refreshAfterWrite(10.seconds).buildAsyncTimeout(): _ =>
+      val now = nowInstant
+      cacheCompute(bdoc("$gt" -> now, "$lt" -> now.plusHours(1)))
+        .zip(cacheCompute(bdoc("$gt" -> now.minusHours(3), "$lt" -> now)))
+        .map(FeaturedSwisses.apply)
+
+  // causes heavy team reads
+  private def cacheCompute(startsAtRange: Bdoc, nb: Int = 5): Fu[List[Swiss]] =
+    mongo.swiss
+      .aggregateList(nb, _.sec): framework =>
+        import framework.*
+        Match(
+          bdoc(
+            "featurable" -> true,
+            "settings.i".lte(600), // hits the partial index
+            "settings.o.playYourGames" -> true,
+            "startsAt" -> startsAtRange,
+            "garbage".neq(true)
+          )
+        ) -> List(
+          Sort(Descending(Swiss.Fields.nbPlayers)),
+          Limit(nb * 50),
+          PipelineOperator(
+            lookup.simple(
+              from = lila.core.config.CollName("team"),
+              as = "team",
+              local = "teamId",
+              foreign = "_id",
+              pipe = List(
+                bdoc("$match" -> bdoc("open" -> true, "password".exists(false))),
+                bdoc("$project" -> bid(true))
+              )
+            )
+          ),
+          UnwindField("team"),
+          Limit(nb)
+        )
+      .map(_.flatMap(_.asOpt[Swiss]))

@@ -1,6 +1,6 @@
-package lila
+package lila.fishnet
 
-package object fishnet extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[fishnet] def logger = lila.log("fishnet")
-}
+lazy val logger = lila.log("fishnet")

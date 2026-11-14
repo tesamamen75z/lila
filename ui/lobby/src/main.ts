@@ -1,39 +1,28 @@
-import { init, classModule, attributesModule } from 'snabbdom';
-import { Chessground } from 'chessground';
-import { LobbyOpts, Tab } from './interfaces';
+import { init, classModule, attributesModule, eventListenersModule, propsModule, type VNode } from 'snabbdom';
 
-export const patch = init([classModule, attributesModule]);
-
-// eslint-disable-next-line no-duplicate-imports
 import makeCtrl from './ctrl';
-import view from './view/main';
+import type { LobbyOpts } from './interfaces';
+import { makeCarousel } from './view/carousel';
+import appView from './view/main';
+import tableView from './view/table';
+
+export const patch = init([classModule, attributesModule, propsModule, eventListenersModule]);
 
 export default function main(opts: LobbyOpts) {
+  let appVNode: VNode;
   const ctrl = new makeCtrl(opts, redraw);
 
-  const blueprint = view(ctrl);
-  opts.element.innerHTML = '';
-  let vnode = patch(opts.element, blueprint);
+  opts.appElement.innerHTML = '';
+  appVNode = patch(opts.appElement, appView(ctrl));
+  opts.tableElement.innerHTML = '';
+  let tableVNode = patch(opts.tableElement, tableView(ctrl));
 
   function redraw() {
-    vnode = patch(vnode, view(ctrl));
+    if (!appVNode) return;
+    appVNode = patch(appVNode, appView(ctrl));
+    tableVNode = patch(tableVNode, tableView(ctrl));
   }
 
-  return {
-    socketReceive: ctrl.socket.receive,
-    setTab(tab: Tab) {
-      ctrl.setTab(tab);
-      ctrl.redraw();
-    },
-    gameActivity: ctrl.gameActivity,
-    setRedirecting: ctrl.setRedirecting,
-    enterPool: ctrl.enterPool,
-    leavePool: ctrl.leavePool,
-    setup: ctrl.setup,
-    redraw: ctrl.redraw,
-  };
+  makeCarousel({ selector: '.lobby__blog', itemWidth: 192, pauseFor: 10 });
+  return ctrl;
 }
-
-// that's for the rest of lichess to access chessground
-// without having to include it a second time
-window.Chessground = Chessground;

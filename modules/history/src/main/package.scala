@@ -1,10 +1,9 @@
-package lila
+package lila.history
 
-package object history extends PackageObject {
+import chess.IntRating
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[history] type ID = String
-
-  private[history] type Date       = Int
-  private[history] type Rating     = Int
-  private[history] type RatingsMap = List[(Date, Rating)]
-}
+private type ID = String
+private type Date = Int
+private type RatingsMap = List[(Date, IntRating)]

@@ -1,125 +1,185 @@
 package lila.round
 
-import chess.Color
+import alleycats.Zero
+import chess.{ ByColor, Color, Ply }
+import scalalib.data.Preload
+
 import lila.common.Bus
-import lila.game.{ Event, Game, GameRepo, Pov, Progress, Rewind, UciMemo }
+import lila.core.i18n.{ I18nKey as trans, Translator, defaultLang }
+import lila.core.round.*
+import lila.game.{ Event, GameRepo, Progress, Rewind, UciMemo }
 import lila.pref.{ Pref, PrefApi }
-import lila.i18n.{ I18nKeys => trans, defaultLang }
-import RoundDuct.TakebackSituation
+import lila.round.RoundGame.playableByAi
+
+private final class TakebackState(nbDeclined: Int, lastDeclined: Option[Instant]):
+  def decline = TakebackState(nbDeclined + 1, nowInstant.some)
+  def offerable = lastDeclined.forall(_.isBefore(nowInstant.minusSeconds(delaySeconds)))
+  private def delaySeconds = (math.pow(nbDeclined.min(10), 2) * 10).toInt
+
+private type TakebackBoard = ByColor[TakebackState]
+
+private given takebackBoardZero: Zero[TakebackBoard] = Zero(ByColor.fill(TakebackState(0, none)))
 
 final private class Takebacker(
     messenger: Messenger,
     gameRepo: GameRepo,
     uciMemo: UciMemo,
     prefApi: PrefApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, Translator):
 
-  implicit private val chatLang = defaultLang
+  private given play.api.i18n.Lang = defaultLang
 
-  def yes(
-      situation: TakebackSituation
-  )(pov: Pov)(implicit proxy: GameProxy): Fu[(Events, TakebackSituation)] =
-    IfAllowed(pov.game) {
-      pov match {
+  def apply(board: TakebackBoard)(pov: Pov, confirm: Boolean)(using
+      proxy: GameProxy
+  ): Fu[(Events, TakebackBoard)] =
+    if confirm then yes(board)(pov) else no(board)(pov)
+
+  private def canProposeTakeback(pov: Pov) =
+    import pov.game.{ pov as _, * }
+    started && playable && !isTournament && !isSimul &&
+    bothPlayersHaveMoved &&
+    !player(pov.color).isProposingTakeback &&
+    !opponent(pov.color).isProposingTakeback
+
+  def yes(board: TakebackBoard)(pov: Pov)(using proxy: GameProxy): Fu[(Events, TakebackBoard)] =
+    IfAllowed(pov.game, Preload.none):
+      pov match
         case Pov(game, color) if pov.opponent.isProposingTakeback =>
-          {
-            if (
-              pov.opponent.proposeTakebackAt == pov.game.turns && color == Color
-                .fromPly(pov.opponent.proposeTakebackAt)
-            ) single(game)
-            else double(game)
-          } dmap (_ -> situation.reset)
-        case Pov(game, _) if pov.game.playableByAi => single(game) dmap (_ -> situation)
-        case Pov(game, _) if pov.opponent.isAi     => double(game) dmap (_ -> situation)
-        case Pov(game, color) if (game playerCanProposeTakeback color) && situation.offerable =>
-          {
-            messenger.system(game, trans.takebackPropositionSent.txt())
-            val progress = Progress(game) map { g =>
-              g.updatePlayer(color, _ proposeTakeback g.turns)
-            }
-            proxy.save(progress) >>- publishTakebackOffer(pov) inject
-              List(Event.TakebackOffers(color.white, color.black))
-          } dmap (_ -> situation)
+          for
+            events <- rewind(
+              pov,
+              Takebacker.acceptedPlies(
+                currentPly = game.ply,
+                proposedAt = pov.opponent.proposeTakebackAt,
+                accepter = color,
+                playedPlies = game.playedPlies
+              )
+            )
+            _ = publishTakeback(pov)
+          yield events -> takebackBoardZero.zero
+        case Pov(game, _) if pov.game.playableByAi =>
+          for
+            events <- rewind(pov, 1)
+            _ = publishTakeback(pov)
+          yield events -> board
+        case Pov(game, _) if pov.opponent.isAi =>
+          for
+            events <- rewind(pov, 2)
+            _ = publishTakeback(pov)
+          yield events -> board
+        case pov if canProposeTakeback(pov) && board(pov.color).offerable =>
+          messenger.volatile(pov.game, offerTakebackMessage(pov))
+          val progress = Progress(pov.game).map: g =>
+            g.updatePlayer(pov.color, _.copy(proposeTakebackAt = g.ply))
+          for
+            _ <- proxy.save(progress)
+            _ = publishTakebackOffer(progress.game)
+            events = List(Event.TakebackOffers(pov.color.white, pov.color.black))
+          yield events -> board
         case _ => fufail(ClientError("[takebacker] invalid yes " + pov))
-      }
-    }
 
-  def no(situation: TakebackSituation)(pov: Pov)(implicit proxy: GameProxy): Fu[(Events, TakebackSituation)] =
-    pov match {
+  def no(board: TakebackBoard)(pov: Pov)(using proxy: GameProxy): Fu[(Events, TakebackBoard)] =
+    pov match
       case Pov(game, color) if pov.player.isProposingTakeback =>
-        proxy.save {
-          messenger.system(game, trans.takebackPropositionCanceled.txt())
-          Progress(game) map { g =>
-            g.updatePlayer(color, _.removeTakebackProposition)
-          }
-        } inject {
-          List(Event.TakebackOffers(white = false, black = false)) -> situation.decline
-        }
+        messenger.volatile(
+          game,
+          pov.color.fold(trans.site.whiteCancelsTakeback, trans.site.blackCancelsTakeback).txt()
+        )
+        val progress = Progress(game).map: g =>
+          g.updatePlayer(color, _.removeTakebackProposition)
+        for
+          _ <- proxy.save(progress)
+          _ = publishTakebackOffer(progress.game)
+          events = List(Event.TakebackOffers(white = false, black = false))
+        yield events -> board.update(color, _.decline)
       case Pov(game, color) if pov.opponent.isProposingTakeback =>
-        proxy.save {
-          messenger.system(game, trans.takebackPropositionDeclined.txt())
-          Progress(game) map { g =>
-            g.updatePlayer(!color, _.removeTakebackProposition)
-          }
-        } inject {
-          List(Event.TakebackOffers(white = false, black = false)) -> situation.decline
-        }
+        messenger.volatile(
+          game,
+          pov.color.fold(trans.site.whiteDeclinesTakeback, trans.site.blackDeclinesTakeback).txt()
+        )
+        val progress = Progress(game).map: g =>
+          g.updatePlayer(!color, _.removeTakebackProposition)
+        for
+          _ <- proxy.save(progress)
+          _ = publishTakebackOffer(progress.game)
+          events = List(Event.TakebackOffers(white = false, black = false))
+        yield events -> board.update(!color, _.decline)
       case _ => fufail(ClientError("[takebacker] invalid no " + pov))
-    }
 
-  def isAllowedIn(game: Game): Fu[Boolean] =
-    if (game.isMandatory) fuFalse
-    else isAllowedByPrefs(game)
+  def isAllowedIn(game: Game, prefs: Preload[ByColor[Pref]]): Fu[Boolean] =
+    game.canTakebackOrAddTime.so(isAllowedByPrefs(game, prefs))
 
-  private def isAllowedByPrefs(game: Game): Fu[Boolean] =
-    if (game.hasAi) fuTrue
+  private def offerTakebackMessage(pov: Pov): String =
+    val k = if pov.game.turnOf(pov.color) then 2 else 1
+    val lastSans = pov.game.sans.takeRight(k).toList
+    val startPly = pov.game.ply - k + 1
+    def movePrefix(ply: Ply, secondMove: Boolean): String =
+      if secondMove && ply.turn.white then ""
+      else s"${(ply.value + 1) / 2}${if ply.turn.black then "." else "..."}"
+    val rollbackMoves: List[String] =
+      lastSans.zipWithIndex.map: (san, i) =>
+        s"${movePrefix(startPly + i, i == 1)}$san"
+    val base = pov.color.fold(trans.site.whiteProposesTakeback, trans.site.blackProposesTakeback).txt()
+    s"$base (${rollbackMoves.mkString(" ")})"
+
+  private def isAllowedByPrefs(game: Game, prefs: Preload[ByColor[Pref]]): Fu[Boolean] =
+    if game.hasAi then fuTrue
     else
-      game.userIds.map {
-        prefApi.getPref(_, (p: Pref) => p.takeback)
-      }.sequenceFu dmap {
-        _.forall { p =>
-          p == Pref.Takeback.ALWAYS || (p == Pref.Takeback.CASUAL && game.casual)
-        }
-      }
+      prefs
+        .orLoad:
+          prefApi.byId(game.userIdPair)
+        .dmap:
+          _.forall: p =>
+            p.takeback == Pref.Takeback.ALWAYS || (p.takeback == Pref.Takeback.CASUAL && game.rated.no)
 
-  private def publishTakebackOffer(pov: Pov): Unit =
-    if (pov.game.isCorrespondence && pov.game.nonAi && pov.player.hasUser)
-      Bus.publish(
-        lila.hub.actorApi.round.CorresTakebackOfferEvent(pov.gameId),
-        "offerEventCorres"
+  private def IfAllowed[A](game: Game, prefs: Preload[ByColor[Pref]])(f: => Fu[A]): Fu[A] =
+    if !game.playable then fufail(ClientError("[takebacker] game is over " + game.id))
+    else if !game.canTakebackOrAddTime then fufail(ClientError("[takebacker] game disallows it " + game.id))
+    else
+      isAllowedByPrefs(game, prefs).flatMap:
+        if _ then f
+        else fufail(ClientError("[takebacker] disallowed by preferences " + game.id))
+
+  private def rewind(pov: Pov, plies: Int)(using GameProxy): Fu[Events] =
+    for
+      fen <- gameRepo.initialFen(pov.game)
+      progress <- (1 to plies).foldLeft(fuccess(Progress(pov.game))): (prev, _) =>
+        prev.flatMap: prog =>
+          Rewind(prog.game, fen).toFuture.dmap(rewinded => prog.withGame(rewinded.game))
+      _ <- fuccess(uciMemo.drop(pov.game, plies))
+      events <- saveAndNotify(progress, pov)
+    yield events
+
+  private def saveAndNotify(p1: Progress, pov: Pov)(using proxy: GameProxy): Fu[Events] =
+    val p2 = p1 + Event.Reload
+    val accepter = if pov.opponent.isProposingTakeback then pov.color else !pov.color
+    messenger.system(
+      p2.game,
+      accepter.fold(trans.site.whiteAcceptsTakeback, trans.site.blackAcceptsTakeback).txt()
+    )
+    proxy.save(p2).inject(p2.events)
+
+  private def publishTakebackOffer(game: Game): Unit =
+    if game.isCorrespondence && game.nonAi then
+      Bus.pub(
+        lila.core.round.CorresTakebackOfferEvent(game.id)
+      )
+    if lila.game.Game.mightBeBoardOrBotCompatible(game) then
+      Bus.publishDyn(
+        lila.game.actorApi.BoardTakebackOffer(game),
+        lila.game.actorApi.BoardTakebackOffer.makeChan(game.id)
       )
 
-  private def IfAllowed[A](game: Game)(f: => Fu[A]): Fu[A] =
-    if (!game.playable) fufail(ClientError("[takebacker] game is over " + game.id))
-    else if (game.isMandatory) fufail(ClientError("[takebacker] game disallows it " + game.id))
-    else
-      isAllowedByPrefs(game) flatMap {
-        case true => f
-        case _    => fufail(ClientError("[takebacker] disallowed by preferences " + game.id))
-      }
+  private def publishTakeback(prevPov: Pov)(using proxy: GameProxy): Unit =
+    if lila.game.Game.mightBeBoardOrBotCompatible(prevPov.game) then
+      proxy.withPov(prevPov.color): p =>
+        fuccess:
+          Bus.publishDyn(
+            lila.game.actorApi.BoardTakeback(p.game),
+            lila.game.actorApi.BoardTakeback.makeChan(prevPov.gameId)
+          )
 
-  private def single(game: Game)(implicit proxy: GameProxy): Fu[Events] =
-    for {
-      fen      <- gameRepo initialFen game
-      progress <- Rewind(game, fen).toFuture
-      _        <- fuccess { uciMemo.drop(game, 1) }
-      events   <- saveAndNotify(progress)
-    } yield events
-
-  private def double(game: Game)(implicit proxy: GameProxy): Fu[Events] =
-    for {
-      fen   <- gameRepo initialFen game
-      prog1 <- Rewind(game, fen).toFuture
-      prog2 <- Rewind(prog1.game, fen).toFuture dmap { progress =>
-        prog1 withGame progress.game
-      }
-      _      <- fuccess { uciMemo.drop(game, 2) }
-      events <- saveAndNotify(prog2)
-    } yield events
-
-  private def saveAndNotify(p1: Progress)(implicit proxy: GameProxy): Fu[Events] = {
-    val p2 = p1 + Event.Reload
-    messenger.system(p2.game, trans.takebackPropositionAccepted.txt())
-    proxy.save(p2) inject p2.events
-  }
-}
+private object Takebacker:
+  def acceptedPlies(currentPly: Ply, proposedAt: Ply, accepter: Color, playedPlies: Ply): Int =
+    val proposedPlies = if accepter == proposedAt.turn then 1 else 2
+    (currentPly - proposedAt + proposedPlies).atLeast(1).atMost(playedPlies).value

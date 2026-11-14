@@ -1,2 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources></resources>
+<resources>
+  <string name="team">ತಂಡ</string>
+  <string name="teams">ತಂಡಗಳು</string>
+  <plurals name="nbMembers">
+    <item quantity="one">%s ಸದಸ್ಯರು</item>
+    <item quantity="other">%s ಸದಸ್ಯರು</item>
+  </plurals>
+  <string name="allTeams">ಎಲ್ಲಾ ತಂಡಗಳು</string>
+  <string name="leaderTeams" comment="This is the button for 'teams lead by you' in the teams navigation sidebar">ನಾಯಕ ತಂಡಗಳು</string>
+  <string name="newTeam">ಹೊಸ ತಂಡ</string>
+  <string name="myTeams">ನನ್ನ ತಂಡಗಳು</string>
+  <string name="noTeamFound">ಯಾವುದೇ ತಂಡ ಕಂಡುಬಂದಿಲ್ಲ</string>
+  <string name="joinTeam">ತಂಡವನ್ನು ಸೇರಿ</string>
+  <string name="quitTeam">ತಂಡವನ್ನು ತೊರೆಯಿರಿ</string>
+  <plurals name="teamLeaders">
+    <item quantity="one">ತಂಡದ ನಾಯಕ</item>
+    <item quantity="other">ತಂಡದ ನಾಯಕರು</item>
+  </plurals>
+  <string name="teamRecentMembers">ಇತ್ತೀಚಿನ ಸದಸ್ಯರು</string>
+  <string name="willBeReviewed">ನಿಮ್ಮ ಸೇರ್ಪಡೆ ವಿನಂತಿಯನ್ನು ತಂಡದ ನಾಯಕರೊಬ್ಬರು ಪರಿಶೀಲಿಸುತ್ತಾರೆ.</string>
+  <string name="beingReviewed">ನಿಮ್ಮ ಸೇರ್ಪಡೆ ವಿನಂತಿಯನ್ನು ತಂಡದ ನಾಯಕರೊಬ್ಬರು ಪರಿಶೀಲಿಸುತ್ತಿದ್ದಾರೆ.</string>
+  <string name="requestDeclined">ನಿಮ್ಮ ಸೇರ್ಪಡೆ ವಿನಂತಿಯನ್ನು ತಂಡದ ನಾಯಕರೊಬ್ಬರು ನಿರಾಕರಿಸಿದ್ದಾರೆ.</string>
+  <string name="teamBattle">ತಂಡದ ಯುದ್ಧ</string>
+  <string name="teamBattleOverview">ಬಹು ತಂಡಗಳ ಯುದ್ಧ, ಪ್ರತಿ ಆಟಗಾರನು ತನ್ನ ತಂಡಕ್ಕೆ ಅಂಕಗಳನ್ನು ಗಳಿಸುತ್ತಾನೆ</string>
+  <string name="teamTournament">ತಂಡದ ಪಂದ್ಯಾವಳಿ</string>
+  <string name="teamTournamentOverview">ನಿಮ್ಮ ತಂಡದ ಸದಸ್ಯರು ಮಾತ್ರ ಸೇರಬಹುದಾದ ಅರೆನಾ ಪಂದ್ಯಾವಳಿ</string>
+  <string name="swissTournamentOverview">ನಿಮ್ಮ ತಂಡದ ಸದಸ್ಯರು ಮಾತ್ರ ಸೇರಬಹುದಾದ ಸ್ವಿಸ್ ಪಂದ್ಯಾವಳಿ</string>
+  <string name="teamUpdates">ತಂಡದ ನವೀಕರಣಗಳು</string>
+  <string name="subToTeamUpdates">ತಂಡದ ನವೀಕರಣಗಳಿಗೆ ಚಂದಾದಾರರಾಗಿ</string>
+  <string name="teamsIlead">ನಾನು ಮುನ್ನಡೆಸುವ ತಂಡಗಳು</string>
+  <string name="leadersChat">ನಾಯಕರು ಮಾತುಕತೆ</string>
+  <string name="introduction">ಪರಿಚಯ</string>
+  <string name="entryCode">ತಂಡದ ಪ್ರವೇಶ ಕೋಡ್</string>
+  <string name="entryCodeDescriptionForLeader">(ಐಚ್ಛಿಕ) ಈ ತಂಡವನ್ನು ಸೇರಲು ಹೊಸ ಸದಸ್ಯರು ತಿಳಿದಿರಬೇಕಾದ ಪ್ರವೇಶ ಕೋಡ್.</string>
+  <string name="incorrectEntryCode">ತಪ್ಪಾದ ಪ್ರವೇಶ ಕೋಡ್.</string>
+  <string name="teamAlreadyExists">ಈ ತಂಡ ಈಗಾಗಲೇ ಅಸ್ತಿತ್ವದಲ್ಲಿದೆ.</string>
+  <string name="upcomingTournaments">ಮುಂಬರುವ ಪಂದ್ಯಾವಳಿಗಳು</string>
+  <string name="completedTourns">ಪಂದ್ಯಾವಳಿಗಳನ್ನು ಪೂರ್ಣಗೊಳಿಸಿದೆ</string>
+  <string name="joinLichessVariantTeam">ಸುದ್ದಿ ಮತ್ತು ಈವೆಂಟ್‌ಗಳಿಗಾಗಿ ಅಧಿಕೃತ %s ತಂಡವನ್ನು ಸೇರಿ</string>
+  <string name="innerTeam">ಒಳ ತಂಡ</string>
+  <plurals name="battleOfNbTeams">
+    <item quantity="one">%s ತಂಡಗಳ ಕದನ</item>
+    <item quantity="other">%s ತಂಡಗಳ ಕದನ</item>
+  </plurals>
+</resources>

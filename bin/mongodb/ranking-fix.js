@@ -1,14 +1,14 @@
-var users = db.user4;
-var ranking = db.ranking;
+const users = db.user4;
+const ranking = db.ranking;
 
-var cheats = [];
+const cheats = [];
 
 ranking
   .find(
     {},
     {
       user: 1,
-    }
+    },
   )
   .forEach(function (r) {
     if (

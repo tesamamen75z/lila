@@ -1,3 +1,4 @@
-package lila
+package lila.bookmark
 
-package object bookmark extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

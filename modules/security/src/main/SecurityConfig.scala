@@ -1,80 +1,72 @@
 package lila.security
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import scala.concurrent.duration.FiniteDuration
+import com.softwaremill.macwire.*
+import play.api.ConfigLoader
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.common.config.{ *, given }
+import lila.core.config.*
 
-import SecurityConfig._
+import SecurityConfig.*
 
 @Module
 final private class SecurityConfig(
     val collection: Collection,
-    @ConfigName("flood.duration") val floodDuration: FiniteDuration,
     @ConfigName("geoip") val geoIP: GeoIP.Config,
     @ConfigName("password_reset.secret") val passwordResetSecret: Secret,
     @ConfigName("email_confirm") val emailConfirm: EmailConfirm,
     @ConfigName("email_change.secret") val emailChangeSecret: Secret,
     @ConfigName("login_token.secret") val loginTokenSecret: Secret,
+    @ConfigName("turnstile_cookie.secret") val turnstileCookieSecret: Secret,
     val tor: Tor,
     @ConfigName("disposable_email") val disposableEmail: DisposableEmail,
     @ConfigName("dns_api") val dnsApi: DnsApi,
-    @ConfigName("check_mail_api") val checkMail: CheckMail,
-    val hcaptcha: Hcaptcha.Config,
+    @ConfigName("verifymail") val verifyMail: VerifyMail,
+    val turnstile: Turnstile.Config,
     @ConfigName("ip2proxy") val ip2Proxy: Ip2Proxy,
-    @ConfigName("lame_name_check") val lameNameCheck: LameNameCheck
+    @ConfigName("lame_name_check") val lameNameCheck: LameNameCheck,
+    @ConfigName("pwned.range_url") val pwnedRangeUrl: String,
+    @ConfigName("proxyscrape.url") val proxyscrapeUrl: String,
+    @ConfigName("password.bpass.secret") val passwordBPassSecret: Secret
 )
 
-private object SecurityConfig {
+private object SecurityConfig:
 
   case class Collection(
       security: CollName,
       @ConfigName("print_ban") printBan: CollName,
       firewall: CollName
   )
-  implicit val collectionLoader = AutoConfig.loader[Collection]
+  given ConfigLoader[Collection] = AutoConfig.loader
 
   case class EmailConfirm(
       enabled: Boolean,
       secret: Secret,
       cookie: String
   )
-  implicit val emailConfirmLoader = AutoConfig.loader[EmailConfirm]
+  given ConfigLoader[EmailConfirm] = AutoConfig.loader
 
-  case class Tor(
-      @ConfigName("enabled") enabled: Boolean,
-      @ConfigName("provider_url") providerUrl: String,
-      @ConfigName("refresh_delay") refreshDelay: FiniteDuration
-  )
-  implicit val torLoader = AutoConfig.loader[Tor]
+  case class Tor(@ConfigName("enabled") enabled: Boolean)
+  given ConfigLoader[Tor] = AutoConfig.loader
 
   case class DisposableEmail(
       @ConfigName("enabled") enabled: Boolean,
-      @ConfigName("provider_url") providerUrl: String,
-      @ConfigName("refresh_delay") refreshDelay: FiniteDuration
+      @ConfigName("provider_url") providerUrl: String
   )
-  implicit val disposableLoader = AutoConfig.loader[DisposableEmail]
+  given ConfigLoader[DisposableEmail] = AutoConfig.loader
 
-  case class DnsApi(
-      url: String,
-      timeout: FiniteDuration
-  )
-  implicit val dnsLoader = AutoConfig.loader[DnsApi]
+  case class DnsApi(url: String, timeout: FiniteDuration)
+  given ConfigLoader[DnsApi] = AutoConfig.loader
 
-  case class CheckMail(
-      url: String,
-      key: Secret
-  )
-  implicit val checkMailLoader = AutoConfig.loader[CheckMail]
+  case class VerifyMail(key: Secret)
+  given ConfigLoader[VerifyMail] = AutoConfig.loader
 
   case class Ip2Proxy(
       enabled: Boolean,
       url: String
   )
-  implicit val ip2ProxyLoader = AutoConfig.loader[Ip2Proxy]
+  given ConfigLoader[Ip2Proxy] = AutoConfig.loader
 
-  implicit val lameNameCheckLoader = boolLoader(LameNameCheck.apply)
+  given ConfigLoader[LameNameCheck] = boolLoader(LameNameCheck.apply)
 
-  implicit val loader = AutoConfig.loader[SecurityConfig]
-}
+  given ConfigLoader[SecurityConfig] = AutoConfig.loader

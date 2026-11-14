@@ -1,72 +1,91 @@
 package lila.security
 
-import akka.actor._
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
+import org.apache.pekko.actor.*
 import play.api.Configuration
 import play.api.libs.ws.StandaloneWSClient
-import scala.concurrent.duration._
 
-import lila.common.config._
-import lila.common.Strings
-import lila.memo.SettingStore.Strings._
-import lila.oauth.OAuthServer
-import lila.user.{ Authenticator, UserRepo }
+import lila.common.config.GetRelativeFile
+import lila.core.config.*
+import lila.core.data.Strings
+import lila.memo.SettingStore
+import lila.memo.SettingStore.Strings.given
+import lila.oauth.{ AccessTokenApi, OAuthServer }
 
 @Module
 final class Env(
     appConfig: Configuration,
     ws: StandaloneWSClient,
-    net: NetConfig,
-    captcher: lila.hub.actors.Captcher,
-    userRepo: UserRepo,
-    authenticator: Authenticator,
+    net: lila.core.config.NetConfig,
+    userRepo: lila.user.UserRepo,
     mailer: lila.mailer.Mailer,
-    irc: lila.irc.IrcApi,
+    autoEmail: lila.mailer.AutomaticEmail,
     noteApi: lila.user.NoteApi,
     cacheApi: lila.memo.CacheApi,
     settingStore: lila.memo.SettingStore.Builder,
     oAuthServer: OAuthServer,
+    accessTokenApi: AccessTokenApi,
     mongoCache: lila.memo.MongoCache.Api,
-    db: lila.db.Db
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    scheduler: Scheduler,
-    mode: play.api.Mode
-) {
-  import net.{ baseUrl, domain }
+    canSendEmails: SettingStore[Boolean] @@ lila.mailer.CanSendEmails,
+    cookieBaker: play.api.mvc.SessionCookieBaker,
+    lazyCurrentlyPlaying: => lila.core.round.CurrentlyPlaying,
+    db: lila.db.Db,
+    getFile: GetRelativeFile,
+    routeUrl: RouteUrl
+)(using
+    Executor,
+    play.api.Mode,
+    org.apache.pekko.stream.Materializer,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+)(using scheduler: Scheduler):
 
-  private val config = appConfig.get[SecurityConfig]("security")(SecurityConfig.loader)
+  private def netDomain = net.domain
 
-  private def hcaptchaPublicConfig = config.hcaptcha.public
+  private val config = appConfig.get[SecurityConfig]("security")
 
-  def hcaptcha[A](form: play.api.data.Form[A]) =
-    HcaptchaForm(form, config.hcaptcha.public)
+  val lilaCookie = wire[LilaCookie]
 
-  lazy val firewall = new Firewall(
+  lazy val firewall = Firewall(
     coll = db(config.collection.firewall),
-    scheduler = scheduler
+    config = config,
+    scheduler = scheduler,
+    ws = ws
   )
 
-  lazy val flood = wire[Flood]
+  lazy val flood = new Flood
 
-  lazy val hcaptcha: Hcaptcha =
-    if (config.hcaptcha.enabled) wire[HcaptchaReal]
-    else HcaptchaSkip
+  lazy val passwordHasher = PasswordHasher(
+    secret = config.passwordBPassSecret,
+    logRounds = 10,
+    hashTimer = lila.mon.Chronometer.syncMon(lila.mon.user.auth.hashTime)
+  )
+
+  lazy val authenticator = wire[Authenticator]
+
+  lazy val turnstileCookie = TurnstileCookie(lilaCookie, config.turnstileCookieSecret)
+  val turnstilePublicConfig = config.turnstile.public
+  lazy val turnstile: Turnstile =
+    if config.turnstile.enabled then wire[TurnstileReal]
+    else wire[TurnstileSkip]
 
   lazy val forms = wire[SecurityForm]
+  def signupForm: lila.core.security.SignupFormFields = forms.signup
 
   lazy val geoIP: GeoIP = wire[GeoIP]
 
   lazy val userLogins = wire[UserLoginsApi]
 
-  lazy val store = new Store(db(config.collection.security), cacheApi)
+  lazy val store = SessionStore(db(config.collection.security), cacheApi)
 
-  lazy val ip2proxy: Ip2Proxy =
-    if (config.ip2Proxy.enabled) {
+  private lazy val tor: Tor = wire[Tor]
+
+  lazy val ip2proxy: lila.core.security.Ip2ProxyApi =
+    if config.ip2Proxy.enabled && config.ip2Proxy.url.nonEmpty then
       def mk = (url: String) => wire[Ip2ProxyServer]
       mk(config.ip2Proxy.url)
-    } else wire[Ip2ProxySkip]
+    else wire[Ip2ProxySkip]
 
   lazy val ugcArmedSetting = settingStore[Boolean](
     "ugcArmed",
@@ -74,58 +93,60 @@ final class Env(
     text = "Enable the user garbage collector".some
   )
 
-  lazy val printBan = new PrintBan(db(config.collection.printBan))
+  lazy val lichobileLogin = settingStore[Boolean](
+    "lichobileLogin",
+    default = true,
+    text = "Allow users to login with lichobile app".some
+  )
 
-  lazy val garbageCollector = {
+  lazy val printBan = PrintBan(db(config.collection.printBan))
+
+  private val curPlaying = () => lazyCurrentlyPlaying
+
+  lazy val garbageCollector =
     def mk: (() => Boolean) => GarbageCollector = isArmed => wire[GarbageCollector]
-    mk(ugcArmedSetting.get _)
-  }
+    mk(() => ugcArmedSetting.get())
 
   lazy val emailConfirm: EmailConfirm =
-    if (config.emailConfirm.enabled)
-      new EmailConfirmMailer(
+    if config.emailConfirm.enabled then
+      EmailConfirmMailer(
         userRepo = userRepo,
         mailer = mailer,
-        baseUrl = baseUrl,
+        routeUrl = routeUrl,
         tokenerSecret = config.emailConfirm.secret
       )
     else wire[EmailConfirmSkip]
 
-  lazy val passwordReset = {
+  lazy val emailConfirmByUserSend = wire[EmailConfirmByUserSend]
+
+  lazy val passwordReset =
     def mk = (s: Secret) => wire[PasswordReset]
     mk(config.passwordResetSecret)
-  }
 
-  lazy val magicLink = {
-    def mk = (s: Secret) => wire[MagicLink]
-    mk(config.passwordResetSecret)
-  }
-
-  lazy val reopen = {
+  lazy val reopen =
     def mk = (s: Secret) => wire[Reopen]
     mk(config.passwordResetSecret)
-  }
 
-  lazy val emailChange = {
+  lazy val emailChange =
     def mk = (s: Secret) => wire[EmailChange]
     mk(config.emailChangeSecret)
-  }
 
-  lazy val loginToken = new LoginToken(config.loginTokenSecret, userRepo)
+  lazy val loginToken =
+    def mk = (s: Secret) => wire[LoginToken]
+    mk(config.loginTokenSecret)
+
+  lazy val disposableEmailAttempt = wire[DisposableEmailAttempt]
 
   lazy val signup = wire[Signup]
 
   private lazy val dnsApi: DnsApi = wire[DnsApi]
 
-  private lazy val checkMail: CheckMail = wire[CheckMail]
+  private lazy val verifyMail: VerifyMail = wire[VerifyMail]
 
   lazy val emailAddressValidator = wire[EmailAddressValidator]
 
-  private lazy val disposableEmailDomain = new DisposableEmailDomain(
-    ws = ws,
-    providerUrl = config.disposableEmail.providerUrl,
-    checkMailBlocked = () => checkMail.fetchAllBlocked
-  )
+  private lazy val disposableEmailDomain =
+    DisposableEmailDomain(ws, config.disposableEmail.providerUrl)
 
   lazy val spamKeywordsSetting = settingStore[Strings](
     "spamKeywords",
@@ -133,35 +154,37 @@ final class Env(
     text = "Spam keywords separated by a comma".some
   )
 
-  lazy val spam = new Spam(spamKeywordsSetting.get _)
+  lazy val spam = Spam(spamKeywordsSetting.get)
 
   lazy val promotion = wire[PromotionApi]
 
-  if (config.disposableEmail.enabled) {
-    scheduler.scheduleOnce(30 seconds)(disposableEmailDomain.refresh())
-    scheduler.scheduleWithFixedDelay(
-      config.disposableEmail.refreshDelay,
-      config.disposableEmail.refreshDelay
-    ) { () =>
-      disposableEmailDomain.refresh()
-    }
-  }
-
-  lazy val tor: Tor = wire[Tor]
-
-  if (config.tor.enabled) {
-    scheduler.scheduleOnce(31 seconds)(tor.refresh.unit)
-    scheduler.scheduleWithFixedDelay(config.tor.refreshDelay, config.tor.refreshDelay) { () =>
-      tor.refresh flatMap firewall.unblockIps
-      ()
-    }
-  }
+  if config.disposableEmail.enabled then
+    scheduler.scheduleWithFixedDelay(42.seconds, 1.hour): () =>
+      disposableEmailDomain.refresh().prefixFailure("DisposableEmailDomain.refresh").logFailure(logger)
 
   lazy val ipTrust: IpTrust = wire[IpTrust]
+
+  lazy val userTrust: UserTrustApi = wire[UserTrustApi]
+
+  lazy val pwned: PwnedApi = PwnedApi(ws, config.pwnedRangeUrl)
+
+  lazy val proxy2faSetting: SettingStore[Strings] @@ Proxy2faSetting = settingStore[Strings](
+    "proxy2fa",
+    default = Strings(List("PUB", "TOR")),
+    text = "Types of proxy that require 2FA to login".some
+  ).taggedWith[Proxy2faSetting]
 
   lazy val api = wire[SecurityApi]
 
   lazy val csrfRequestHandler = wire[CSRFRequestHandler]
 
-  def cli = wire[Cli]
-}
+  lazy val ipTiers = wire[IpTiers]
+
+  wire[Cli]
+
+  lazy val coreApi = new lila.core.security.SecurityApi:
+    export api.shareAnIpOrFp
+    export userLogins.getUserIdsWithSameIpAndPrint
+
+private trait Proxy2faSetting
+private trait AlwaysCaptcha

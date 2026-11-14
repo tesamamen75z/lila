@@ -1,11 +1,12 @@
-import { VNode } from 'snabbdom';
-
-export type MaybeVNode = VNode | string | null | undefined;
-export type MaybeVNodes = MaybeVNode[];
+import type { ColorChoice } from 'lib/setup/color';
+import type { ClockConfig } from 'lib/setup/interfaces';
+import type { TimeMode } from 'lib/setup/timeControl';
 
 export type Sort = 'rating' | 'time';
 export type Mode = 'list' | 'chart';
 export type Tab = 'pools' | 'real_time' | 'seeks' | 'now_playing';
+export type GameType = 'hook' | 'friend' | 'ai';
+export type GameMode = 'casual' | 'rated';
 
 export interface Hook {
   id: string;
@@ -20,7 +21,6 @@ export interface Hook {
   u?: string; // username
   rating?: number;
   ra?: 1; // rated
-  c?: Color;
   action: 'cancel' | 'join';
   disabled?: boolean;
 }
@@ -31,49 +31,54 @@ export interface Seek {
   rating: number;
   mode: number;
   days?: number;
-  color: string;
   perf: {
     key: Exclude<Perf, 'fromPosition'>;
   };
   provisional?: boolean;
-  variant?: string;
+  variant?: { key: VariantKey };
   action: 'joinSeek' | 'cancelSeek';
 }
 
-export interface Pool {
+export interface Pool extends ClockConfig {
   id: PoolId;
-  lim: number;
-  inc: number;
-  perf: string;
 }
 
 export interface LobbyOpts {
-  element: HTMLElement;
+  appElement: HTMLElement;
+  tableElement: HTMLElement;
   socketSend: SocketSend;
   pools: Pool[];
-  blindMode: boolean;
+  hasUnreadLichessMessage: boolean;
   playban: boolean;
+  showRatings: boolean;
   data: LobbyData;
-  i18n: I18nDict;
-  trans: Trans;
+  bots?: boolean;
+}
+
+export interface LobbyMe {
+  isBot: boolean;
+  username: string;
 }
 
 export interface LobbyData {
   hooks: Hook[];
   seeks: Seek[];
+  me?: LobbyMe;
   nbNowPlaying: number;
+  nbMyTurn: number;
   nowPlaying: NowPlaying[];
-  me?: {
-    isBot: boolean;
-    username: string;
-  };
+  ratingMap: Record<Perf, RatingWithProvisional> | null;
+  counters: { members: number; rounds: number };
 }
+
+type RatingWithProvisional = number;
 
 export interface NowPlaying {
   fullId: string;
   gameId: string;
-  fen: Fen;
+  fen: FEN;
   color: Color;
+  orientation?: Color;
   lastMove: string;
   variant: {
     key: string;
@@ -101,3 +106,28 @@ export interface PoolMember {
 
 export type PoolId = string;
 export type PoolRange = string;
+
+export interface SetupStore {
+  variant: VariantKey;
+  fen: FEN;
+  timeMode: TimeMode;
+  gameMode: GameMode;
+  color: ColorChoice;
+  ratingMin: number;
+  ratingMax: number;
+  aiLevel: number;
+  time: number;
+  increment: number;
+  days: number;
+}
+
+export interface ForceSetupOptions {
+  variant?: VariantKey;
+  fen?: FEN;
+  timeMode?: TimeMode;
+  time?: number;
+  increment?: number;
+  days?: number;
+  mode?: GameMode;
+  color?: ColorChoice;
+}

@@ -1,111 +1,86 @@
 package lila.chat
 
-import org.joda.time.DateTime
 import play.api.data.Form
-import play.api.data.Forms._
-import reactivemongo.api.bson._
-import scala.concurrent.duration._
+import play.api.data.Forms.*
+import reactivemongo.api.bson.*
+import scalalib.ThreadLocalRandom
 
-import lila.db.dsl._
-import lila.user.User
+import lila.db.dsl.{ *, given }
 
 final class ChatTimeout(
     coll: Coll,
     duration: FiniteDuration
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  import ChatTimeout._
+  import ChatTimeout.{ *, given }
 
-  private val global = new lila.memo.ExpireSetMemo(duration)
+  private val global = scalalib.cache.ExpireSetMemo[UserId](duration)
 
   def add(chat: UserChat, mod: User, user: User, reason: Reason, scope: Scope): Fu[Boolean] =
-    isActive(chat.id, user.id) flatMap {
-      case true => fuccess(false)
-      case false =>
-        if (scope == Scope.Global) global put user.id
+    isActive(chat.id, user.id).flatMap:
+      if _ then fuccess(false)
+      else
+        if scope == Scope.Global then global.put(user.id)
         coll.insert
           .one(
-            $doc(
-              "_id"       -> makeId,
-              "chat"      -> chat.id,
-              "mod"       -> mod.id,
-              "user"      -> user.id,
-              "reason"    -> reason,
-              "createdAt" -> DateTime.now,
-              "expiresAt" -> DateTime.now.plusSeconds(duration.toSeconds.toInt)
+            bdoc(
+              "_id" -> ThreadLocalRandom.nextString(8),
+              "chat" -> chat.id,
+              "mod" -> mod.id,
+              "user" -> user.id,
+              "reason" -> reason,
+              "createdAt" -> nowInstant,
+              "expiresAt" -> nowInstant.plusSeconds(duration.toSeconds.toInt)
             )
-          ) inject true
-    }
+          )
+          .inject(true)
 
-  def isActive(chatId: Chat.Id, userId: User.ID): Fu[Boolean] =
-    fuccess(global.get(userId)) >>| coll.exists(
-      $doc(
+  def isActive(chatId: ChatId, userId: UserId): Fu[Boolean] =
+    fuccess(global.get(userId)) >>| coll.exists:
+      bdoc(
         "chat" -> chatId,
         "user" -> userId,
-        "expiresAt" $exists true
+        "expiresAt".exists(true)
       )
-    )
 
   def history(user: User, nb: Int): Fu[List[UserEntry]] =
-    coll.find($doc("user" -> user.id)).sort($sort desc "createdAt").cursor[UserEntry]().list(nb)
+    coll.find(bdoc("user" -> user.id)).sort(sort.desc("createdAt")).cursor[UserEntry]().list(nb)
 
   def checkExpired: Fu[List[Reinstate]] =
-    coll.list[Reinstate](
-      $doc(
-        "expiresAt" $lt DateTime.now
+    coll
+      .list[Reinstate](
+        bdoc(
+          "expiresAt".lt(nowInstant)
+        )
       )
-    ) flatMap {
-      case Nil => fuccess(Nil)
-      case objs =>
-        coll.unsetField($inIds(objs.map(_._id)), "expiresAt", multi = true) inject objs
-    }
+      .flatMap:
+        case Nil => fuccess(Nil)
+        case objs => coll.unsetField(inIds(objs.map(_._id)), "expiresAt", multi = true).inject(objs)
 
-  private val idSize = 8
+object ChatTimeout:
 
-  private def makeId = lila.common.ThreadLocalRandom nextString idSize
-}
+  export lila.core.chat.{ TimeoutReason as Reason, TimeoutScope as Scope }
 
-object ChatTimeout {
-
-  sealed abstract class Reason(val key: String, val name: String) {
-    lazy val shortName = name.split(';').lift(0) | name
-  }
-
-  object Reason {
-    case object PublicShaming extends Reason("shaming", "public shaming; please use lichess.org/report")
-    case object Insult
-        extends Reason("insult", "disrespecting other players; see lichess.org/page/chat-etiquette")
-    case object Spam  extends Reason("spam", "spamming the chat; see lichess.org/page/chat-etiquette")
-    case object Other extends Reason("other", "inappropriate behavior; see lichess.org/page/chat-etiquette")
-    val all: List[Reason]  = List(PublicShaming, Insult, Spam, Other)
-    def apply(key: String) = all.find(_.key == key)
-  }
-  implicit val ReasonBSONHandler: BSONHandler[Reason] = tryHandler[Reason](
-    { case BSONString(value) => Reason(value) toTry s"Invalid reason $value" },
+  given BSONHandler[Reason] = tryHandler(
+    { case BSONString(value) => Reason(value).toTry(s"Invalid reason $value") },
     x => BSONString(x.key)
   )
 
-  case class Reinstate(_id: String, chat: String, user: String)
-  implicit val ReinstateBSONReader: BSONDocumentReader[Reinstate] = Macros.reader[Reinstate]
+  case class Reinstate(_id: String, chat: ChatId, user: UserId)
+  given BSONDocumentReader[Reinstate] = Macros.reader
 
-  case class UserEntry(mod: String, reason: Reason, createdAt: DateTime)
-  implicit val UserEntryBSONReader: BSONDocumentReader[UserEntry] = Macros.reader[UserEntry]
+  case class UserEntry(mod: UserId, reason: Reason, createdAt: Instant)
+  given BSONDocumentReader[UserEntry] = Macros.reader
 
-  sealed trait Scope
-  object Scope {
-    case object Local  extends Scope
-    case object Global extends Scope
-  }
-
+  import lila.common.Form.given
   val form = Form(
     mapping(
-      "roomId" -> nonEmptyText,
-      "chan"   -> lila.common.Form.stringIn(Set("tournament", "simul")),
-      "userId" -> nonEmptyText,
+      "roomId" -> of[RoomId],
+      "chan" -> lila.common.Form.stringIn(Set("tournament", "swiss", "team", "study")),
+      "userId" -> lila.common.Form.username.historicalField,
       "reason" -> nonEmptyText,
-      "text"   -> nonEmptyText
-    )(TimeoutFormData.apply)(TimeoutFormData.unapply)
+      "text" -> nonEmptyText
+    )(TimeoutFormData.apply)(unapply)
   )
 
-  case class TimeoutFormData(roomId: String, chan: String, userId: User.ID, reason: String, text: String)
-}
+  case class TimeoutFormData(roomId: RoomId, chan: String, userId: UserStr, reason: String, text: String)

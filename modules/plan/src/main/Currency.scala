@@ -1,17 +1,19 @@
 package lila.plan
 
-import io.methvin.play.autoconfig.AutoConfig
-import java.util.{ Currency, Locale }
-import play.api.i18n.Lang
-import play.api.libs.json._
-import play.api.libs.ws.JsonBodyReadables._
+import play.api.ConfigLoader
+import play.api.libs.json.*
+import play.api.libs.ws.JsonBodyReadables.*
 import play.api.libs.ws.StandaloneWSClient
-import play.api.Mode
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
+
+import java.util.{ Currency, Locale }
 import scala.util.Try
 
-import lila.common.config
+import lila.common.autoconfig.AutoConfig
+import lila.common.config.given
+import lila.core.config.Secret
+import lila.core.net.CountryCode
+import lila.db.dsl.mapHandler
+import lila.ui.Context
 
 case class CurrencyWithRate(currency: Currency, rate: Double)
 
@@ -19,73 +21,77 @@ final class CurrencyApi(
     ws: StandaloneWSClient,
     mongoCache: lila.memo.MongoCache.Api,
     config: CurrencyApi.Config
-)(implicit ec: ExecutionContext, mode: Mode) {
+)(using ec: Executor, mode: play.api.Mode):
 
-  import CurrencyApi._
+  import CurrencyApi.*
 
   private val baseUrl = "https://openexchangerates.org/api"
 
   private val ratesCache = mongoCache.unit[Map[String, Double]](
     "currency:rates",
-    if (mode == Mode.Prod) 120 minutes // i.e. 377/month, under the 1000/month limit of free OER plan
-    else 1 day
-  ) { loader =>
-    _.refreshAfterWrite(121 minutes)
-      .buildAsyncFuture {
-        loader { _ =>
-          ws.url(s"$baseUrl/latest.json")
-            .withQueryStringParameters("app_id" -> config.appId.value)
-            .get()
-            .dmap { res =>
-              (res.body[JsValue] \ "rates").validate[Map[String, Double]].asOpt match {
-                case None =>
-                  logger.error(s"Currency rates unavailable! ${res.status} $baseUrl")
-                  Map("USD" -> 1d)
-                case Some(rates) => rates.filterValues(0 <)
-              }
-            }
-        }
-      }
-  }
+    if mode.isProd then 120.minutes // i.e. 377/month, under the 1000/month limit of free OER plan
+    else 1.day
+  ): loader =>
+    _.refreshAfterWrite(121.minutes).buildAsyncFuture:
+      loader: _ =>
+        ws.url(s"$baseUrl/latest.json")
+          .withQueryStringParameters("app_id" -> config.appId.value)
+          .get()
+          .dmap: res =>
+            (res.body[JsValue] \ "rates").validate[Map[String, Double]].asOpt match
+              case None =>
+                logger.error(s"Currency rates unavailable! ${res.status} $baseUrl")
+                Map("USD" -> 1d)
+              case Some(rates) => rates.filterValues(0 <)
 
   def convert(money: Money, currency: Currency): Fu[Option[Money]] =
-    ratesCache.get {} map { rates =>
-      for {
-        fromRate <- rates get money.currencyCode
-        toRate   <- rates get currency.getCurrencyCode
-      } yield Money(money.amount / fromRate * toRate, currency)
+    ratesCache.get {}.map { rates =>
+      for
+        fromRate <- rates.get(money.currencyCode)
+        toRate <- rates.get(currency.getCurrencyCode)
+      yield Money(money.amount / fromRate * toRate, currency)
     }
 
   def toUsd(money: Money): Fu[Option[Usd]] =
-    ratesCache.get {} map { rates =>
-      rates.get(money.currencyCode) map { fromRate =>
+    ratesCache.get {}.map { rates =>
+      rates.get(money.currencyCode).map { fromRate =>
         Usd(money.amount / fromRate)
       }
     }
 
-  val USD = Currency getInstance "USD"
-  val EUR = Currency getInstance "EUR"
+  val USD = Currency.getInstance("USD")
+  val EUR = Currency.getInstance("EUR")
 
-  def currencyByCountryCodeOrLang(countryCode: Option[String], lang: Lang): Currency =
-    countryCode
-      .flatMap { code => scala.util.Try(new java.util.Locale("", code)).toOption }
-      .flatMap(currencyOption)
-      .orElse(currencyOption(lang.locale))
-      .getOrElse(USD)
-}
+  def guessCurrency(requested: Option[String])(using ctx: Context): Currency =
+    requested
+      .flatMap(lila.plan.CurrencyApi.currencyOption)
+      .getOrElse:
+        lila.common.HTTPRequest
+          .country(using ctx.req)
+          .flatMap(code => Try(new Locale.Builder().setRegion(code.value).build()).toOption)
+          .flatMap(currencyOption)
+          .orElse(currencyOption(ctx.lang.locale))
+          .getOrElse(USD)
 
-object CurrencyApi {
+  private val yearlyCosts = Money(789_389, USD)
 
-  case class Config(appId: config.Secret)
-  implicit val currencyConfigLoader = AutoConfig.loader[Config]
+  def yearlyCostsForCtx(using ctx: Context): Fu[Money] =
+    convert(yearlyCosts, guessCurrency(none)).map(_ | yearlyCosts)
 
-  val acceptableCurrencies: Set[Currency] = payPalCurrencies intersect stripeCurrencies
+object CurrencyApi:
 
-  val currencyList: List[Currency] = acceptableCurrencies.toList.sortBy(_.getCurrencyCode)
+  case class Config(appId: Secret)
+  given ConfigLoader[Config] = AutoConfig.loader
+
+  private lazy val acceptableCurrencies: Set[Currency] = payPalCurrencies.concat(stripeCurrencies)
+
+  lazy val currencyList: List[Currency] = acceptableCurrencies.toList.sortBy(_.getCurrencyCode)
+
+  lazy val stripeCurrencyList: List[Currency] = stripeCurrencies.toList.sortBy(_.getCurrencyCode)
 
   def currencyOption(code: String) = anyCurrencyOption(code).filter(acceptableCurrencies.contains)
   def currencyOption(locale: Locale) =
-    Try(Currency getInstance locale).toOption.filter(acceptableCurrencies.contains)
+    Try(Currency.getInstance(locale)).toOption.filter(acceptableCurrencies.contains)
 
   val zeroDecimalCurrencies: Set[Currency] = Set(
     "BIF",
@@ -107,11 +113,11 @@ object CurrencyApi {
   ).flatMap(anyCurrencyOption)
 
   // https://developer.paypal.com/docs/reports/reference/paypal-supported-currencies/
-  private def payPalCurrencies: Set[Currency] = Set(
+  val payPalCurrencies: Set[Currency] = Set(
     "AUD",
     "BRL",
     "CAD",
-    "CNY",
+    // "CNY",
     "CZK",
     "DKK",
     "EUR",
@@ -119,7 +125,7 @@ object CurrencyApi {
     "HUF",
     "ILS",
     "JPY",
-    "MYR",
+    // "MYR",
     "MXN",
     "TWD",
     "NZD",
@@ -135,7 +141,7 @@ object CurrencyApi {
     "USD"
   ).flatMap(anyCurrencyOption)
 
-  private def stripeCurrencies: Set[Currency] = Set(
+  val stripeCurrencies: Set[Currency] = Set(
     "USD",
     "AED",
     "AFN",
@@ -150,7 +156,6 @@ object CurrencyApi {
     "BAM",
     "BBD",
     "BDT",
-    "BGN",
     "BIF",
     "BMD",
     "BND",
@@ -273,5 +278,4 @@ object CurrencyApi {
     "ZMW"
   ).flatMap(anyCurrencyOption)
 
-  private def anyCurrencyOption(code: String) = Try(Currency getInstance code).toOption
-}
+  private def anyCurrencyOption(code: String) = Try(Currency.getInstance(code)).toOption

@@ -1,10 +1,58 @@
+@import './filters';
+
+// formatting is also done in view.ts. if your changes aren't behaving as expected - check there!
 #insight {
+  ---chart-height: 550px;
+  ---header-height: 60px;
+  ---drop-menu-width: 200px;
+
   > div {
-    display: grid;
-    grid-template-columns: minmax(280px, 15vw);
-    grid-template-rows: 60px;
-    grid-template-areas: 'side head' 'side main';
-    grid-gap: 0 $block-gap;
+    display: flex;
+  }
+
+  .view-tabs {
+    @extend %flex-center-nowrap;
+
+    align-items: flex-end;
+    border-bottom: 2px solid $c-border;
+    font-size: 1.6em;
+  }
+
+  .tab {
+    @extend %roboto;
+    @include transition(color, 0.25s);
+
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 0.5em 0.2em;
+    cursor: pointer;
+    position: relative;
+    color: $c-font-page;
+    min-width: 15%;
+
+    &::after {
+      @include inline-start(2%);
+      @include transition(all, 0.25s);
+
+      content: '';
+      background: rgb(from $c-accent r g b / calc(alpha * 0.6));
+      height: 2px;
+      position: absolute;
+      width: 96%;
+      bottom: -2px;
+      transform: scale(0);
+    }
+
+    &.active,
+    &:hover {
+      &::after {
+        transform: scale(1);
+      }
+    }
+
+    &.active {
+      color: $c-accent;
+    }
   }
 
   .crunching {
@@ -18,10 +66,10 @@
 
     .spinner {
       @extend %abs-100, %flex-center;
+      @include inline-start(0);
 
       top: 0;
-      left: 0;
-      height: 550px;
+      height: var(---chart-height);
       opacity: 0.7;
 
       svg {
@@ -41,12 +89,12 @@
     width: 100%;
   }
 
-  .broken i {
+  .broken icon {
     font-size: 50px;
   }
 
   .chart {
-    height: 550px;
+    height: var(---chart-height);
   }
 
   .loading .chart {
@@ -64,45 +112,38 @@
     opacity: 0.7;
   }
 
-  .chart.empty i {
+  .chart.empty icon {
     margin-bottom: 30px;
     display: block;
     font-size: 200px;
     opacity: 0.5;
   }
 
-  .left-side {
-    grid-area: side;
-  }
-
   header {
     @extend %box-radius-top;
+    @extend %flex-between;
 
-    background: #333;
-    color: #ddd;
-    height: 100%;
-    grid-area: head;
+    padding: 0 1vw;
+    flex-wrap: nowrap;
+    height: var(---header-height);
+    background: $c-bg-zebra;
+
+    @include if-transp {
+      background: $c-bg-box;
+    }
 
     h2 {
-      font-size: 2em;
-      line-height: 60px;
+      line-height: var(---header-height);
     }
 
     h2::before {
-      font-size: 42px;
       vertical-align: top;
-      line-height: 60px;
+      line-height: var(---header-height);
       margin: 0 10px;
     }
 
     > * {
       display: inline-block;
-    }
-
-    .ms-choice {
-      background: #444;
-      color: #ddd;
-      border-color: #666;
     }
   }
 
@@ -110,35 +151,49 @@
     background: $c-bg-box;
     border: $border;
     border-top: 0;
-    grid-area: main;
   }
 
   .axis-form {
-    float: right;
+    @extend %flex-center-nowrap;
+
+    height: var(---header-height);
+    flex: auto;
+    justify-content: flex-end;
   }
 
   .axis-form .by {
-    padding: 0 20px;
+    margin: 0 8px;
+
+    @media (max-width: at-most(400px)) {
+      display: none;
+    }
   }
 
   .axis-form .ms-choice {
-    padding: 30px 10px;
+    padding: calc(var(---header-height) / 2) 10px;
+
+    @media (max-width: at-most($xx-small)) {
+      padding-left: 2px;
+      padding-right: 2px;
+    }
+
     border-width: 0 1px;
     border-radius: 0;
     transition: 0.15s;
   }
 
   .axis-form .ms-choice span {
-    line-height: 60px;
+    line-height: var(---header-height);
     text-align: center;
   }
 
   .axis-form .ms-choice div {
-    top: 18px;
+    top: calc(var(---header-height) / 2 - 12px);
   }
 
   .axis-form .ms-drop {
     color: $c-font;
+    width: var(---drop-menu-width);
 
     ul > li label input {
       display: none;
@@ -146,8 +201,14 @@
 
     ul > li.selected label {
       background: $c-accent;
-      color: $c-accent-over;
+      color: $c-over;
     }
+  }
+
+  .hscroll {
+    overflow-x: scroll;
+    overflow-y: hidden;
+    white-space: nowrap;
   }
 
   .panel-tabs {
@@ -156,46 +217,6 @@
     justify-content: center;
     align-items: flex-end;
     border-bottom: 2px solid $c-border;
-
-    .tab {
-      @extend %roboto;
-
-      flex: 1 1 auto;
-      text-align: center;
-      padding: 0.5em 0.2em;
-      cursor: pointer;
-      position: relative;
-      color: $c-font-page;
-
-      @include transition(color, 0.25s);
-
-      min-width: 15%;
-
-      &::after {
-        content: '';
-        background: fade-out($c-accent, 0.4);
-        height: 2px;
-        position: absolute;
-        width: 96%;
-        left: 2%;
-        bottom: -2px;
-
-        @include transition(all, 0.25s);
-
-        transform: scale(0);
-      }
-
-      &.active,
-      &:hover {
-        &::after {
-          transform: scale(1);
-        }
-      }
-
-      &.active {
-        color: $c-accent;
-      }
-    }
   }
 
   .presets {
@@ -215,7 +236,7 @@
     }
 
     a:hover {
-      background: mix($c-accent, $c-bg-box, 20%);
+      background: color-mix(in oklab, $c-accent 20%, $c-bg);
     }
 
     a:hover::before {
@@ -233,71 +254,15 @@
     margin-bottom: 0.5em;
   }
 
-  .filters {
-    .box {
-      border-bottom-width: 0;
-    }
+  .center-clear {
+    @extend %flex-center-center-nowrap;
 
-    .box:last-child {
-      border-bottom-width: 1px;
-    }
-
-    .ms-parent {
-      display: block;
-    }
-
-    .ms-choice {
-      padding: 15px 10px;
-      border-width: 0 0 1px 0;
-
-      @include transition;
-    }
-
-    .ms-parent:last-child .ms-choice {
-      border-bottom: 0;
-    }
-
-    .ms-parent.selected .ms-choice {
-      $c-sel-ms-choice: fade-out($c-accent, 0.3);
-
-      background: linear-gradient(
-        to right,
-        $c-sel-ms-choice 0px,
-        $c-sel-ms-choice 5px,
-        rgba(0, 0, 0, 0) 5px,
-        rgba(0, 0, 0, 0) 100%
-      );
-    }
-
-    .ms-parent:hover .ms-choice {
-      background: mix($c-accent, $c-bg-box, 20%);
-    }
-
-    .ms-choice span {
-      text-align: right;
-      line-height: 30px;
-      background: none;
-    }
-
-    .ms-choice div {
-      top: 4px;
-    }
-
-    .ms-drop ul > li label input {
-      margin-right: 5px;
-      cursor: pointer;
-    }
-
-    .ms-drop {
-      margin-left: 99%;
-      top: 0;
-      left: 0;
-    }
+    height: 20px;
   }
 
   .ms-parent,
   .ms-parent button {
-    user-select: none;
+    @include prevent-select;
   }
 
   .ms-choice:focus,
@@ -307,6 +272,8 @@
 
   .ms-drop {
     font-size: 0.9em;
+    max-height: calc(99vh - $site-header-height - var(---header-height));
+    overflow-y: auto;
 
     ul {
       padding: 0;
@@ -323,7 +290,7 @@
     }
 
     ul > li label:not(.optgroup):hover {
-      background: mix($c-accent, $c-bg-box, 20%);
+      background: color-mix(in oklab, $c-accent 20%, $c-bg);
     }
 
     ul > li label.optgroup {
@@ -342,14 +309,19 @@
   }
 
   .box {
-    @extend %box-neat;
+    @extend %box-radius-bottom;
+
+    overflow: visible;
 
     .top {
-      @extend %metal, %box-radius-top;
+      @extend %metal-bg, %roboto;
 
-      padding: #{$block-gap / 2} $block-gap;
-      font-weight: bold;
+      padding: 0.6rem $block-gap;
       border-bottom: $border;
+
+      .utitle {
+        margin-right: 3px;
+      }
     }
 
     .content {
@@ -377,6 +349,24 @@
     }
   }
 
+  .tutor-link {
+    @extend %flex-center, %box-neat;
+
+    padding: 0.5em 1em;
+    gap: 1em;
+    background: color-mix(in oklab, $c-primary 10%, $c-bg);
+    border: 1px solid $c-primary;
+    margin-bottom: 1em;
+
+    img {
+      height: 3em;
+    }
+
+    > span {
+      @extend %flex-column;
+    }
+  }
+
   .help.box {
     margin-top: 20px;
   }
@@ -399,18 +389,18 @@
   }
 
   .game-sample {
-    margin: 2em 0 1em 0;
     border-top: $border;
     box-shadow: none;
   }
 
   .boards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 25%));
+    padding: 0.6em;
+    gap: 0.3em;
+    grid-template-columns: repeat(auto-fit, minmax(200px, calc(25% - 0.25em)));
 
     a {
-      @extend %box-radius;
-
+      @extend %box-bordered;
       @include transition(background);
 
       color: $c-font;
@@ -422,15 +412,14 @@
       }
 
       &:hover {
-        background: mix($c-link, $c-bg-box, 20%);
+        background: color-mix(in oklab, $c-accent 20%, $c-bg);
       }
     }
 
     .vstext {
-      @extend %flex-between-nowrap, %nowrap-hidden, %box-neat;
+      @extend %flex-between-nowrap, %nowrap-hidden;
 
-      background: $c-bg-box;
-      padding: 0.3em 0.6em;
+      padding: 0.2em 0.3em 0;
 
       &__pl,
       &__op {
@@ -448,4 +437,8 @@
       }
     }
   }
+}
+
+body.no-rating rating {
+  display: none;
 }

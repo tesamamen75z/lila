@@ -1,94 +1,126 @@
 package lila.appeal
 
-import org.joda.time.DateTime
-
-import lila.user.User
+import reactivemongo.api.bson.Macros.Annotations.Key
 
 case class Appeal(
-    _id: User.ID,
-    msgs: Vector[AppealMsg],
+    @Key("_id") id: Appeal.Id,
+    user: UserId,
+    topic: AppealTopic,
+    msgs: Vector[AppealMsg], // chronological order, oldest first
     status: Appeal.Status, // from the moderators POV
-    createdAt: DateTime,
-    updatedAt: DateTime,
+    createdAt: Instant,
+    updatedAt: Instant,
     // date of first player message without a mod reply
-    // https://github.com/ornicar/lila/issues/7564
-    firstUnrepliedAt: DateTime
-) {
-  def id       = _id
-  def isMuted  = status == Appeal.Status.Muted
-  def isUnread = status == Appeal.Status.Unread
+    // https://github.com/lichess-org/lila/issues/7564
+    firstUnrepliedAt: Instant,
+    muted: Boolean = false, // new appeal posts of the user are ignored
+    closedUntil: Option[Instant] = None, // user must wait a certain duration
+    accounts: Option[AccountsDisclosure] = None
+):
+  def isRead = status == Appeal.Status.read
+  def isUnread = status == Appeal.Status.unread
+  def isClosed = status == Appeal.Status.closed
+  def isOpen = !isClosed
+  def isRecent = updatedAt.isAfter(nowInstant.minusWeeks(1))
+  def isOld = updatedAt.isBefore(nowInstant.minusMonths(6))
 
-  def isAbout(userId: User.ID) = _id == userId
+  def toggleClosed(v: Boolean) =
+    if v then copy(status = Appeal.Status.closed)
+    else copy(status = Appeal.Status.read).sleep(none)
 
-  def post(text: String, by: User) = {
-    val msg = AppealMsg(
-      by = by.id,
-      text = text,
-      at = DateTime.now
+  def withdraw =
+    copy(
+      msgs = msgs :+ AppealMsg(UserId.lichess, "This appeal was withdrawn by the user.", nowInstant),
+      updatedAt = nowInstant,
+      status = Appeal.Status.closed,
+      closedUntil = none
     )
+
+  def toggleRead(v: Boolean) =
+    copy(status = if v then Appeal.Status.read else Appeal.Status.unread)
+
+  def sleep(months: Option[Int]) = copy(closedUntil = months.map(nowInstant.plusMonths))
+
+  def post(text: String, by: UserId, muted: Boolean) =
+    val msg = AppealMsg(by, text, nowInstant)
     copy(
       msgs = msgs :+ msg,
-      updatedAt = DateTime.now,
+      updatedAt = nowInstant,
       status =
-        if (isByMod(msg) && status == Appeal.Status.Unread) Appeal.Status.Read
-        else if (!isByMod(msg) && status == Appeal.Status.Read) Appeal.Status.Unread
+        if isByMod(msg) && isUnread then Appeal.Status.read
+        else if !isByMod(msg) && isRead && !muted then Appeal.Status.unread
         else status,
       firstUnrepliedAt =
-        if (isByMod(msg) || msgs.lastOption.exists(isByMod)) DateTime.now
+        if isByMod(msg) || msgs.lastOption.exists(isByMod) || isRead then nowInstant
         else firstUnrepliedAt
     )
-  }
 
-  def canAddMsg: Boolean = {
-    val recentWithoutMod = msgs.foldLeft(Vector.empty[AppealMsg]) {
-      case (_, msg) if isByMod(msg)                                => Vector.empty
-      case (acc, msg) if msg.at isAfter DateTime.now.minusWeeks(1) => acc :+ msg
-      case (acc, _)                                                => acc
-    }
+  def canAddMsg: Boolean =
+    val recentWithoutMod = msgs.foldLeft(Vector.empty[AppealMsg]):
+      case (_, msg) if isByMod(msg) => Vector.empty
+      case (acc, msg) if msg.at.isAfter(nowInstant.minusWeeks(1)) => acc :+ msg
+      case (acc, _) => acc
+
+    val recentCount = recentWithoutMod.size
     val recentSize = recentWithoutMod.foldLeft(0)(_ + _.text.size)
-    recentSize < Appeal.maxLength
-  }
+    recentSize < Appeal.maxLength && recentCount < 3
 
-  def unread     = copy(status = Appeal.Status.Unread)
-  def read       = copy(status = Appeal.Status.Read)
-  def toggleMute = if (isMuted) read else copy(status = Appeal.Status.Muted)
+  def unread = copy(status = Appeal.Status.unread)
 
-  def isByMod(msg: AppealMsg) = msg.by != id
-}
+  def isByMod(msg: AppealMsg) = msg.by != user
 
-object Appeal {
+  def modIds =
+    msgs.collect { case msg if isByMod(msg) && msg.by.isnt(UserId.lichess) => msg.by }.distinct.toList
 
-  sealed trait Status {
-    val key = toString.toLowerCase
-  }
-  object Status {
-    case object Unread extends Status
-    case object Read   extends Status
-    case object Muted  extends Status
-    val all                = List[Status](Unread, Read, Muted)
-    def apply(key: String) = all.find(_.key == key)
-  }
+  def participated(modId: UserId) = msgs.exists(_.by.is(modId))
 
-  val maxLength = 1000
+  def isLast(msg: AppealMsg) = msgs.lastOption.contains(msg)
 
-  import play.api.data._
-  import play.api.data.Forms._
+  def modShowUrl = s"${routes.Appeal.modShow(user, topic)}#appeal-last-msg"
 
-  val form =
-    Form[String](
-      single("text" -> lila.common.Form.cleanNonEmptyText(minLength = 2, maxLength = maxLength))
+opaque type UserAppeals = Map[AppealTopic, Appeal]
+object UserAppeals extends TotalWrapper[UserAppeals, Map[AppealTopic, Appeal]]:
+  extension (appeals: UserAppeals)
+    def muted = appeals.values.exists(_.muted)
+    def get = appeals.get
+
+object Appeal:
+
+  opaque type Id = String
+  object Id extends OpaqueString[Id]
+
+  given UserIdOf[Appeal] = _.user
+
+  enum Status:
+    case unread, read, closed
+    def key = toString
+  object Status:
+    def apply(key: String) = values.find(_.key == key)
+
+  val maxLength = 1100
+
+  def make(topic: AppealTopic, text: String, accounts: Option[AccountsDisclosure] = None)(using me: Me) =
+    val now = nowInstant
+    Appeal(
+      id = Id(scalalib.ThreadLocalRandom.nextString(8)),
+      user = me.userId,
+      topic = topic,
+      msgs = Vector(AppealMsg(me, text, now)),
+      status = Status.unread,
+      createdAt = now,
+      updatedAt = now,
+      firstUnrepliedAt = now,
+      accounts = accounts.ifTrue(AppealTopicApi.requiresAccounts(topic))
     )
 
-  val modForm =
-    Form[String](
-      single("text" -> lila.common.Form.cleanNonEmptyText)
-    )
+  private[appeal] case class SnoozeKey(snoozerId: UserId, appealId: Id)
+  private[appeal] given UserIdOf[SnoozeKey] = _.snoozerId
 
-  private[appeal] case class SnoozeKey(snoozerId: User.ID, appealId: User.ID) extends lila.memo.Snooze.Key
-}
+case class AppealMsg(by: UserId, text: String, at: Instant)
 
-case class AppealMsg(
-    by: User.ID,
-    text: String,
-    at: DateTime
-)
+case class AccountsDisclosure(
+    otherUsernames: Option[String],
+    moreForgotten: Boolean,
+    household: Option[String]
+):
+  def onlyThisAccount = otherUsernames.isEmpty

@@ -1,15 +1,22 @@
-import * as xhr from 'common/xhr';
 import debounce from 'debounce-promise';
-import { Pool, Seek } from './interfaces';
 
-export const seeks: () => Promise<Seek[]> = debounce(() => xhr.json('/lobby/seeks'), 2000);
+import { json as xhrJson, form } from 'lib/xhr';
 
-export const nowPlaying = () => xhr.json('/account/now-playing').then(o => o.nowPlaying);
+import type { NowPlaying, Pool, Seek } from './interfaces';
+
+export const seeks: () => Promise<Seek[]> = debounce(() => xhrJson('/lobby/seeks'), 3000, { leading: true });
+
+type NowPlayingRes = {
+  nowPlaying: NowPlaying[];
+  nbMyTurn: number;
+};
+
+export const nowPlaying = () => xhrJson<NowPlayingRes>('/account/now-playing');
 
 export const anonPoolSeek = (pool: Pool) =>
-  xhr.json('/setup/hook/' + lichess.sri, {
+  xhrJson('/setup/hook/' + site.sri, {
     method: 'POST',
-    body: xhr.form({
+    body: form({
       variant: 1,
       timeMode: 1,
       time: pool.lim,

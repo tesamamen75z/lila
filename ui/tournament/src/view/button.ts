@@ -1,10 +1,12 @@
-import { h, VNode } from 'snabbdom';
-import { isIn } from '../tournament';
-import { spinner, bind, dataIcon } from './util';
-import TournamentController from '../ctrl';
+import { h, type VNode } from 'snabbdom';
+
+import { licon } from 'lib/licon';
+import { spinnerVdom, bind, dataIcon, onInsert } from 'lib/view';
+
+import type TournamentController from '../ctrl';
 
 function orJoinSpinner(ctrl: TournamentController, f: () => VNode): VNode {
-  return ctrl.joinSpinner ? spinner() : f();
+  return ctrl.joinSpinner ? spinnerVdom() : f();
 }
 
 export function withdraw(ctrl: TournamentController): VNode {
@@ -13,56 +15,44 @@ export function withdraw(ctrl: TournamentController): VNode {
     return h(
       'button.fbt.text',
       {
-        attrs: dataIcon(pause ? '' : ''),
+        attrs: dataIcon(pause ? licon.Pause : licon.FlagOutline),
         hook: bind('click', ctrl.withdraw, ctrl.redraw),
       },
-      ctrl.trans.noarg(pause ? 'pause' : 'withdraw')
+      i18n.site[pause ? 'pause' : 'withdraw'],
     );
   });
 }
 
 export function join(ctrl: TournamentController): VNode {
   return orJoinSpinner(ctrl, () => {
-    const delay = ctrl.data.me && ctrl.data.me.pauseDelay;
+    const delay = ctrl.data.me?.pauseDelay;
     const joinable = ctrl.data.verdicts.accepted && !delay;
     const button = h(
-      'button.fbt.text' + (joinable ? '.highlight' : ''),
+      'button' + (joinable ? '.button.button-green' : '.fbt.text'),
       {
-        attrs: {
-          disabled: !joinable,
-          'data-icon': '',
-        },
+        attrs: { disabled: !joinable, 'data-icon': licon.PlayTriangle },
         hook: bind('click', _ => ctrl.join(), ctrl.redraw),
       },
-      ctrl.trans.noarg('join')
+      i18n.site.join,
     );
     return delay
-      ? h(
-          'div.delay-wrap',
-          {
-            attrs: { title: 'Waiting to be able to re-join the tournament' },
-          },
-          [
-            h(
-              'div.delay',
-              {
-                hook: {
-                  insert(vnode) {
-                    const el = vnode.elm as HTMLElement;
-                    el.style.animation = `tour-delay ${delay}s linear`;
-                    setTimeout(() => {
-                      if (delay === ctrl.data.me!.pauseDelay) {
-                        ctrl.data.me!.pauseDelay = 0;
-                        ctrl.redraw();
-                      }
-                    }, delay * 1000);
-                  },
-                },
-              },
-              [button]
-            ),
-          ]
-        )
+      ? h('div.delay-wrap', { attrs: { title: 'Waiting to be able to re-join the tournament' } }, [
+          h(
+            'div.delay',
+            {
+              hook: onInsert(el => {
+                el.style.animation = `tour-delay ${delay}s linear`;
+                setTimeout(() => {
+                  if (delay === ctrl.data.me!.pauseDelay) {
+                    ctrl.data.me!.pauseDelay = 0;
+                    ctrl.redraw();
+                  }
+                }, delay * 1000);
+              }),
+            },
+            button,
+          ),
+        ])
       : button;
   });
 }
@@ -70,15 +60,10 @@ export function join(ctrl: TournamentController): VNode {
 export function joinWithdraw(ctrl: TournamentController): VNode | undefined {
   if (!ctrl.opts.userId)
     return h(
-      'a.fbt.text.highlight',
-      {
-        attrs: {
-          href: '/login?referrer=' + window.location.pathname,
-          'data-icon': '',
-        },
-      },
-      ctrl.trans('signIn')
+      'a.button.button-green',
+      { attrs: { href: '/login?referrer=' + window.location.pathname, 'data-icon': licon.PlayTriangle } },
+      i18n.site.signIn,
     );
-  if (!ctrl.data.isFinished) return isIn(ctrl) ? withdraw(ctrl) : join(ctrl);
+  if (!ctrl.data.isFinished) return ctrl.isIn() ? withdraw(ctrl) : join(ctrl);
   return undefined;
 }

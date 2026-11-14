@@ -1,48 +1,14 @@
-package views.html
+package views.msg
 
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.api.Context
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
-import lila.common.String.html.safeJsonValue
+import lila.app.UiEnv.{ *, given }
 
-object msg {
-
-  def home(json: JsObject)(implicit ctx: Context) =
-    views.html.base.layout(
-      moreCss = frag(cssTag("msg")),
-      moreJs = frag(
-        jsModule("msg"),
-        embedJsUnsafeLoadThen(
-          s"""LichessMsg(${safeJsonValue(
-            Json.obj(
-              "data" -> json,
-              "i18n" -> jsI18n
-            )
-          )})"""
-        )
-      ),
-      title = "Lichess Inbox"
-    ) {
+def home(json: JsObject)(using Context) =
+  Page(trans.site.inbox.txt())
+    .css("msg")
+    .i18n(_.challenge)
+    .i18n(_.msg)
+    .js(PageModule("msg", Json.obj("data" -> json)))
+    .csp(_.withInlineIconFont):
       main(cls := "box msg-app")
-    }
-
-  def jsI18n(implicit ctx: Context) = i18nJsObject(i18nKeys)
-
-  private val i18nKeys = List(
-    trans.inbox,
-    trans.challenge.challengeToPlay,
-    trans.block,
-    trans.unblock,
-    trans.blocked,
-    trans.delete,
-    trans.reportXToModerators,
-    trans.searchOrStartNewDiscussion,
-    trans.players,
-    trans.friends,
-    trans.discussions,
-    trans.today,
-    trans.yesterday
-  ).map(_.key)
-}

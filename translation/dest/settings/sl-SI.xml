@@ -2,9 +2,17 @@
 <resources>
   <string name="settings">Nastavitve</string>
   <string name="closeAccount">Zapri račun</string>
-  <string name="closingIsDefinitive">Zapora je dokončna. Ni poti nazaj. Ali ste prepričani?</string>
+  <string name="managedAccountCannotBeClosed">Vaš račun je upravljan in ga ni mogoče zapreti.</string>
   <string name="cantOpenSimilarAccount">Računa z enakim imenom ne boste mogli odpreti, tudi če z drugačnimi velikostmi črk.</string>
-  <string name="changedMindDoNotCloseAccount">Premislil sem si, ne želim zapreti računa</string>
-  <string name="closeAccountExplanation">Ali ste prepričani da želti zapreti svoj račun? Zaprtje računa je trajna odločitev. NIKOLI se ne boste mogli prijaviti VEČ.</string>
+  <string name="cancelKeepAccount">Prekliči in obdrži moj račun</string>
+  <string name="closeAccountAreYouSure">Ali ste prepričani, da želite zapreti ta račun?</string>
   <string name="thisAccountIsClosed">Račun je zaprt.</string>
+  <string name="wereSorryToSeeYouGo">Žal nam je, da odhajate.</string>
+  <string name="closeAccountForeverLabel">Trajno zapri: onemogoči ponovno odprtje</string>
+  <string name="closeAccountForeverWarning">Preprečite poznejše ponovno odprtje računa. Če označite to polje, niti skrbniki ne bodo mogli znova odpreti vašega računa na vašo zahtevo.</string>
+  <string name="deleteYourAccount">Izbrišite svoj račun</string>
+  <string name="deleteAccountWarning">Ko izbrišete svoj račun, je ta odstranjen s platforme Lichess in ga naši skrbniki ne bodo mogli obnoviti.</string>
+  <string name="wouldYouLikeToXInstead" comment="%s is close your account">Bi raje %s?</string>
+  <string name="closeYourAccount">zaprite svoj račun</string>
+  <string name="deleteAccountConfirmText">Razumem, da izbrisanih računov ni mogoče obnoviti</string>
 </resources>

@@ -1,36 +1,40 @@
 package lila.clas
 
-import org.joda.time.DateTime
+import reactivemongo.api.bson.Macros.Annotations.Key
+import scalalib.ThreadLocalRandom
 
-import lila.user.{ Holder, User }
+import lila.core.i18n.I18nKey.clas as trans
+import lila.core.i18n.Translate
+import lila.core.id.{ ClasId, ClasInviteId }
 
 case class ClasInvite(
-    _id: ClasInvite.Id, // random
-    userId: User.ID,
-    realName: String,
-    clasId: Clas.Id,
+    @Key("_id") id: ClasInviteId, // random
+    userId: UserId,
+    realName: Student.RealName,
+    clasId: ClasId,
     created: Clas.Recorded,
     accepted: Option[Boolean] = None
 )
 
-object ClasInvite {
+object ClasInvite:
 
-  case class Id(value: String) extends AnyVal with StringValue
-
-  def make(clas: Clas, user: User, realName: String, teacher: Holder) =
+  def make(clas: Clas, user: User, realName: Student.RealName)(using teacher: Me) =
     ClasInvite(
-      _id = Id(lila.common.ThreadLocalRandom nextString 8),
+      id = ClasInviteId(ThreadLocalRandom.nextString(8)),
       userId = user.id,
       realName = realName,
       clasId = clas.id,
-      created = Clas.Recorded(by = teacher.id, at = DateTime.now)
+      created = Clas.Recorded(by = teacher.userId, at = nowInstant)
     )
 
-  sealed trait Feedback
-  object Feedback {
-    case object Already                extends Feedback
-    case object Invited                extends Feedback
-    case object Found                  extends Feedback
-    case class CantMsgKid(url: String) extends Feedback
-  }
-}
+  enum Feedback:
+    case Already
+    case Invited
+    case Found
+    case CantMsgKid(url: Url)
+
+    def flash(u: UserName)(using Translate): (String, String) = this match
+      case Already => "success" -> trans.xisNowAStudentOfTheClass.txt(u)
+      case Invited => "success" -> trans.anInvitationHasBeenSentToX.txt(u)
+      case Found => "warning" -> trans.xAlreadyHasAPendingInvitation.txt(u)
+      case CantMsgKid(url) => "warning" -> trans.xIsAKidAccountWarning.txt(u, url)

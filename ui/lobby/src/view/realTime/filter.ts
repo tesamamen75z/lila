@@ -1,21 +1,24 @@
 import { h } from 'snabbdom';
-import * as xhr from 'common/xhr';
-import { bind } from '../util';
-import LobbyController from '../../ctrl';
 
-function initialize(ctrl: LobbyController, el: HTMLElement) {
-  const f = ctrl.filter.data?.form,
-    $div = $(el),
-    $ratingRange = $div.find('.rating-range'),
-    $rangeInput = $ratingRange.find('input[name="ratingRange"]'),
-    $minInput = $ratingRange.find('.rating-range__min'),
-    $maxInput = $ratingRange.find('.rating-range__max');
+import { licon } from 'lib/licon';
+import { bind, onInsert } from 'lib/view';
+import * as xhr from 'lib/xhr';
+
+import type LobbyController from '@/ctrl';
+
+function initialize(ctrl: LobbyController, el: FilterNode) {
+  const f = ctrl.filter.data?.form;
+  const $div = $(el);
+  const $ratingRange = $div.find('.rating-range');
+  const $rangeInput = $ratingRange.find('input[name="ratingRange"]');
+  const $minInput = $ratingRange.find('.rating-range__min');
+  const $maxInput = $ratingRange.find('.rating-range__max');
 
   if (f)
     Object.keys(f).forEach(k => {
       const input = $div.find(`input[name="${k}"]`)[0] as HTMLInputElement;
       if (!input) return;
-      if (input.type == 'checkbox') input.checked = true;
+      if (input.type === 'checkbox') input.checked = true;
       else input.value = f[k];
     });
   else $div.find('input').prop('checked', true);
@@ -28,50 +31,49 @@ function initialize(ctrl: LobbyController, el: HTMLElement) {
     .on('reset', (e: Event) => {
       e.preventDefault();
       ctrl.filter.save(null);
-      ctrl.filter.open = false;
+      ctrl.filter.uiCacheBuster++;
       ctrl.redraw();
     })
-    .on('submit', (e: Event) => {
+    .on('submit', (e: SubmitEvent) => {
       e.preventDefault();
       ctrl.filter.open = false;
       ctrl.redraw();
     });
 
   function changeRatingRange(e?: Event) {
-    $minInput.attr('max', $maxInput.val() as string);
-    $maxInput.attr('min', $minInput.val() as string);
-    const txt = $minInput.val() + '-' + $maxInput.val();
-    $rangeInput.val(txt);
-    $ratingRange.siblings('.range').text(txt);
+    const minVal = $minInput.val() as string;
+    const maxVal = $maxInput.val() as string;
+
+    $rangeInput.val(minVal + '-' + maxVal);
+    $minInput.attr({ max: maxVal, 'aria-label': i18n.site.maxRatingX(minVal) });
+    $maxInput.attr({ min: minVal, 'aria-label': i18n.site.minRatingX(maxVal) });
+
+    const $range = $ratingRange.siblings('.range').empty();
+    $('<span>').text(minVal).appendTo($range);
+    $('<span>').text('–').appendTo($range);
+    $('<span>').text(maxVal).appendTo($range);
+
     if (e) save();
   }
+
   const rangeValues = $rangeInput.val() ? ($rangeInput.val() as string).split('-') : [];
 
-  $minInput
-    .attr({
-      step: '50',
-      value: rangeValues[0] || $minInput.attr('min')!,
-    })
-    .on('input', changeRatingRange);
+  const minValue = rangeValues[0] || $minInput.attr('min')!;
+  $minInput.attr({ step: '50', value: minValue }).on('input', changeRatingRange);
 
-  $maxInput
-    .attr({
-      step: '50',
-      value: rangeValues[1] || $maxInput.attr('max')!,
-    })
-    .on('input', changeRatingRange);
+  const maxValue = rangeValues[1] || $minInput.attr('max')!;
+  $maxInput.attr({ step: '50', value: maxValue }).on('input', changeRatingRange);
 
   changeRatingRange();
 }
 
-export function toggle(ctrl: LobbyController, nbFiltered: number) {
-  const filter = ctrl.filter;
-  return h('i.toggle.toggle-filter', {
+export function toggle({ filter, redraw }: LobbyController, nbFiltered: number) {
+  return h('button.toggle.toggle-filter', {
     class: { gamesFiltered: nbFiltered > 0, active: filter.open },
-    hook: bind('mousedown', filter.toggle, ctrl.redraw),
+    hook: bind('click', filter.toggle, redraw),
     attrs: {
-      'data-icon': filter.open ? '' : '',
-      title: ctrl.trans.noarg('filterGames'),
+      'data-icon': filter.open ? licon.X : licon.Gear,
+      title: filter.open ? i18n.site.close : i18n.site.filterGames,
     },
   });
 }
@@ -81,16 +83,13 @@ export interface FilterNode extends HTMLElement {
 }
 
 export const render = (ctrl: LobbyController) =>
-  h('div.hook__filters', {
-    hook: {
-      insert(vnode) {
-        const el = vnode.elm as FilterNode;
-        if (el.filterLoaded) return;
-        xhr.text('/setup/filter').then(html => {
-          el.innerHTML = html;
-          el.filterLoaded = true;
-          initialize(ctrl, el);
-        });
-      },
-    },
+  h('div.hook__filters.cache-buster-' + ctrl.filter.uiCacheBuster, {
+    hook: onInsert<FilterNode>(el => {
+      if (el.filterLoaded) return;
+      xhr.text('/setup/filter').then(html => {
+        el.innerHTML = html;
+        el.filterLoaded = true;
+        initialize(ctrl, el);
+      });
+    }),
   });

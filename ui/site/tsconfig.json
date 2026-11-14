@@ -1,7 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
-  "compilerOptions": {
-    "noImplicitReturns": false,
-    "esModuleInterop": true
-  }
+  "compilerOptions": { "noEmit": true, "isolatedDeclarations": false },
+  "references": [
+    { "path": "../bits/tsconfig.json" },
+    { "path": "../lib/tsconfig.json" },
+    { "path": "../dasher/tsconfig.json" }
+  ]
 }

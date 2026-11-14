@@ -1,176 +1,125 @@
-package views.html.mod
+package views.mod
 
 import play.api.data.Form
+import scalalib.paginator.Paginator
 
-import lila.api.Context
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
-import lila.common.IpAddress
-import lila.security.FingerHash
+import lila.app.UiEnv.{ *, given }
+import lila.core.net.IpAddress
+import lila.core.security.FingerHash
 import lila.mod.IpRender.RenderIp
+import lila.mod.ModUserSearchResult
+import lila.security.IpTrust
+import lila.user.WithPerfsAndEmails
 
-import controllers.routes
-import lila.user.User
-import lila.security.Granter
-import lila.user.Holder
+object search:
 
-object search {
-
-  private val email = tag("email")
-  private val mark  = tag("marked")
-
-  def apply(mod: Holder, form: Form[_], users: List[User.WithEmails])(implicit ctx: Context) =
-    views.html.base.layout(
-      title = "Search users",
-      moreCss = cssTag("mod.misc")
-    ) {
-      main(cls := "page-menu")(
-        views.html.mod.menu("search"),
-        div(cls := "mod-search page-menu__content box")(
-          h1("Search users"),
-          st.form(cls := "search box__pad", action := routes.Mod.search, method := "GET")(
-            input(
-              name := "q",
-              autofocus,
-              placeholder := "Search by IP, email, or username",
-              value := form("q").value
+  def apply(form: Form[?], res: Option[ModUserSearchResult])(using Context) =
+    Page("Search users")
+      .css("mod.misc")
+      .js(Esm("mod.search")):
+        main(cls := "page-menu")(
+          views.mod.ui.menu("search"),
+          div(cls := "mod-search page-menu__content box")(
+            h1(cls := "box__top")("Search users"),
+            st.form(cls := "search box__pad", action := routes.Mod.search, method := "GET")(
+              input(
+                name := "q",
+                autofocus,
+                placeholder := "Search by IP, email, or username (exact match only)",
+                value := form("q").value
+              )
             ),
-            form3.select(form("as"), lila.mod.UserSearch.asChoices)
-          ),
-          userTable(mod, users)
+            res.map: r =>
+              frag(
+                ui.modUserSearchResult(r),
+                userTable(r.users, showUsernames = true, eraseButton = isGranted(_.GdprErase))
+              )
+          )
         )
-      )
-    }
 
   def print(
-      mod: Holder,
       fh: FingerHash,
-      users: List[User.WithEmails],
+      users: List[WithPerfsAndEmails],
       uas: List[String],
       blocked: Boolean
-  )(implicit ctx: Context) =
-    views.html.base.layout(
-      title = "Fingerprint",
-      moreCss = cssTag("mod.misc")
-    ) {
-      main(cls := "page-menu")(
-        views.html.mod.menu("search"),
-        div(cls := "mod-search page-menu__content box")(
-          div(cls := "box__top")(
-            h1("Fingerprint: ", fh.value),
-            postForm(cls := "box__top__actions", action := routes.Mod.printBan(!blocked, fh.value))(
-              submitButton(
-                cls := List(
-                  "button text" -> true,
-                  "active"      -> blocked
+  )(using Context) =
+    Page("Fingerprint")
+      .css("mod.misc")
+      .js(Esm("mod.search")):
+        main(cls := "page-menu")(
+          views.mod.ui.menu("search"),
+          div(cls := "mod-search page-menu__content box")(
+            boxTop(
+              h1("Fingerprint: ", fh.value),
+              if isGranted(_.Admin) then
+                postForm(cls := "box__top__actions", action := routes.Mod.printBan(!blocked, fh.value))(
+                  submitButton(
+                    cls := List(
+                      "button text" -> true,
+                      "active" -> blocked
+                    )
+                  )(if blocked then "Banned" else "Ban this print")
                 )
-              )(if (blocked) "Banned" else "Ban this print")
-            )
-          ),
-          div(cls := "box__pad")(
-            h2("User agents"),
-            ul(uas map { ua =>
-              li(ua)
-            })
-          ),
-          br,
-          br,
-          userTable(mod, users)
-        )
-      )
-    }
-
-  def ip(
-      mod: Holder,
-      address: IpAddress,
-      users: List[lila.user.User.WithEmails],
-      uas: List[String],
-      blocked: Boolean
-  )(implicit ctx: Context, renderIp: RenderIp) =
-    views.html.base.layout(
-      title = "IP address",
-      moreCss = cssTag("mod.misc")
-    ) {
-      main(cls := "page-menu")(
-        views.html.mod.menu("search"),
-        div(cls := "mod-search page-menu__content box")(
-          div(cls := "box__top")(
-            h1("IP address: ", renderIp(address)),
-            postForm(cls := "box__top__actions", action := routes.Mod.singleIpBan(!blocked, address.value))(
-              submitButton(
-                cls := List(
-                  "button text" -> true,
-                  "active"      -> blocked
-                )
-              )(if (blocked) "Banned" else "Ban this IP")
-            )
-          ),
-          isGranted(_.Admin) option div(cls := "box__pad")(
-            h2("User agents"),
-            ul(uas map { ua =>
-              li(ua)
-            })
-          ),
-          br,
-          br,
-          userTable(mod, users)
-        )
-      )
-    }
-
-  def clas(mod: Holder, c: lila.clas.Clas, users: List[User.WithEmails])(implicit ctx: Context) =
-    views.html.base.layout(
-      title = "IP address",
-      moreCss = cssTag("mod.misc")
-    ) {
-      main(cls := "page-menu")(
-        views.html.mod.menu("search"),
-        div(cls := "mod-search page-menu__content box")(
-          div(cls := "box__top")(
-            h1("Class ", a(href := routes.Clas.show(c.id.value))(c.name)),
-            p("Teachers: ", c.teachers.toList.map(id => userIdLink(id.some)))
-          ),
-          br,
-          br,
-          userTable(mod, users)
-        )
-      )
-    }
-
-  private def userTable(mod: Holder, users: List[User.WithEmails])(implicit ctx: Context) =
-    users.nonEmpty option table(cls := "slist slist-pad")(
-      thead(
-        tr(
-          th("User"),
-          th("Games"),
-          th("Marks"),
-          th("Closed"),
-          th("Created"),
-          th("Active")
-        )
-      ),
-      tbody(
-        users.map { case lila.user.User.WithEmails(u, emails) =>
-          tr(
-            if (Granter.canViewAltUsername(mod, u))
-              td(
-                userLink(u, withBestRating = true, params = "?mod"),
-                (isGranted(_.Admin) && isGranted(_.SetEmail)) option
-                  email(emails.list.map(_.value).mkString(", "))
-              )
-            else td,
-            td(u.count.game.localize),
-            td(
-              u.marks.alt option mark("ALT"),
-              u.marks.engine option mark("ENGINE"),
-              u.marks.boost option mark("BOOSTER"),
-              u.marks.troll option mark("SHADOWBAN")
+              else if blocked then div(cls := "banned")("BANNED")
+              else emptyFrag
             ),
-            td(u.disabled option mark("CLOSED")),
-            td(momentFromNow(u.createdAt)),
-            td(u.seenAt.map(momentFromNow(_)))
+            userAgentsBox(uas),
+            userTable(users)
           )
-        }
+        )
+
+  private def userAgentsBox(uas: List[String])(using Context) =
+    isGranted(_.Admin).option(
+      div(cls := "box__pad")(
+        h2("User agents"),
+        ul(cls := "mod-search__user-agents")(uas.map(li(_)))
       )
     )
-}
+
+  def ip(
+      address: IpAddress,
+      users: List[lila.user.WithPerfsAndEmails],
+      data: IpTrust.IpData,
+      blocked: Boolean
+  )(using Context, Me)(using renderIp: RenderIp) =
+    Page("IP address")
+      .css("mod.misc")
+      .js(Esm("mod.search")):
+        main(cls := "page-menu")(
+          views.mod.ui.menu("search"),
+          div(cls := "mod-search page-menu__content box")(
+            boxTop(
+              h1("IP address: ", renderIp(address)),
+              if isGranted(_.Admin) then
+                postForm(
+                  cls := "box__top__actions",
+                  action := routes.Mod.singleIpBan(!blocked, address.value)
+                )(
+                  submitButton(
+                    cls := List(
+                      "button text" -> true,
+                      "active" -> blocked
+                    )
+                  )(if blocked then "Banned" else "Ban this IP")
+                )
+              else if blocked then div(cls := "banned")("BANNED")
+              else emptyFrag
+            ),
+            div(cls := "mod-search__ip-data box__pad")(
+              p(
+                isGranted(_.Admin).option(frag("Location: ", data.location.toString, br)),
+                "Proxy: ",
+                data.proxy.toString
+              )
+            ),
+            userTable(users, showUsernames = Granter(_.ViewIP))
+          )
+        )
+
+  def clas(c: lila.clas.Clas, users: List[WithPerfsAndEmails])(using Context) =
+    views.clas.ui.search.clas(c, userTable(users))
+
+  export views.clas.ui.search.teacher
+
+  def notes(query: String, pager: Paginator[lila.user.Note])(using Context) =
+    views.user.noteUi.search(query, pager, views.mod.ui.menu("notes"))

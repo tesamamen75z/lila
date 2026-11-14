@@ -1,43 +1,14 @@
 package lila.pool
 
-import lila.rating.RatingRange
-import lila.user.User
-import lila.playban.RageSit
+import chess.rating.IntRatingDiff
 
-case class PoolMember(
-    userId: User.ID,
-    sri: lila.socket.Socket.Sri,
-    rating: Int,
-    ratingRange: Option[RatingRange],
-    lame: Boolean,
-    blocking: PoolMember.BlockedUsers,
-    rageSitCounter: Int,
-    misses: Int = 0 // how many waves they missed
-) {
+import lila.core.pool.PoolMember
+import lila.core.rating.RatingRange
 
-  def incMisses = copy(misses = misses + 1)
-
-  def ratingDiff(other: PoolMember) = Math.abs(rating - other.rating)
-
+extension (m: PoolMember)
+  def incMisses = m.copy(misses = m.misses + 1)
+  def ratingDiff(other: PoolMember) = IntRatingDiff(Math.abs(m.rating.value - other.rating.value))
   def withRange(r: Option[RatingRange]) =
-    if (r == ratingRange) this
-    else copy(ratingRange = r, misses = 0)
-
-  def hasRange = ratingRange.isDefined
-}
-
-object PoolMember {
-
-  case class BlockedUsers(ids: Set[User.ID]) extends AnyVal
-
-  def apply(joiner: PoolApi.Joiner, config: PoolConfig, rageSit: RageSit): PoolMember =
-    PoolMember(
-      userId = joiner.userId,
-      sri = joiner.sri,
-      lame = joiner.lame,
-      rating = joiner.rating,
-      ratingRange = joiner.ratingRange,
-      blocking = BlockedUsers(joiner.blocking),
-      rageSitCounter = rageSit.counter / 10
-    )
-}
+    if r == m.ratingRange then m
+    else m.copy(ratingRange = r, misses = 0)
+  def hasRange = m.ratingRange.isDefined

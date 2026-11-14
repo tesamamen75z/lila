@@ -1,54 +1,54 @@
 package lila.push
 
-import org.joda.time.DateTime
-import reactivemongo.api.bson._
+import reactivemongo.api.bson.*
+import scalalib.net.UserAgent
 
-import lila.db.dsl._
-import lila.user.User
+import lila.db.dsl.{ *, given }
 
-final private class DeviceApi(coll: Coll)(implicit ec: scala.concurrent.ExecutionContext) {
+final private class DeviceApi(coll: Coll)(using Executor):
 
-  implicit private val DeviceBSONHandler = Macros.handler[Device]
+  private given BSONDocumentHandler[Device] = Macros.handler
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    coll.delete.one(bdoc("userId" -> del.id)).void
 
   private[push] def findByDeviceId(deviceId: String): Fu[Option[Device]] =
-    coll.find($id(deviceId)).one[Device]
+    coll.find(bid(deviceId)).one[Device]
 
-  private[push] def findLastManyByUserId(platform: String, max: Int)(userId: String): Fu[List[Device]] =
+  private[push] def findLastManyByUserId(platform: String, max: Int)(userId: UserId): Fu[List[Device]] =
     coll
       .find(
-        $doc(
+        bdoc(
           "platform" -> platform,
-          "userId"   -> userId
+          "userId" -> userId
         )
       )
-      .sort($doc("seenAt" -> -1))
+      .sort(bdoc("seenAt" -> -1))
       .cursor[Device]()
       .list(max)
 
-  private[push] def findLastOneByUserId(platform: String)(userId: String): Fu[Option[Device]] =
-    findLastManyByUserId(platform, 1)(userId) dmap (_.headOption)
+  private[push] def findLastOneByUserId(platform: String)(userId: UserId): Fu[Option[Device]] =
+    findLastManyByUserId(platform, 1)(userId).dmap(_.headOption)
 
-  def register(user: User, platform: String, deviceId: String) = {
+  def register(user: User, platform: String, deviceId: String)(using ua: UserAgent) =
     lila.mon.push.register.in(platform).increment()
     coll.update
       .one(
-        $id(deviceId),
+        bid(deviceId),
         Device(
           _id = deviceId,
           platform = platform,
           userId = user.id,
-          seenAt = DateTime.now
+          seenAt = nowInstant,
+          ua = ua
         ),
         upsert = true
       )
       .void
-  }
 
-  def unregister(user: User) = {
+  def unregister(user: User) =
     lila.mon.push.register.out.increment()
-    coll.delete.one($doc("userId" -> user.id)).void
-  }
+    coll.delete.one(bdoc("userId" -> user.id)).void
 
   def delete(device: Device) =
-    coll.delete.one($id(device._id)).void
-}
+    coll.delete.one(bid(device._id)).void

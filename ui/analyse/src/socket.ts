@@ -1,20 +1,10 @@
-import { initial as initialBoardFen } from 'chessground/fen';
-import { ops as treeOps } from 'tree';
-import AnalyseCtrl from './ctrl';
-import { CachedEval, EvalGetData, EvalPutData, ServerEvalData } from './interfaces';
-import { AnaDests, AnaDrop, AnaMove, ChapterData, EditChapterData } from './study/interfaces';
-import { FormData as StudyFormData } from './study/studyForm';
+import { ops as treeOps } from 'lib/tree/tree';
+import type { Shape } from 'lib/tree/types';
 
-interface DestsCache {
-  [fen: string]: AnaDests;
-}
-
-interface AnaDestsReq {
-  fen: Fen;
-  path: string;
-  ch?: string;
-  variant?: VariantKey;
-}
+import type AnalyseCtrl from './ctrl';
+import type { EvalGetData, EvalPutData, Opening, AnalysisUpdate } from './interfaces';
+import type { AnaDrop, AnaMove, ChapterData, EditChapterData } from './study/interfaces';
+import type { FormData as StudyFormData } from './study/studyForm';
 
 interface MoveOpts {
   write?: false;
@@ -26,170 +16,113 @@ export interface ReqPosition {
   path: string;
 }
 
-export type StudySocketSendParams =
-  | [t: 'setPath', d: ReqPosition]
-  | [t: 'deleteNode', d: ReqPosition & { jumpTo: string }]
-  | [t: 'promote', d: ReqPosition & { toMainline: boolean }]
-  | [t: 'forceVariation', d: ReqPosition & { force: boolean }]
-  | [t: 'shapes', d: ReqPosition & { shapes: Tree.Shape[] }]
-  | [t: 'setComment', d: ReqPosition & { text: string }]
-  | [t: 'deleteComment', d: ReqPosition & { id: string }]
-  | [t: 'setGamebook', d: ReqPosition & { gamebook: { deviation?: string; hint?: string } }]
-  | [t: 'toggleGlyph', d: ReqPosition & { id: number }]
-  | [t: 'explorerGame', d: ReqPosition & { gameId: string; insert: boolean }]
-  | [t: 'setChapter', chapterId: string]
-  | [t: 'setRole', d: { userId: string; role: string }]
-  | [t: 'addChapter', d: ChapterData & { sticky?: boolean }]
-  | [t: 'editChapter', d: EditChapterData]
-  | [t: 'descStudy', desc: string]
-  | [t: 'descChapter', d: { id: string; desc: string }]
-  | [t: 'deleteChapter', chapterId: string]
-  | [t: 'clearAnnotations', chapterId: string]
-  | [t: 'sortChapters', chapterIds: string[]]
-  | [t: 'setTag', d: { chapterId: string; name: string; value: string }]
-  | [t: 'anaMove', d: AnaMove & MoveOpts]
-  | [t: 'anaDrop', d: AnaDrop & MoveOpts]
-  | [t: 'anaDests', d: AnaDestsReq]
-  | [t: 'like', d: { liked: boolean }]
-  | [t: 'kick', username: string]
-  | [t: 'editStudy', d: StudyFormData]
-  | [t: 'setTopics', topics: string[]]
-  | [t: 'requestAnalysis', chapterId: string]
-  | [t: 'invite', username: string]
-  | [t: 'relaySync', sync: boolean]
-  | [t: 'leave'];
+interface GameUpdate {
+  id: string;
+  fen: FEN;
+  lm: Uci;
+  wc?: number;
+  bc?: number;
+}
 
-export type EvalCacheSocketParams = [t: 'evalPut', d: EvalPutData] | [t: 'evalGet', d: EvalGetData];
+export interface StudySocketSendParams {
+  setPath: (d: ReqPosition) => void;
+  deleteNode: (d: ReqPosition & { jumpTo: string }) => void;
+  promote: (d: ReqPosition & { toMainline: boolean }) => void;
+  forceVariation: (d: ReqPosition & { force: boolean }) => void;
+  shapes: (d: ReqPosition & { shapes: Shape[] }) => void;
+  setComment: (d: ReqPosition & { id?: string; text: string }) => void;
+  deleteComment: (d: ReqPosition & { id: string }) => void;
+  setGamebook: (d: ReqPosition & { gamebook: { deviation?: string; hint?: string } }) => void;
+  toggleGlyph: (d: ReqPosition & { id: number }) => void;
+  explorerGame: (d: ReqPosition & { gameId: string; insert: boolean }) => void;
+  setChapter: (chapterId: string) => void;
+  setRole: (d: { userId: string; role: string }) => void;
+  addChapter: (d: ChapterData & { sticky?: boolean; showRatings?: boolean }) => void;
+  editChapter: (d: EditChapterData) => void;
+  descStudy: (desc: string) => void;
+  descChapter: (d: { id: string; desc: string }) => void;
+  deleteChapter: (chapterId: string) => void;
+  clearAnnotations: (chapterId: string) => void;
+  clearVariations: (chapterId: string) => void;
+  sortChapters: (chapterIds: string[]) => void;
+  setTag: (d: { chapterId: string; name: string; value: string }) => void;
+  anaMove: (d: AnaMove & MoveOpts) => void;
+  anaDrop: (d: AnaDrop & MoveOpts) => void;
+  opening: (d: { fen: FEN }) => void;
+  like: (d: { liked: boolean }) => void;
+  kick: (username: string) => void;
+  editStudy: (d: StudyFormData) => void;
+  setTopics: (topics: string[]) => void;
+  requestAnalysis: (chapterId: string) => void;
+  invite: (username: string) => void;
+  relaySync: (sync: boolean) => void;
+  leave: () => void;
+}
 
-export type AnalyseSocketSendParams =
-  | StudySocketSendParams
-  | EvalCacheSocketParams
-  | [t: 'startWatching', gameId: string];
+export interface EvalCacheSocketParams {
+  evalPut: (d: EvalPutData) => void;
+  evalGet: (d: EvalGetData) => void;
+}
 
-export type StudySocketSend = (...[d, t]: StudySocketSendParams) => void;
-export type AnalyseSocketSend = (...[d, t]: AnalyseSocketSendParams) => void;
+export type AnalyseSocketSendParams = StudySocketSendParams &
+  EvalCacheSocketParams & { startWatching: (gameId: string) => void };
+
+export type StudySocketSend = <K extends keyof StudySocketSendParams>(
+  event: K,
+  ...args: Parameters<StudySocketSendParams[K]>
+) => void;
+export type AnalyseSocketSend = <K extends keyof AnalyseSocketSendParams>(
+  event: K,
+  ...args: Parameters<AnalyseSocketSendParams[K]>
+) => void;
 
 export interface Socket {
   send: AnalyseSocketSend;
   receive(type: string, data: any): boolean;
   sendAnaMove(d: AnaMove): void;
   sendAnaDrop(d: AnaDrop): void;
-  sendAnaDests(d: AnaDestsReq): void;
-  clearCache(): void;
 }
 
 export function make(send: AnalyseSocketSend, ctrl: AnalyseCtrl): Socket {
-  let anaMoveTimeout: number | undefined;
-  let anaDestsTimeout: number | undefined;
-
-  let anaDestsCache: DestsCache = {};
-
-  function clearCache() {
-    anaDestsCache =
-      ctrl.data.game.variant.key === 'standard' && ctrl.tree.root.fen.split(' ', 1)[0] === initialBoardFen
-        ? {
-            '': {
-              path: '',
-              dests: 'iqy muC gvx ltB bqs pxF jrz nvD ksA owE',
-            },
-          }
-        : {};
-  }
-  clearCache();
-
   // forecast mode: reload when opponent moves
   if (!ctrl.synthetic)
     setTimeout(function () {
       send('startWatching', ctrl.data.game.id);
     }, 1000);
 
-  function currentChapterId(): string | undefined {
-    if (ctrl.study) return ctrl.study.vm.chapterId;
-    return undefined;
-  }
-
-  function addStudyData(req: { ch?: string } & MoveOpts, isWrite = false) {
-    const c = currentChapterId();
-    if (c) {
-      req.ch = c;
-      if (isWrite) {
-        if (ctrl.study!.isWriting()) {
-          if (!ctrl.study!.vm.mode.sticky) req.sticky = false;
-        } else req.write = false;
-      }
-    }
-  }
-
   const handlers = {
-    node(data: { ch?: string; node: Tree.Node; path: string }) {
-      clearTimeout(anaMoveTimeout);
-      // no strict equality here!
-      if (data.ch == currentChapterId()) ctrl.addNode(data.node, data.path);
-      else console.log('socket handler node got wrong chapter id', data);
-    },
-    stepFailure() {
-      clearTimeout(anaMoveTimeout);
-      ctrl.reset();
-    },
-    dests(data: AnaDests) {
-      clearTimeout(anaDestsTimeout);
-      if (!data.ch || data.ch === currentChapterId()) {
-        anaDestsCache[data.path] = data;
-        ctrl.addDests(data.dests, data.path);
-      } else console.log('socket handler node got wrong chapter id', data);
-    },
-    destsFailure(data: any) {
-      console.log(data);
-      clearTimeout(anaDestsTimeout);
+    opening({ fen, opening }: { fen: FEN; opening: Opening }) {
+      console.log(fen, opening);
+      // ctrl.setOpening(fen, opening);
     },
     fen(e: GameUpdate) {
-      if (ctrl.forecast && e.id === ctrl.data.game.id && treeOps.last(ctrl.mainline)!.fen.indexOf(e.fen) !== 0) {
+      if (ctrl.forecast && e.id === ctrl.data.game.id && !treeOps.last(ctrl.mainline)!.fen.startsWith(e.fen))
         ctrl.forecast.reloadToLastPly();
-      }
     },
-    analysisProgress(data: ServerEvalData) {
-      ctrl.mergeAnalysisData(data);
+    analysisProgress(data: AnalysisUpdate) {
+      ctrl.mergeServerAnalysisData(data);
     },
-    evalHit(e: CachedEval) {
-      ctrl.evalCache.onCloudEval(e);
-    },
+    evalHit: ctrl.evalCache.onCloudEval,
   };
 
   function withoutStandardVariant(obj: { variant?: VariantKey }) {
     if (obj.variant === 'standard') delete obj.variant;
   }
 
-  function sendAnaDests(req: AnaDestsReq) {
-    clearTimeout(anaDestsTimeout);
-    if (anaDestsCache[req.path])
-      setTimeout(function () {
-        handlers.dests(anaDestsCache[req.path]);
-      }, 300);
-    else {
+  function sendAnaMove(req: AnaMove) {
+    const studyData = ctrl.study?.socketSendNodeData();
+    if (studyData) {
       withoutStandardVariant(req);
-      addStudyData(req);
-      send('anaDests', req);
-      anaDestsTimeout = setTimeout(function () {
-        console.log(req, 'resendAnaDests');
-        sendAnaDests(req);
-      }, 3000);
+      send('anaMove', { ...req, ...studyData });
     }
   }
 
-  function sendAnaMove(req: AnaMove) {
-    clearTimeout(anaMoveTimeout);
-    withoutStandardVariant(req);
-    addStudyData(req, true);
-    send('anaMove', req);
-    anaMoveTimeout = setTimeout(() => sendAnaMove(req), 3000);
-  }
-
   function sendAnaDrop(req: AnaDrop) {
-    clearTimeout(anaMoveTimeout);
-    withoutStandardVariant(req);
-    addStudyData(req, true);
-    send('anaDrop', req);
-    anaMoveTimeout = setTimeout(() => sendAnaDrop(req), 3000);
+    const studyData = ctrl.study?.socketSendNodeData();
+    if (studyData) {
+      withoutStandardVariant(req);
+      send('anaDrop', { ...req, ...studyData });
+    }
   }
 
   return {
@@ -199,12 +132,10 @@ export function make(send: AnalyseSocketSend, ctrl: AnalyseCtrl): Socket {
         handler(data);
         return true;
       }
-      return !!ctrl.study && ctrl.study.socketHandler(type, data);
+      return !!ctrl.study?.socketHandler(type, data);
     },
     sendAnaMove,
     sendAnaDrop,
-    sendAnaDests,
-    clearCache,
     send,
   };
 }

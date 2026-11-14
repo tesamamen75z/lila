@@ -122,11 +122,12 @@ Zij staan in de hoeken.</string>
   <string name="thenPlaceTheKnights">Plaats dan de paarden! Zij staan naast de torens.</string>
   <string name="placeTheBishops">Plaats de lopers! Zij staan naast de paarden.</string>
   <string name="placeTheQueen">Plaats de dame! Zij staat op haar eigen kleur.</string>
-  <string name="placeTheKing">Plaats de koning! Aan de zijde van zijn koningin.</string>
+  <string name="placeTheKing">Plaats de koning! Aan de zijde van zijn dame.</string>
   <string name="pawnsFormTheFrontLine">Pionnen vormen de frontlinie. 
 Doe een willekeurige welke zet om door te gaan.</string>
   <string name="boardSetupComplete">Gefeliciteerd! Nu weet je hoe je het schaakbord moet klaarzetten.</string>
   <string name="castling">Rokeren</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">De speciale koningszet</string>
   <string name="castlingIntro">Breng je koning naar een veilige plaats, en zet je toren in voor de aanval!</string>
   <string name="castleKingSide">Beweeg je koning twee vakjes
@@ -150,7 +151,6 @@ naar de koningszijde te rokeren!</string>
   <string name="findAWayToCastleQueenSide">Vind een manier om
 naar de dameszijde te rokeren!</string>
   <string name="castlingComplete">Gefeliciteerd! Rokeren is bijna iedere partij een goed idee.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">De speciale pionzet</string>
   <string name="enPassantIntro">Als de vijandige pion twee vakjes tegelijk beweegt, kunt je hem slaan alsof hij maar één vakje heeft bewogen.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Zwart verplaatste zijn pion net
@@ -170,7 +170,7 @@ wanneer jouw pion op de vijfde rij staat.</string>
 - Zwart geen legale zetten meer te geven
 - Zwart niet schaak te zetten.</string>
   <string name="stalemateComplete">Gefeliciteerd! Beter pat staan dan mat staan!</string>
-  <string name="advanced">Voor geavanceerden</string>
+  <string name="advanced">Meer voor gevorderden</string>
   <string name="pieceValue">Waarde van stukken</string>
   <string name="evaluatePieceStrength">Evalueer de kracht van stukken</string>
   <string name="pieceValueIntro">Stukken die meer kunnen hebben een hogere waarde!
@@ -182,7 +182,7 @@ Pion = 1
 De koning is onbetaalbaar! Als je hem verliest, verlies je de partij.</string>
   <string name="queenOverBishop">Sla het stuk
 met de hoogste waarde!
-Koningin &gt; Loper</string>
+Dame &gt; Loper</string>
   <string name="pieceValueExchange">Neem het stuk met de hoogste waarde!
  Ruil niet een hoger gewaardeerd stuk in voor een minder waardevol.</string>
   <string name="pieceValueLegal">Neem het stuk
@@ -228,8 +228,8 @@ Pion = 1</string>
   <string name="nailedIt">De spijker op de kop.</string>
   <string name="rightOn">Juist!</string>
   <string name="stageXComplete">Niveau %s voltooid</string>
-  <string name="yourScore">Jouw score</string>
   <string name="next">Volgende</string>
+  <string name="nextX">Volgende: %s</string>
   <string name="backToMenu">Terug naar het menu</string>
   <string name="puzzleFailed">Puzzel mislukt!</string>
   <string name="retry">Opnieuw</string>

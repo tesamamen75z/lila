@@ -1,85 +1,96 @@
 package lila.puzzle
 
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
+import scalalib.ThreadLocalRandom
 
-import lila.common.ThreadLocalRandom
-import lila.db.dsl._
+import lila.db.dsl.*
 import lila.memo.CacheApi
+import lila.mon.extensions.*
 
 final class PuzzleAnon(
     colls: PuzzleColls,
     cacheApi: CacheApi,
     pathApi: PuzzlePathApi,
     countApi: PuzzleCountApi
-)(implicit ec: ExecutionContext) {
+)(using Executor):
 
-  import BsonHandlers._
+  import BsonHandlers.given
 
-  def getOneFor(theme: PuzzleTheme.Key): Fu[Option[Puzzle]] =
+  def getOneFor(angle: PuzzleAngle, diff: PuzzleDifficulty, color: Option[Color]): Fu[Option[Puzzle]] =
     pool
-      .get(theme)
-      .map(ThreadLocalRandom.oneOf)
-      .mon(_.puzzle.selector.anon.time(theme.value))
-      .addEffect {
-        _ foreach { puzzle =>
-          lila.mon.puzzle.selector.anon.vote(theme.value).record(100 + math.round(puzzle.vote * 100))
-        }
-      }
+      .get(angle -> diff)
+      .map(color.fold[Vector[Puzzle] => Option[Puzzle]](ThreadLocalRandom.oneOf)(selectWithColor))
+      .mon(lila.mon.puzzle.selector.anon.time)
+      .addEffect:
+        _.foreach: puzzle =>
+          if puzzle.vote < 0 then logger.warn(s"Anon puzzle with negative vote ${puzzle.id} ${puzzle.vote}")
+          else lila.mon.puzzle.selector.anon.vote.record(100 + math.round(puzzle.vote * 100))
 
-  def getBatchFor(nb: Int): Fu[Vector[Puzzle]] = {
-    pool get PuzzleTheme.mix.key map (_ take nb)
-  }.mon(_.puzzle.selector.anon.batch(nb))
+  private def selectWithColor(color: Color)(puzzles: Vector[Puzzle]): Option[Puzzle] =
+    def nextTry(attempts: Int): Option[Puzzle] =
+      if attempts < 10 then
+        ThreadLocalRandom.oneOf(puzzles).filter(_.color == color).orElse(nextTry(attempts + 1))
+      else ThreadLocalRandom.oneOf(puzzles.view.filter(_.color == color).take(30).toVector)
+    nextTry(1)
+
+  def getBatchFor(
+      angle: PuzzleAngle,
+      diff: PuzzleDifficulty,
+      nb: Int,
+      color: Option[Color]
+  ): Fu[Vector[Puzzle]] =
+    pool
+      .get(angle -> diff)
+      .map: puzzles =>
+        color
+          .fold(puzzles): c =>
+            puzzles.filter(_.color == c)
+          .take(nb)
+      .mon(lila.mon.puzzle.selector.anon.batch(nb))
 
   private val poolSize = 150
 
   private val pool =
-    cacheApi[PuzzleTheme.Key, Vector[Puzzle]](initialCapacity = 64, name = "puzzle.byTheme.anon") {
-      _.expireAfterWrite(1 minute)
-        .buildAsyncFuture { theme =>
-          countApi byTheme theme flatMap { count =>
-            val tier =
-              if (count > 5000) PuzzleTier.Top
-              else if (count > 2000) PuzzleTier.Good
-              else PuzzleTier.All
-            val ratingRange: Range =
-              if (count > 9000) 1300 to 1600
-              else if (count > 5000) 1100 to 1800
-              else 0 to 9999
-            val pathSampleSize =
-              if (count > 9000) 3
-              else if (count > 5000) 5
-              else if (count > 2000) 8
-              else 15
-            colls.path {
-              _.aggregateList(poolSize) { framework =>
-                import framework._
-                Match(pathApi.select(theme, tier, ratingRange)) -> List(
-                  Sample(pathSampleSize),
-                  Project($doc("puzzleId" -> "$ids", "_id" -> false)),
-                  Unwind("puzzleId"),
-                  Sample(poolSize),
-                  PipelineOperator(
-                    $doc(
-                      "$lookup" -> $doc(
-                        "from"         -> colls.puzzle.name.value,
-                        "localField"   -> "puzzleId",
-                        "foreignField" -> "_id",
-                        "as"           -> "puzzle"
-                      )
-                    )
-                  ),
-                  PipelineOperator(
-                    $doc(
-                      "$replaceWith" -> $doc("$arrayElemAt" -> $arr("$puzzle", 0))
+    cacheApi[(PuzzleAngle, PuzzleDifficulty), Vector[Puzzle]](
+      initialCapacity = 128,
+      name = "puzzle.byTheme.anon"
+    ):
+      _.expireAfterWrite(1.minute).buildAsyncFuture: (angle, difficulty) =>
+        countApi.byAngle(angle).flatMap { count =>
+          val tier =
+            if count > 5000 then PuzzleTier.top
+            else if count > 2000 then PuzzleTier.good
+            else PuzzleTier.all
+          def rd(rating: Int) = rating + difficulty.ratingDelta
+          val ratingRange: Range =
+            if count > 9000 then rd(1300) to rd(1600)
+            else if count > 5000 then rd(1100) to rd(1800)
+            else 0 to 9999
+          val pathSampleSize =
+            if count > 9000 then 3
+            else if count > 5000 then 5
+            else if count > 2000 then 8
+            else 15
+          colls.path:
+            _.aggregateList(poolSize): framework =>
+              import framework.*
+              Match(pathApi.select(angle, tier, ratingRange)) -> List(
+                Sample(pathSampleSize),
+                Project(bdoc("puzzleId" -> "$ids", "_id" -> false)),
+                Unwind("puzzleId"),
+                Sample(poolSize),
+                PipelineOperator:
+                  bdoc(
+                    "$lookup" -> bdoc(
+                      "from" -> colls.puzzle.name.value,
+                      "localField" -> "puzzleId",
+                      "foreignField" -> "_id",
+                      "as" -> "puzzle"
                     )
                   )
-                )
-              }.map {
-                _.view.flatMap(PuzzleBSONReader.readOpt).toVector
-              }
-            }
-          }
+                ,
+                PipelineOperator:
+                  bdoc("$replaceWith" -> bdoc("$arrayElemAt" -> barr("$puzzle", 0)))
+              )
+            .map:
+              _.view.flatMap(puzzleReader.readOpt).toVector
         }
-    }
-}

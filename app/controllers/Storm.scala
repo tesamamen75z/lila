@@ -1,74 +1,57 @@
 package controllers
 
-import play.api.mvc._
+import play.api.mvc.*
 
-import lila.api.Context
-import lila.app._
+import lila.app.{ *, given }
+import lila.common.HTTPRequest
 
-final class Storm(env: Env)(implicit mat: akka.stream.Materializer) extends LilaController(env) {
+final class Storm(env: Env) extends LilaController(env):
 
-  def home =
-    Open { implicit ctx =>
-      NoBot {
-        env.storm.selector.apply flatMap { puzzles =>
-          ctx.userId.?? { u => env.storm.highApi.get(u) dmap some } map { high =>
-            NoCache {
-              Ok(
-                views.html.storm.home(
-                  env.storm.json(puzzles, ctx.me),
-                  env.storm.json.pref(ctx.pref),
-                  high
-                )
-              )
-            }
-          }
-        }
-      }
-    }
+  def home = Open(serveHome)
+  def homeLang = LangPage(routes.Storm.home)(serveHome)
 
-  def record =
-    OpenBody { implicit ctx =>
-      NoBot {
-        implicit val req = ctx.body
-        env.storm.forms.run
-          .bindFromRequest()
-          .fold(
-            _ => fuccess(none),
-            data => env.storm.dayApi.addRun(data, ctx.me)
-          ) map env.storm.json.newHigh map JsonOk
-      }
-    }
+  private def serveHome(using ctx: Context) = NoBot:
+    dataAndHighScore(ctx.pref.some).flatMap: (data, high) =>
+      Ok.page(views.storm.home(data, high)).map(_.noCache)
 
-  def dashboard(page: Int) =
-    Auth { implicit ctx => me =>
-      renderDashboardOf(me, page)
-    }
+  private def dataAndHighScore(pref: Option[lila.pref.Pref])(using me: Option[Me]) = for
+    puzzles <- env.storm.selector.apply
+    high <- me.traverse(m => env.storm.highApi.get(m.userId))
+  yield env.storm.json(puzzles, me, pref) -> high
 
-  def dashboardOf(username: String, page: Int) =
-    Open { implicit ctx =>
-      env.user.repo.enabledNamed(username).flatMap {
-        _ ?? {
-          renderDashboardOf(_, page)
-        }
-      }
-    }
+  def apiGet = AnonOrScoped(_.Puzzle.Read, _.Web.Mobile): ctx ?=>
+    dataAndHighScore(none).map: (data, high) =>
+      import lila.storm.StormJson.given
+      JsonOk(data.add("high" -> high))
 
-  private def renderDashboardOf(user: lila.user.User, page: Int)(implicit ctx: Context): Fu[Result] =
-    env.storm.dayApi.history(user.id, page) flatMap { history =>
-      env.storm.highApi.get(user.id) map { high =>
-        Ok(views.html.storm.dashboard(user, history, high))
-      }
-    }
+  def record = OpenOrScopedBody(parse.anyContent)(_.Puzzle.Write, _.Web.Mobile): ctx ?=>
+    NoBot:
+      bindForm(env.storm.forms.run)(
+        _ => fuccess(none),
+        data => env.storm.dayApi.addRun(data, ctx.me, mobile = HTTPRequest.isLichessMobile)
+      )
+        .map(env.storm.json.newHigh)
+        .map(JsonOk)
 
-  def apiDashboardOf(username: String, days: Int) =
-    Open { implicit ctx =>
-      lila.user.User.validateId(username) ?? { userId =>
-        if (days < 0 || days > 365) notFoundJson("Invalid days parameter")
-        else
-          ((days > 0) ?? env.storm.dayApi.apiHistory(userId, days)) zip env.storm.highApi.get(userId) map {
-            case (history, high) =>
-              Ok(env.storm.json.apiDashboard(high, history))
-          }
-      }
-    }
-}
+  def dashboard(page: Int) = Auth { ctx ?=> me ?=>
+    renderDashboardOf(me, page)
+  }
+
+  def dashboardOf(username: UserStr, page: Int) = Open:
+    Found(env.user.repo.enabledById(username)):
+      renderDashboardOf(_, page)
+
+  private def renderDashboardOf(user: lila.user.User, page: Int)(using Context): Fu[Result] = for
+    history <- env.storm.dayApi.history(user.id, page)
+    high <- env.storm.highApi.get(user.id)
+    page <- renderPage(views.storm.dashboard(user, history, high))
+  yield Ok(page)
+
+  def apiDashboardOf(username: UserStr, days: Int) = Open:
+    WithEnabledUserId(username): userId =>
+      if days < 0 || days > 365 then notFoundJson("Invalid days parameter")
+      else
+        for
+          history <- (days > 0).so(env.storm.dayApi.apiHistory(userId, days))
+          high <- env.storm.highApi.get(userId)
+        yield Ok(env.storm.json.apiDashboard(high, history))

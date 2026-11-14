@@ -1,45 +1,31 @@
 package lila.plan
 
-import akka.actor._
-import scala.concurrent.duration._
+import org.apache.pekko.actor.*
 
 import lila.common.Bus
-import lila.hub.actorApi.timeline.Propagate
-import lila.mon
-import lila.user.User
-import lila.hub.actorApi.timeline.Atom
+import lila.core.timeline.{ Atom, Propagate }
 
-final private[plan] class PlanNotifier(
-    timeline: lila.hub.actors.Timeline
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
+final private[plan] class PlanNotifier(using ec: Executor, scheduler: Scheduler):
 
-  def onCharge(user: User) = {
-    Bus.publish(lila.hub.actorApi.plan.MonthInc(user.id, user.plan.months), "plan")
-    if (user.plan.months > 1) onRenew(user) else onStart(user)
-  }
+  def onCharge(user: User) =
+    Bus.pub(lila.core.plan.MonthInc(user.id, user.plan.months))
+    if user.plan.months > 1 then onRenew(user) else onStart(user)
 
-  private def onStart(user: User): Unit = {
-    system.scheduler.scheduleOnce(5 seconds) {
-      Bus.publish(lila.hub.actorApi.plan.PlanStart(user.id), "planStart")
-    }
-    pushTimeline(user)(lila.hub.actorApi.timeline.PlanStart)
-  }
+  private def onStart(user: User): Unit =
+    scheduler.scheduleOnce(5.seconds):
+      Bus.pub(lila.core.plan.PlanStart(user.id))
+    pushTimeline(user)(lila.core.timeline.PlanStart.apply)
 
   private def onRenew(user: User): Unit =
-    pushTimeline(user)(lila.hub.actorApi.timeline.PlanRenew(_, user.plan.months))
+    pushTimeline(user)(lila.core.timeline.PlanRenew(_, user.plan.months))
 
   def onExpire(user: User): Unit =
-    Bus.publish(lila.hub.actorApi.plan.PlanExpire(user.id), "planExpire")
+    Bus.pub(lila.core.plan.PlanExpire(user.id))
 
-  def onGift(from: User, to: User, isLifetime: Boolean): Unit = {
-    pushTimeline(to)(lila.hub.actorApi.timeline.PlanStart)
-    Bus.publish(lila.hub.actorApi.plan.MonthInc(to.id, to.plan.months), "plan")
-    Bus.publish(lila.hub.actorApi.plan.PlanGift(from.id, to.id, isLifetime), "planStart")
-  }
+  def onGift(from: User, to: User, isLifetime: Boolean): Unit =
+    pushTimeline(to)(lila.core.timeline.PlanStart.apply)
+    Bus.pub(lila.core.plan.MonthInc(to.id, to.plan.months))
+    Bus.pub(lila.core.plan.PlanGift(from.id, to.id, isLifetime))
 
-  private def pushTimeline(user: User)(f: User.ID => Atom): Unit =
-    timeline ! (Propagate(f(user.id)) toFollowersOf user.id)
-}
+  private def pushTimeline(user: User)(f: UserId => Atom): Unit =
+    lila.common.Bus.pub(Propagate(f(user.id)).toFollowersOf(user.id))

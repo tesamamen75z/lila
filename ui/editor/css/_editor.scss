@@ -1,11 +1,10 @@
 @import 'layout';
 @import 'spare';
 @import 'tools';
-
 @include body-fixed-scroll;
 
 .board-editor {
-  user-select: none;
+  @include prevent-select;
 
   .main-board {
     grid-area: board;
@@ -15,17 +14,22 @@
     cursor: inherit;
   }
 
+  &.image-dragover cg-board {
+    outline: 4px dashed $c-primary;
+    outline-offset: 2px;
+  }
+
   .copyables {
     grid-area: copyables;
     margin: 2rem 0 0 1rem;
 
     p {
-      display: flex;
-      align-items: center;
+      @extend %flex-center-nowrap;
 
-      input {
-        margin-left: 1rem;
-        flex: 1 1 100%;
+      gap: 1em;
+
+      > *:not(strong) {
+        flex: 1 1 auto;
       }
     }
   }

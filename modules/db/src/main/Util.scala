@@ -1,16 +1,12 @@
 package lila.db
 
-import dsl._
+import reactivemongo.api.bson.BSONArray
 
-object Util {
+import dsl.*
 
-  def findNextId(coll: Coll)(implicit ec: scala.concurrent.ExecutionContext): Fu[Int] =
-    coll
-      .find($empty, $id(true).some)
-      .sort($sort desc "_id")
-      .one[Bdoc] dmap {
-      _ flatMap { doc =>
-        doc.getAsOpt[Int]("_id") map (1 +)
-      } getOrElse 1
-    }
-}
+object Util:
+
+  def removeEmptyArray(field: String)(doc: Bdoc): Bdoc =
+    if doc.getAsOpt[BSONArray](field).exists(_.isEmpty)
+    then (doc -- field)
+    else doc

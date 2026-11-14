@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="arena">Арена</string>
   <string name="arenaTournaments">Бәйгеләр мәйданы</string>
   <string name="isItRated">Бу рейтинглы?</string>
   <string name="willBeNotified">Бәйге башлангач сезгә хәбәр ителәчәк, шуңа күрә көткәндә бүтән кыстыргычта уйнау куркынычсыз.</string>
@@ -22,7 +23,6 @@
 
 Яман уенда ким дигәндә 7 хәрәкәт уйнасагыз, өстәмә накат бирә.</string>
   <string name="howIsTheWinnerDecided">Галиб ничек аныкланды?</string>
-  <string name="howDoesPairingWork">Җүфтлык ничек эшләнде?</string>
   <string name="howDoesPairingWorkAnswer">Бәйге барышында уенчылар рейтингына карап җүфтлек хасил булды.
 Уенны тәмамлангандан соң, бәйге кабулхәнәсенә кайтылачак: каян сезнең ранкыгызга якын уенчы белән җүфтлек хасил булыр. Бу көтешнең минималь вакыты тәэминләнде, әмма сез бәйгедәге барча башка уйнаучылар белән очрашуыгыз мөмкин ителмәс.
 Тизрәк уйнаган вә кабулхәнәдә кайтып уен уйнау вә күбрәк очкотупланыр.</string>
@@ -32,8 +32,10 @@
   <string name="thereIsACountdown">Беренче хәрәкәтегез өчен санау бар. Бу вакыт эчендә хәрәкәт итмәү уенны көндәшеңә калдырачак.</string>
   <string name="thisIsPrivate">Бу шәхси бәйге</string>
   <string name="shareUrl">Уртаклаш бу URL кешеләрнең керүенә: %s</string>
+  <string name="variant">Вариант</string>
   <string name="history">Мәйдан тарихы</string>
   <plurals name="viewAllXTeams" comment="viewAllXTeams [one] [other]&#10;&#10;%s is the number of teams that can be viewed">
     <item quantity="other">Карарга барлык %s төркемләрне</item>
   </plurals>
+  <string name="total">Барлыгы</string>
 </resources>

@@ -1,8 +1,7 @@
-package lila
+package lila.forum
 
-package object forum extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.core.id.{ ForumCategId, ForumTopicId }
 
-  private[forum] def teamSlug(id: String) = s"team-$id"
-
-  private[forum] val logger = lila.log("forum")
-}
+def picRef(id: ForumPostId) = s"forum:$id"

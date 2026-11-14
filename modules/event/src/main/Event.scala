@@ -1,55 +1,46 @@
 package lila.event
-
-import org.joda.time.DateTime
-import play.api.i18n.Lang
-
-import lila.user.User
+import scalalib.model.Language
 
 case class Event(
     _id: String,
     title: String,
     headline: String,
-    description: Option[String],
+    description: Option[Markdown],
     homepageHours: Double,
     url: String,
-    lang: Lang,
+    lang: Language,
     enabled: Boolean,
-    createdBy: Event.UserId,
-    createdAt: DateTime,
-    updatedBy: Option[Event.UserId],
-    updatedAt: Option[DateTime],
-    startsAt: DateTime,
-    finishesAt: DateTime,
-    hostedBy: Option[User.ID] = None,
+    createdBy: UserId,
+    createdAt: Instant,
+    updatedBy: Option[UserId],
+    updatedAt: Option[Instant],
+    startsAt: Instant,
+    finishesAt: Instant,
+    hostedBy: Option[UserId] = None,
     icon: Option[String] = None,
     countdown: Boolean
-) {
+):
 
   def willStartLater = startsAt.isAfterNow
 
-  def secondsToStart =
-    willStartLater option {
-      (startsAt.getSeconds - nowSeconds).toInt
-    }
+  def secondsToStart = willStartLater.option:
+    (startsAt.toSeconds - nowSeconds).toInt
 
-  def featureSince = startsAt minusMinutes (homepageHours * 60).toInt
+  def featureSince = startsAt.minusMinutes((homepageHours * 60).toInt)
+  def featureUntil = finishesAt.minusMinutes(10)
 
-  def featureNow = featureSince.isBeforeNow && !isFinishedSoon
+  def featureDates = (featureSince, featureUntil)
 
-  def isFinishedSoon = finishesAt.isBefore(DateTime.now plusMinutes 5)
+  def featureNow = featureSince.isBeforeNow && featureUntil.isAfterNow
 
   def isFinished = finishesAt.isBeforeNow
 
   def isNow = startsAt.isBeforeNow && !isFinished
 
-  def isNowOrSoon = startsAt.isBefore(DateTime.now plusMinutes 10) && !isFinished
+  def isNowOrSoon = startsAt.isBefore(nowInstant.plusMinutes(10)) && !isFinished
 
-  def id = _id
-}
+  inline def id = _id
 
-object Event {
+object Event:
 
-  def makeId = lila.common.ThreadLocalRandom nextString 8
-
-  case class UserId(value: String) extends AnyVal
-}
+  def makeId = scalalib.ThreadLocalRandom.nextString(8)

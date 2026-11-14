@@ -1,70 +1,51 @@
 package lila.pool
 
-import akka.actor._
+import org.apache.pekko.actor.*
 
-import lila.game.Game
-import lila.rating.{ PerfType, RatingRange }
-import lila.socket.Socket.{ Sri, Sris }
-import lila.user.User
+import lila.core.pool.{ PoolConfigId, PoolMember }
+import lila.core.socket.Sris
 
 final class PoolApi(
     val configs: List[PoolConfig],
     hookThieve: HookThieve,
     gameStarter: GameStarter,
-    playbanApi: lila.playban.PlaybanApi,
+    hasCurrentPlayban: lila.core.playban.HasCurrentPlayban,
+    rageSitOf: lila.core.playban.RageSitOf,
     system: ActorSystem
-) {
+)(using Executor)
+    extends lila.core.pool.PoolApi:
+  import PoolActor.*
 
-  import PoolApi._
-  import PoolActor._
+  private val actors: Map[PoolConfigId, ActorRef] = configs
+    .map: config =>
+      config.id -> system
+        .actorOf(
+          Props(PoolActor(config, hookThieve, gameStarter)),
+          name = s"pool-${config.id}"
+        )
+    .toMap
 
-  private val actors: Map[PoolConfig.Id, ActorRef] = configs.map { config =>
-    config.id -> system.actorOf(
-      Props(new PoolActor(config, hookThieve, gameStarter)),
-      name = s"pool-${config.id.value}"
-    )
-  }.toMap
+  val poolPerfKeys: Map[PoolConfigId, PerfKey] = configs
+    .map: config =>
+      config.id -> config.perfKey
+    .toMap
 
-  val poolPerfTypes: Map[PoolConfig.Id, PerfType] =
-    configs.map { config =>
-      config.id -> config.perfType
-    }.toMap
-
-  def join(poolId: PoolConfig.Id, joiner: Joiner): Unit =
-    playbanApi.hasCurrentBan(joiner.userId) dforeach {
+  def join(poolId: PoolConfigId, member: PoolMember): Unit =
+    hasCurrentPlayban(member.userId).foreach:
       case false =>
-        actors foreach {
-          case (id, actor) if id == poolId =>
-            playbanApi.getRageSit(joiner.userId).dforeach(actor ! Join(joiner, _))
-          case (_, actor) => actor ! Leave(joiner.userId)
-        }
+        actors.foreach: (id, actor) =>
+          if id == poolId then
+            rageSitOf(member.userId).foreach: rageSit =>
+              actor ! Join(member.copy(rageSitCounter = rageSit.counterView))
+          else actor ! Leave(member.userId)
       case _ =>
-    }
 
-  def leave(poolId: PoolConfig.Id, userId: User.ID) = sendTo(poolId, Leave(userId))
+  def leave(poolId: PoolConfigId, userId: UserId) = sendTo(poolId, Leave(userId))
 
-  def socketIds(ids: Sris) = actors.values.foreach(_ ! ids)
+  def poolOf(clock: chess.Clock.Config): Option[PoolConfigId] =
+    configs.find(_.clock == clock).map(_.id)
 
-  private def sendTo(poolId: PoolConfig.Id, msg: Any) =
-    actors get poolId foreach { _ ! msg }
-}
+  def setOnlineSris(ids: Sris): Unit = actors.values.foreach(_ ! ids)
 
-object PoolApi {
-
-  case class Joiner(
-      userId: User.ID,
-      sri: Sri,
-      rating: Int,
-      ratingRange: Option[RatingRange],
-      lame: Boolean,
-      blocking: Set[User.ID]
-  ) {
-
-    def is(member: PoolMember) = userId == member.userId
-  }
-
-  case class Pairing(game: Game, whiteSri: Sri, blackSri: Sri) {
-    def sri(color: chess.Color) = color.fold(whiteSri, blackSri)
-  }
-  case class Pairings(pairings: List[Pairing])
-}
+  private def sendTo(poolId: PoolConfigId, msg: Any) =
+    actors.get(poolId).foreach(_ ! msg)

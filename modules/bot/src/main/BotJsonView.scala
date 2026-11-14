@@ -1,78 +1,93 @@
 package lila.bot
 
-import play.api.i18n.Lang
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.common.Json.jodaWrites
-import lila.game.JsonView._
-import lila.game.{ Game, GameRepo, Pov }
+import lila.common.Json.given
+import lila.core.game.{ Game, GameRepo, Pov, WithInitialFen }
+import lila.core.i18n.Translate
+import lila.game.GameExt.perfType
+import lila.game.JsonView.given
 
 final class BotJsonView(
-    lightUserApi: lila.user.LightUserApi,
+    lightUserApi: lila.core.user.LightUserApi,
     gameRepo: GameRepo,
     rematches: lila.game.Rematches
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
-  def gameFull(game: Game)(implicit lang: Lang): Fu[JsObject] = gameRepo.withInitialFen(game) flatMap gameFull
+  def gameFull(game: Game)(using Translate): Fu[JsObject] = gameRepo.withInitialFen(game).flatMap(gameFull)
 
-  def gameFull(wf: Game.WithInitialFen)(implicit lang: Lang): Fu[JsObject] =
-    gameState(wf) map { state =>
+  def gameFull(wf: WithInitialFen)(using Translate): Fu[JsObject] =
+    gameState(wf).map: state =>
       gameImmutable(wf) ++ Json.obj(
-        "type"  -> "gameFull",
+        "type" -> "gameFull",
         "state" -> state
       )
-    }
 
-  def gameImmutable(wf: Game.WithInitialFen)(implicit lang: Lang): JsObject = {
-    import wf._
+  def gameImmutable(wf: WithInitialFen)(using Translate): JsObject =
+    import wf.*
     Json
       .obj(
-        "id"      -> game.id,
+        "id" -> game.id,
         "variant" -> game.variant,
-        "clock"   -> game.clock.map(_.config),
-        "speed"   -> game.speed.key,
-        "perf" -> game.perfType.map { p =>
-          Json.obj("name" -> p.trans)
-        },
-        "rated"      -> game.rated,
-        "createdAt"  -> game.createdAt,
-        "white"      -> playerJson(game.whitePov),
-        "black"      -> playerJson(game.blackPov),
+        "speed" -> game.speed.key,
+        "perf" -> Json.obj("name" -> game.perfType.trans),
+        "rated" -> game.rated,
+        "createdAt" -> game.createdAt,
+        "white" -> playerJson(game.pov(Color.white)),
+        "black" -> playerJson(game.pov(Color.black)),
         "initialFen" -> fen.fold("startpos")(_.value)
       )
+      .add("clock" -> game.clock.map(_.config))
+      .add("daysPerTurn" -> game.daysPerTurn)
       .add("tournamentId" -> game.tournamentId)
-  }
 
-  def gameState(wf: Game.WithInitialFen): Fu[JsObject] = {
-    import wf._
-    chess.format.UciDump(game.pgnMoves, fen, game.variant).toFuture map { uciMoves =>
-      Json
-        .obj(
-          "type"   -> "gameState",
-          "moves"  -> uciMoves.mkString(" "),
-          "wtime"  -> millisOf(game.whitePov),
-          "btime"  -> millisOf(game.blackPov),
-          "winc"   -> game.clock.??(_.config.increment.millis),
-          "binc"   -> game.clock.??(_.config.increment.millis),
-          "wdraw"  -> game.whitePlayer.isOfferingDraw,
-          "bdraw"  -> game.blackPlayer.isOfferingDraw,
-          "status" -> game.status.name
-        )
-        .add("winner" -> game.winnerColor)
-        .add("rematch" -> rematches.of(game.id))
-    }
-  }
+  def gameState(wf: WithInitialFen): Fu[JsObject] =
+    import wf.*
+    for uciMoves <- chess.format.UciDump(game.sans, fen, game.variant, legacyStandardCastling = true).toFuture
+    yield Json
+      .obj(
+        "type" -> "gameState",
+        "moves" -> uciMoves.mkString(" "),
+        "wtime" -> millisRemaining(game, Color.white),
+        "btime" -> millisRemaining(game, Color.black),
+        "winc" -> game.clock.so[Long](_.config.increment.millis),
+        "binc" -> game.clock.so[Long](_.config.increment.millis),
+        "status" -> game.status.name
+      )
+      .add("wdraw" -> game.whitePlayer.isOfferingDraw)
+      .add("bdraw" -> game.blackPlayer.isOfferingDraw)
+      .add("wtakeback" -> game.whitePlayer.isProposingTakeback)
+      .add("btakeback" -> game.blackPlayer.isProposingTakeback)
+      .add("winner" -> game.winnerColor)
+      .add("rematch" -> rematches.getAcceptedId(game.id))
+      .add("expiration" -> lila.game.JsonView.expiration(game))
 
-  def chatLine(username: String, text: String, player: Boolean) =
+  private def millisRemaining(game: Game, color: Color): Int =
+    game.clock
+      .map(_.remainingTime(color).millis.toInt)
+      .orElse(game.correspondenceClock.map(_.remainingTime(color).toInt * 1000))
+      .getOrElse(Int.MaxValue)
+
+  def chatLine(username: UserName, text: String, player: Boolean) =
     Json.obj(
-      "type"     -> "chatLine",
-      "room"     -> (if (player) "player" else "spectator"),
+      "type" -> "chatLine",
+      "room" -> (if player then "player" else "spectator"),
       "username" -> username,
-      "text"     -> text
+      "text" -> text
     )
 
-  private def playerJson(pov: Pov) = {
-    val light = pov.player.userId flatMap lightUserApi.sync
+  def opponentGoneClaimIn(seconds: Int) = Json.obj(
+    "type" -> "opponentGone",
+    "gone" -> true,
+    "claimWinInSeconds" -> seconds
+  )
+  def opponentGoneIsBack = Json.obj(
+    "type" -> "opponentGone",
+    "gone" -> false
+  )
+
+  private def playerJson(pov: Pov) =
+    val light = pov.player.userId.flatMap(lightUserApi.sync)
     Json
       .obj()
       .add("aiLevel" -> pov.player.aiLevel)
@@ -80,19 +95,11 @@ final class BotJsonView(
       .add("name" -> light.map(_.name))
       .add("title" -> light.map(_.title))
       .add("rating" -> pov.player.rating)
+      .add("ratingDiff" -> pov.player.ratingDiff)
       .add("provisional" -> pov.player.provisional)
-  }
 
-  private def millisOf(pov: Pov): Int =
-    pov.game.clock
-      .map(_.remainingTime(pov.color).millis.toInt)
-      .orElse(pov.game.correspondenceClock.map(_.remainingTime(pov.color).toInt * 1000))
-      .getOrElse(Int.MaxValue)
-
-  implicit private val clockConfigWriter: OWrites[chess.Clock.Config] = OWrites { c =>
+  private given OWrites[chess.Clock.Config] = OWrites: c =>
     Json.obj(
-      "initial"   -> c.limit.millis,
+      "initial" -> c.limit.millis,
       "increment" -> c.increment.millis
     )
-  }
-}

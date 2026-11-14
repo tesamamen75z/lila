@@ -1,38 +1,37 @@
 package lila.irc
 
-import com.softwaremill.macwire._
-import play.api.{ Configuration, Mode }
+import com.softwaremill.macwire.*
 import play.api.libs.ws.StandaloneWSClient
+import play.api.{ Configuration, Mode }
 
-import lila.common.Lilakka
-import lila.common.config._
-import lila.hub.actorApi.plan.ChargeEvent
-import lila.hub.actorApi.irc.Event
-import lila.hub.actorApi.user.Note
+import lila.common.{ Bus, Lilakka }
+import lila.core.misc.puzzle.DailyChange
+import lila.core.plan.ChargeEvent
 
 @Module
 final class Env(
     appConfig: Configuration,
-    getLightUser: lila.common.LightUser.Getter,
-    noteApi: lila.user.NoteApi,
+    noteApi: lila.core.user.NoteApi,
     ws: StandaloneWSClient,
-    shutdown: akka.actor.CoordinatedShutdown,
-    mode: Mode
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    shutdown: org.apache.pekko.actor.CoordinatedShutdown,
+    mode: Mode,
+    lightUser: lila.core.LightUser.GetterSyncFallback,
+    net: lila.core.config.NetConfig
+)(using Executor):
 
-  private val zulipConfig      = appConfig.get[ZulipClient.Config]("zulip")(ZulipClient.zulipConfigLoader)
+  import ZulipClient.given
+  private val zulipConfig = appConfig.get[ZulipClient.Config]("zulip")
   private lazy val zulipClient = wire[ZulipClient]
 
   lazy val api: IrcApi = wire[IrcApi]
 
-  if (mode == Mode.Prod) {
+  if mode.isProd then
     api.publishInfo("Lichess has started!")
-    Lilakka.shutdown(shutdown, _.PhaseBeforeServiceUnbind, "Tell IRC")(api.stop _)
-  }
+    Lilakka.shutdown(shutdown, _.PhaseBeforeServiceUnbind, "Tell IRC"): () =>
+      api.stop()
+      funit // don't wait for zulip aknowledgment to restart lila.
 
-  lila.common.Bus.subscribeFun("slack", "plan", "userNote") {
-    case d: ChargeEvent                                => api.charge(d).unit
-    case Note(from, to, text, true) if from != "Irwin" => api.userModNote(from, to, text).unit
-    case e: Event                                      => api.publishEvent(e).unit
-  }
-}
+  // type can be inferred but clearer to leave it
+  Bus.sub[ChargeEvent](api.charge(_))
+  Bus.sub[DailyChange](e => api.dailyPuzzle(e.id))
+  Bus.sub[lila.core.msg.PayoutMessages](api.payoutNotify(_))

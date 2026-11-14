@@ -1,61 +1,103 @@
 package lila.puzzle
 
-import play.api.data._
-import play.api.data.Forms._
+import chess.Rated
+import play.api.data.*
+import play.api.data.Forms.*
+import play.api.libs.json.*
+import scalalib.model.Days
 
-import lila.common.Form.{ numberIn, stringIn }
+import lila.common.Form.{ into, numberIn, stringIn, typeIn, given }
+import lila.common.Json.given
 
-object PuzzleForm {
+object PuzzleForm:
+
+  val maxStreakScore = 250
 
   case class RoundData(
-      win: Boolean,
-      replayDays: Option[Int],
+      win: PuzzleWin,
+      rated: Rated,
+      replayDays: Option[Days],
       streakId: Option[String],
-      streakScore: Option[Int]
-  ) {
-    def result   = Result(win)
-    def puzzleId = streakId flatMap Puzzle.toId
-  }
+      streakScore: Option[Int],
+      color: Option[Color]
+  ):
+    def streakPuzzleId = streakId.flatMap(Puzzle.toId)
+
+  case class ThemeVote(
+      theme: String,
+      vote: Option[Boolean]
+  )
+
+  case class ThemesVote(
+      puzzleId: PuzzleId,
+      themes: List[ThemeVote]
+  )
+
+  case class BatchThemesVotes(votes: List[ThemesVote])
 
   val round = Form(
     mapping(
-      "win"         -> boolean,
-      "replayDays"  -> optional(numberIn(PuzzleDashboard.dayChoices)),
-      "streakId"    -> optional(nonEmptyText),
-      "streakScore" -> optional(number(min = 0, max = 250))
-    )(RoundData.apply)(RoundData.unapply)
+      "win" -> of[PuzzleWin],
+      "rated" -> boolean.into[Rated],
+      "replayDays" -> optional(typeIn[Days](PuzzleDashboard.dayChoices.toSet)),
+      "streakId" -> optional(nonEmptyText),
+      "streakScore" -> optional(number(min = 0, max = maxStreakScore)),
+      "color" -> optional(lila.common.Form.color.mapping)
+    )(RoundData.apply)(unapply)
   )
 
   val vote = Form(
     single("vote" -> boolean)
   )
 
+  val report = Form(
+    single("reason" -> nonEmptyText(1, 2000))
+  )
+
   val themeVote = Form(
     single("vote" -> optional(boolean))
   )
+
+  lazy val batchVotes = Form:
+    mapping(
+      "votes" -> list(
+        mapping(
+          "puzzleId" -> nonEmptyText.into[PuzzleId],
+          "themes" -> list(
+            mapping(
+              "theme" -> nonEmptyText,
+              "vote" -> optional(boolean)
+            )(ThemeVote.apply)(unapply)
+          ).verifying("At least one theme", _.nonEmpty)
+            .verifying("No more than 500", _.sizeIs <= 500)
+        )(ThemesVote.apply)(unapply)
+      )
+    )(BatchThemesVotes.apply)(_.votes.some)
 
   val difficulty = Form(
     single("difficulty" -> stringIn(PuzzleDifficulty.all.map(_.key).toSet))
   )
 
-  object bc {
+  object batch:
+    case class Solution(id: PuzzleId, win: PuzzleWin, rated: Rated = Rated.Yes)
+    case class SolveData(solutions: List[Solution])
+    given Reads[Solution] = Json.reads
+    given Reads[SolveData] = Json.reads
+    def isValid(js: JsValue): Boolean = js.arr("solutions").forall(_.value.sizeIs < 100)
+
+  object bc:
 
     val round = Form(
       mapping(
         "win" -> text
-      )(w => RoundData(w == "1" || w == "true", none, none, none))(r => none)
+      )(w => RoundData(win = PuzzleWin(w == "1" || w == "true"), rated = Rated.Yes, none, none, none, none))(
+        _ => none
+      )
     )
 
-    val vote = Form(
-      single("vote" -> numberIn(Set(0, 1)))
-    )
+    val vote = Form(single("vote" -> numberIn(Set(0, 1))))
 
-    import play.api.libs.json._
-
-    case class Solution(id: Long, win: Boolean)
-    case class SolveData(solutions: List[Solution])
-
-    implicit val SolutionReads  = Json.reads[Solution]
-    implicit val SolveDataReads = Json.reads[SolveData]
-  }
-}
+    case class SolutionBc(id: Long, win: PuzzleWin)
+    case class SolveDataBc(solutions: List[SolutionBc])
+    given Reads[SolutionBc] = Json.reads
+    given Reads[SolveDataBc] = Json.reads

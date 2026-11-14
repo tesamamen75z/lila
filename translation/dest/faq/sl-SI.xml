@@ -5,7 +5,7 @@
   <string name="whyIsLichessCalledLichess">Zakaj se Lichess imenuje Lichess?</string>
   <string name="lichessCombinationLiveLightLibrePronounced">Lichess je kombinacija live/light/ libre in šaha. Izgovarja se %1$s.</string>
   <string name="leechess">li-čes</string>
-  <string name="hearItPronouncedBySpecialist">Slišite, da jo izgovori specialist.</string>
+  <string name="hearItPronouncedBySpecialist">Poslušajte, kako ime izgovori strokovnjak.</string>
   <string name="whyLiveLightLibre">V živo, ker se igre igrajo in gledajo v realnem času 24/7; lahek in svoboden za dejstvo, da je Lichess odprtokoden in neobremenjen z lastniškimi smeti, ki težijo druge spletne strani.</string>
   <string name="whyIsLilaCalledLila">Podobno izvorna koda za Lichess, %1$s, pomeni li[chess in sca]la, saj je večina lichess napisana v %2$s, intuitivnem programskem jeziku.</string>
   <string name="howCanIContributeToLichess">Kako lahko prispevam k Lichess-u?</string>
@@ -16,6 +16,8 @@
   <string name="otherWaysToHelp">drugi načini pomoči</string>
   <string name="areThereWebsitesBasedOnLichess">Ali obstajajo spletna mesta, ki temeljijo na Lichess-u?</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">Da. Lichess je resnično navdihnil druga mesta z odprto kodo, ki uporabljajo našo %1$s, %2$s ali %3$s.</string>
+  <string name="keyboardShortcuts">Katere bližnjice na tipkovnici obstajajo?</string>
+  <string name="keyboardShortcutsExplanation">Nekatere strani Lichess imajo bližnjice na tipkovnici, ki jih lahko uporabite. Poskusite pritisniti \'?\' tipko na strani študije, analize, uganke ali igre za seznam razpoložljivih bližnjic na tipkovnici.</string>
   <string name="fairPlay">Poštena igra</string>
   <string name="whenAmIEligibleRatinRefund">Kdaj sem upravičen do samodejnega povračila ratinga od goljufov?</string>
   <string name="ratingRefundExplanation">Minuto po tem, ko je igralec zaznamovan, se začne njegovih 40 zadnjih rangiranih iger v zadnjih 3 dneh. Če ste bili njegov nasprotnik na teh igrah, ste izgubili rejting (zaradi poraza ali remija) in vaš rejting ni bil začasen, prejmete povračilo za rejting. Nadomestilo se omeji na podlagi vašega najvišjega rejtinga in vašega napredka po igri. 
@@ -25,14 +27,16 @@
   <string name="howCanIBecomeModerator">Kako lahko postanem moderator?</string>
   <string name="youCannotApply">Če želite postati moderator, se ni mogoče prijaviti. Če vidimo nekoga, za katerega mislimo, da bi bil dober kot moderator, ga bomo kontaktirali neposredno.</string>
   <string name="isCorrespondenceDifferent">Ali se dopisni šah razlikuje od običajnega šaha?</string>
+  <string name="pleaseReadFairPlayPage">Za več informacij preberite naš %s</string>
+  <string name="fairPlayPage">stran za pošteno igro</string>
   <string name="youCanUseOpeningBookNoEngine">Na Lichess, je glavna razlika v pravilih ta, da je dovoljena uporaba otvoritvenih knjižnic. Uporaba računalniških motorjev je prepovedana in ima za posledico zaznamek za pomoč z računalnikom. Čeprav ICCF dovoljuje uporabo motorjev v dopisnem šahu jih Lichess ne.</string>
   <string name="gameplay">Igranje</string>
   <string name="howBulletBlitzEtcDecided">Kako so izbrane Bullet, Blitz in druge časovne kontrole izbrane?</string>
   <string name="basedOnGameDuration">Nadzor časa na lichessu temelji na ocenjenem trajanju igre = %1$s
 Na primer, predvideno trajanje igre 5 + 3 je 5 × 60 + 40 × 3 = 420 sekund.</string>
   <string name="durationFormula">(začetni čas ure) + 40 × (prirastek ure)</string>
-  <string name="inferiorThanXsEqualYtimeControl">> %1$ss = %2$s</string>
-  <string name="superiorThanXsEqualYtimeControl">&amp;gt %1$ss = %2$s</string>
+  <string name="inferiorThanXsEqualYtimeControl">≤ %1$ss = %2$s</string>
+  <string name="superiorThanXsEqualYtimeControl">≥ %1$ss = %2$s</string>
   <string name="whatVariantsCanIplay">Katere različice lahko igram na Lichess?</string>
   <string name="lichessSupportChessAnd">Lichess podpira standardni šah in %1$s.</string>
   <string name="eightVariants">6 šahovskih različic</string>
@@ -50,6 +54,7 @@ Računalniško analizo lichess poganja Stockfish.</string>
 V redkih primerih je težko samodejno odločiti (prisilne črte, trdnjave). Privzeto smo vedno na strani igralca, ki mu ni zmanjkalo časa.
 
 Upoštevajte, da se lahko pari z enim skakačem ali lovcem, če ima nasprotnik figuro, ki bi lahko blokirala kralja.</string>
+  <string name="fideHandbook">Priročnik FIDE</string>
   <string name="fideHandbookX">Priročnik FIDE %s</string>
   <string name="discoveringEnPassant">Zakaj lahko kmet vzame drugega kmeta, ko je že ob njem? (en passant)</string>
   <string name="explainingEnPassant">To je pravilna poteza, znana kot \"en passant\". Članek v Wikipediji vsebuje %1$s.
@@ -60,10 +65,10 @@ Opisano je v oddelku 3.7 (d) %2$s:
 
 Glejte %3$s na tej potezi za nekaj vaj z njo.</string>
   <string name="goodIntroduction">dober uvod</string>
-  <string name="officialRulesPDF">uradna pravila (PDF)</string>
   <string name="lichessTraining">Lichess usposabljanje</string>
+  <string name="watchIMRosenCheckmate">Oglejte si, kako mednarodni mojster Eric Rosen doseže šah-mat z zajetjem &lt;a href=\'%s\' target=\'_blank\'&gt;en passant&lt;/a&gt;.</string>
   <string name="threefoldRepetition">Trikratna ponovitev</string>
-  <string name="threefoldRepetitionExplanation">Če se pozicija pojavi trikrat, lahko igralci zahtevajo remi za %1$s. Lichess izvaja uradna pravila FIDE, kot je opisano v členu 9.2 (d) %2$s.</string>
+  <string name="threefoldRepetitionExplanation">Če se pozicija pojavi trikrat, lahko igralci zahtevajo remi za %1$s. Lichess izvaja uradna pravila FIDE, kot je opisano v členu 9.2 %2$s.</string>
   <string name="threefoldRepetitionLowerCase">trikratna ponovitev</string>
   <string name="notRepeatedMoves">Potez nismo ponavljali. Zakaj je bila igra še vedno remizirana s ponavljanjem?</string>
   <string name="repeatedPositionsThatMatters">Trikratno ponavljanje je ponovitev %1$s in ne premiki. Ni nujno, da se ponavljanje ponavlja.</string>
@@ -95,7 +100,6 @@ Ne zahtevajte naslova LM.</string>
   <string name="usernamesCannotBeChanged">Ne, uporabniških imen ni mogoče spreminjati iz tehničnih in praktičnih razlogov. Uporabniška imena so materializirana na premnogih mestih: zbirke podatkov, izvozi, dnevniki in mislih ljudi. Velike začetnice lahko prilagodite enkrat.</string>
   <string name="uniqueTrophies">Edinstvene trofeje</string>
   <string name="ownerUniqueTrophies">Ta pokal je edinstven v zgodovini Lichessa, nihče drug kot %1$s ga ne bo imel nikoli.</string>
-  <string name="wayOfBerserkExplanation">Da bi ga dobil, se je hiimgosu izzval, da se znori in zmaga v 100%% igrah %s.</string>
   <string name="aHourlyBulletTournament">urni Bullet turnir</string>
   <string name="goldenZeeExplanation">ZugAddict je pretakal in zadnji dve uri je poskušal premagati A.I. stopnja 8 v igri 1 + 0, brez uspeha. Thibault mu je rekel, da bo, če bo to uspešno opravil v toku, dobil edinstven pokal. Eno uro kasneje je razbil Stockfish in obljuba je bila izpolnjena.</string>
   <string name="lichessRatings">Lichess ratingi</string>
@@ -111,4 +115,57 @@ Druga točka, ki jo je treba opozoriti, je, da se bo čas zaupanja povečeval. T
   <string name="provisionalRatingExplanation">Vprašaj pomeni, da je rating začasen. Razlogi vključujejo:</string>
   <string name="notPlayedEnoughRatedGamesAgainstX">Igralec še ni zaključil dovolj rangiranih iger proti %1$s v kategoriji rangiranja.</string>
   <string name="similarOpponents">nasprotniki podobnih moči</string>
+  <string name="notPlayedRecently">Igralec zadnje čase ni igral dovolj partij. Glede na število odigranih partij, ste lahko približno eno leto nedejavni, da bo vaša ocena spet postala začasna.</string>
+  <string name="ratingDeviationMorethanOneHundredTen">Konkretno to pomeni, da je Glicko-2 odstopanje večje od 110. Odstopanje je stopnja zaupanja sistema v rejting. Nižje kot je odstopanje, bolj stabilena je rejting.</string>
+  <string name="howDoLeaderoardsWork">Kako delujejo uvrstitve in lestvice najboljših?</string>
+  <string name="inOrderToAppearsYouMust">Če želite priti na %1$s, morate:</string>
+  <string name="ratingLeaderboards">lestvica najboljših</string>
+  <string name="havePlayedMoreThanThirtyGamesInThatRating">odigrati najmanj 30 ocenjenih partij s tem rejtingom</string>
+  <string name="havePlayedARatedGameAtLeastOneWeekAgo">zadnji teden odigrati ocenjeno partijo za ta rejting,</string>
+  <string name="ratingDeviationLowerThanXinChessYinVariants">imeti odstopanje rejtinga nižje kot %1$s v klasičnem šahu in nižje kot %2$s v različicah,</string>
+  <string name="beInTopTen">biti med prvimi 10-imi v tem rejtingu.</string>
+  <string name="secondRequirementToStopOldPlayersTrustingLeaderboards">Druga zahteva je, da igralci, ki ne uporabljajo več svojih računov, prenehajo zasedati lestvico najboljših.</string>
+  <string name="whyAreRatingHigher">Zakaj so rejtingi višji v primerjavi z drugimi spletnimi mesti in organizacijami, kot so FIDE, USCF in ICC?</string>
+  <string name="whyAreRatingHigherExplanation">Najbolje je, da pri rejtingu ne razmišljate kot absolutni številki oz. ga primerjate z rejtingom pri drugih organizacijah. Različne organizacije imajo različne ravni igralcev, različne sisteme ocenjevanja (Elo, Glicko, Glicko-2 ali spremenjena različica prej omenjenih). Ti dejavniki lahko drastično vplivajo na absolutne številke (rejtinge).
+
+Najbolje, da na rejting gledate kot na \"relativno\" številko (ne kot \"absolutno\"): znotraj skupine igralcev vam bodo njihove relativne razlike v rejtingih pomagale oceniti, kdo in kako pogosto bo nekdo zmagal/remiziral/izgubil. \"Imam rejting X\" nič ne pomeni, razen če obstajajo drugi igralci, s katerimi se lahko ta rejting primerja.</string>
+  <string name="howToHideRatingWhilePlaying">Kako skriti rejting med igranjem?</string>
+  <string name="enableZenMode">Omogočite Zen-način v %1$s ali s pritiskom na %2$s med partijo.</string>
+  <string name="displayPreferences">prikaži nastavitve</string>
+  <string name="connexionLostCanIGetMyRatingBack">Izgubil sem partijo zaradi zakasnitve/prekinitve povezave. Ali lahko dobim nazaj svoje rejtinške točke?</string>
+  <string name="weCannotDoThatEvenIfItIsServerSideButThatsRare">Žal ne moremo vračati rejtinških točk za partije, izgubljene zaradi zakasnitve ali prekinitve povezave, ne glede na to, ali je bila težava na vašem ali na našem delu. Slednje je sicer zelo redko. Prav tako upoštevajte, da pri ponovnem zagonu Lichess-a, partijo vedno prekinemo, da preprečimo poraz zaradi izteka časa.</string>
+  <string name="howToThreeDots">Kako...</string>
+  <string name="enableDisableNotificationPopUps">Omogočiti ali onemogočiti pojavna okna?</string>
+  <string name="viewSiteInformationPopUp">Pokaži pojavno okno spletnega mesta</string>
+  <string name="lichessCanOptionnalySendPopUps">Lichess lahko pošilja pojavna obvestila, na primer, ko ste na vrsti ali ste prejeli zasebno sporočilo.
+
+Kliknite ikono ključavnice poleg naslova lichess.org v vrstici URL vašega brskalnika.
+
+Nato izberite, ali želite dovoliti ali blokirati obvestila strani Lichess.</string>
+  <string name="enableAutoplayForSoundsQ">Omogočiti samodejno predvajanje za zvoke?</string>
+  <string name="desktop">namizje</string>
+  <string name="enableAutoplayForSoundsFirefox">1. Pojdite na lichess.org
+2. Pritisnite Ctrl-i v sistemu Linux/Windows ali cmd-i v sistemu MacOS
+3. Kliknite zavihek Dovoljenja
+4. Dovolite avdio in video na lichess.org</string>
+  <string name="enableAutoplayForSoundsSafari">1. Pojdite na lichess.org
+2. V menijski vrstici kliknite Safari
+3. Kliknite Nastavitve za lichess.org ...
+4. Dovoli vse samodejno predvajanje</string>
+  <string name="enableAutoplayForSoundsMicrosoftEdge">1. Kliknite tri pike v zgornjem desnem kotu
+2. Kliknite Nastavitve
+3. Kliknite Piškotki in dovoljenja za spletno mesto
+4. Pomaknite se navzdol in kliknite Samodejno predvajanje medijev
+5. Dodajte lichess.org v Dovoli</string>
+  <string name="makeBotTitle">Želiš izdelati bota na Lichessu?</string>
+  <string name="makeBotDescription">Če želite izvedeti, kako izdelati &lt;a href=\'%1$s\'&gt;lastnega šahovskega bota&lt;/a&gt; za igranje na Lichessu, preberite &lt;a href=\'%2$s\'&gt;to objavo na blogu o izdelavi botov&lt;/a&gt;.</string>
+  <string name="stopMyselfFromPlaying">Naj se ustavim pri igranju?</string>
+  <string name="mentalHealthCondition">samostojno stanje duševnega zdravja</string>
+  <string name="lichessUserstyles">Lichess uporabniški slogi</string>
+  <string name="fewerLobbyPools">manj bazenov v preddverju</string>
+  <string name="adviceOnMitigatingAddiction">Redno prejemamo sporočila uporabnikov, ki nas prosijo za pomoč, da jim preprečimo preveč igranja.
+
+Čeprav Lichess ne prepoveduje ali blokira igralcev, razen kršitev pogojev storitve, priporočamo uporabo zunanjih orodij za omejitev pretiranega igralnega vedenja. Nekateri pogosti predlogi za blokatorje spletnih mest vključujejo %1$s, %2$s in %3$s. če želite še naprej uporabljati spletno mesto, vendar vas hitri časovni nadzor ne mika, vas bo morda zanimalo tudi %4$s, tukaj je ena z %5$s.
+
+Nekateri igralci se lahko počutijo, kot da se njihovo igralsko vedenje spreminja v odvisnost. Svetovna zdravstvena organizacija Razvrsti motnjo igranja kot %6$s, pri čemer so bistvene značilnosti 1) oslabljen nadzor nad igranjem iger, 2) povečanje prednosti, ki se daje igranju iger, in 3) eskalacija iger kljub negativnim posledicam. Če menite, da vaše vedenje pri igranju šaha sledi temu vzorcu, vas spodbujamo, da se o tem pogovorite s prijateljem ali družinskim članom in/ali s strokovnjakom.</string>
 </resources>

@@ -1,10 +1,13 @@
-var user = db.user4.findOne({ _id: 'thibault' });
-var connections = [];
+const user = db.user4.findOne({ _id: 'thibault' });
+const connections = [];
 db.security
-  .find({ user: user._id, $or: [{ up: true }, { date: { $gt: new Date(Date.now() - 1000 * 3600 * 24 * 30 * 6) } }] })
+  .find({
+    user: user._id,
+    $or: [{ up: true }, { date: { $gt: new Date(Date.now() - 1000 * 3600 * 24 * 30 * 6) } }],
+  })
   .map(o => `${o.ip} ${o.ua}`)
   .forEach(conn => {
-    if (!connections.find(c => c === conn)) connections.push(conn);
+    if (!connections.some(c => c === conn)) connections.push(conn);
   });
 
 print(`\n${user.username} ${user.email}`);

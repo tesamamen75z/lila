@@ -1,137 +1,96 @@
 package lila.fishnet
 
-import chess.format.{ FEN, Uci }
+import chess.eval.Eval.Cp
+import chess.eval.Score
+import chess.format.{ Fen, Uci }
 import chess.variant.Variant
-import org.joda.time.DateTime
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.common.Json._
-import lila.common.{ IpAddress, Maths }
-import lila.fishnet.{ Work => W }
-import lila.tree.Eval.JsonHandlers._
-import lila.tree.Eval.{ Cp, Mate }
+import lila.common.Json.{ *, given }
+import lila.core.chess.Depth
+import lila.fishnet.Work as W
 
-object JsonApi {
+object JsonApi:
 
-  sealed trait Request {
-    val fishnet: Request.Fishnet
+  sealed trait Request
 
-    def instance(ip: IpAddress) = Client.Instance(fishnet.version, ip, DateTime.now)
-  }
+  object Request:
 
-  object Request {
+    def isValid(js: JsValue): Boolean = js.arr("analysis").forall(_.value.sizeIs <= Analyser.maxPlies + 1)
 
-    sealed trait Result
-
-    case class Fishnet(
-        version: Client.Version,
-        python: Option[Client.Python],
-        apikey: Client.Key
-    )
-
-    case class Stockfish(
-        flavor: Option[String]
-    ) {
+    case class Stockfish(flavor: Option[String], version: Option[String]):
       def isNnue = flavor.has("nnue")
-    }
 
-    case class Acquire(
-        fishnet: Fishnet
-    ) extends Request
+    case class Acquire() extends Request
 
     case class PostAnalysis(
-        fishnet: Fishnet,
         stockfish: Stockfish,
-        analysis: List[Option[Evaluation.OrSkipped]]
-    ) extends Request
-        with Result {
+        analysis: List[Option[Evaluation.EvalOrSkip]]
+    ) extends Request:
 
       def completeOrPartial =
-        if (analysis.headOption.??(_.isDefined)) CompleteAnalysis(fishnet, stockfish, analysis.flatten)
-        else PartialAnalysis(fishnet, stockfish, analysis)
-    }
+        if analysis.headOption.so(_.isDefined) then CompleteAnalysis(stockfish, analysis.flatten)
+        else PartialAnalysis(stockfish, analysis)
 
     case class CompleteAnalysis(
-        fishnet: Fishnet,
         stockfish: Stockfish,
-        analysis: List[Evaluation.OrSkipped]
-    ) {
+        analysis: List[Evaluation.EvalOrSkip]
+    ):
 
-      def evaluations = analysis.collect { case Right(e) => e }
+      import Evaluation.*
+      def evaluations = analysis.collect { case EvalOrSkip.Evaluated(e) => e }
 
-      def medianNodes =
-        Maths.median {
-          evaluations
-            .withFilter(e => !(e.mateFound || e.deadDraw))
-            .flatMap(_.nodes)
-        }
-
-      // fishnet 2.x analysis is never weak in this sense. It is either exactly
-      // the same as analysis provided by any other instance, or failed.
-      def strong = stockfish.flavor.isDefined || medianNodes.fold(true)(_ > Evaluation.legacyAcceptableNodes)
-      def weak   = !strong
-    }
+      def medianNodes = scalalib.Maths.median:
+        evaluations
+          .withFilter(e => !(e.mateFound || e.deadDraw))
+          .flatMap(_.nodes)
 
     case class PartialAnalysis(
-        fishnet: Fishnet,
         stockfish: Stockfish,
-        analysis: List[Option[Evaluation.OrSkipped]]
+        analysis: List[Option[Evaluation.EvalOrSkip]]
     )
 
     case class Evaluation(
         pv: List[Uci],
-        score: Evaluation.Score,
+        score: Option[Score],
         time: Option[Int],
         nodes: Option[Int],
         nps: Option[Int],
-        depth: Option[Int]
-    ) {
-      val cappedNps = nps.map(_ min Evaluation.npsCeil)
+        depth: Option[Depth]
+    ):
+      val cappedNps = nps.map(_.min(Evaluation.npsCeil))
 
-      val cappedPv = pv take lila.analyse.Info.LineMaxPlies
+      val cappedPv = pv.take(lila.analyse.Info.LineMaxPlies)
 
-      def isCheckmate = score.mate has Mate(0)
-      def mateFound   = score.mate.isDefined
-      def deadDraw    = score.cp has Cp(0)
-    }
+      def mateFound = score.forall(_.isMateFound) // filtered ambiguous #+/-0 is also mate
+      def deadDraw = score.exists(_.cp.has(Cp(0)))
 
-    object Evaluation {
+    object Evaluation:
 
-      object Skipped
-
-      type OrSkipped = Either[Skipped.type, Evaluation]
-
-      case class Score(cp: Option[Cp], mate: Option[Mate]) {
-        def invert                  = copy(cp.map(_.invert), mate.map(_.invert))
-        def invertIf(cond: Boolean) = if (cond) invert else this
-      }
+      enum EvalOrSkip:
+        case Skipped
+        case Evaluated(eval: Evaluation)
 
       val npsCeil = 10_000_000
 
-      private val legacyDesiredNodes = 3_000_000
-      val legacyAcceptableNodes      = legacyDesiredNodes * 0.9
-    }
-  }
-
   case class Game(
       game_id: String,
-      position: FEN,
+      position: Fen.Full,
       variant: Variant,
       moves: String
   )
 
   def fromGame(g: W.Game) =
     Game(
-      game_id = if (g.studyId.isDefined) "" else g.id,
+      game_id = if g.studyId.isDefined then "" else g.id,
       position = g.initialFen | g.variant.initialFen,
       variant = g.variant,
       moves = g.moves
     )
 
-  sealed trait Work {
+  sealed trait Work:
     val id: String
     val game: Game
-  }
 
   case class Analysis(
       id: String,
@@ -140,68 +99,66 @@ object JsonApi {
       skipPositions: List[Int]
   ) extends Work
 
-  def analysisFromWork(nodes: Int)(m: Work.Analysis) =
+  def analysisFromWork(m: Work.Analysis): Analysis =
     Analysis(
       id = m.id.value,
       game = fromGame(m.game),
-      nodes = nodes,
+      nodes = m.nodesPerMove,
       skipPositions = m.skipPositions
     )
 
-  object readers {
-    import play.api.libs.functional.syntax._
-    implicit val ClientVersionReads = Reads.of[String].map(Client.Version(_))
-    implicit val ClientPythonReads  = Reads.of[String].map(Client.Python(_))
-    implicit val ClientKeyReads     = Reads.of[String].map(Client.Key(_))
-    implicit val StockfishReads     = Json.reads[Request.Stockfish]
-    implicit val FishnetReads       = Json.reads[Request.Fishnet]
-    implicit val AcquireReads       = Json.reads[Request.Acquire]
-    implicit val ScoreReads         = Json.reads[Request.Evaluation.Score]
-    implicit val uciListReads = Reads.of[String] map { str =>
-      ~Uci.readList(str)
-    }
+  object readers:
+    import play.api.libs.functional.syntax.*
+    import Request.Evaluation.EvalOrSkip
+    given Reads[Request.Stockfish] = Json.reads
+    given Reads[Request.Acquire] = Json.reads
+    val scoreReads: Reads[Option[Score]] = Reads: js =>
+      (js.int("cp"), js.int("mate"), js.boolean("mateGiven")) match
+        case (Some(cp), _, _) => JsSuccess(Score.cp(cp).some)
+        case (_, Some(0), Some(true)) => JsSuccess(Score.MateGiven.some)
+        case (_, Some(0), Some(false)) => JsSuccess(Score.mated.some)
+        // older clients send mate 0 also when the side to move has won
+        case (_, Some(0), None) => JsSuccess(none)
+        case (_, Some(mate), _) => JsSuccess(Score.mate(mate).some)
+        case _ => JsError("expected cp or mate")
+    given Reads[List[Uci]] = Reads.of[String].map(Uci.readList(_).getOrElse(Nil))
 
-    implicit val EvaluationReads: Reads[Request.Evaluation] = (
-      (__ \ "pv").readNullable[List[Uci]].map(~_) and
-        (__ \ "score").read[Request.Evaluation.Score] and
-        (__ \ "time").readNullable[Int] and
-        (__ \ "nodes").readNullable[Long].map(_.map(_.toSaturatedInt)) and
-        (__ \ "nps").readNullable[Long].map(_.map(_.toSaturatedInt)) and
-        (__ \ "depth").readNullable[Int]
-    )(Request.Evaluation.apply _)
-    implicit val EvaluationOptionReads = Reads[Option[Request.Evaluation.OrSkipped]] {
+    given EvaluationReads: Reads[Request.Evaluation] = (
+      (__ \ "pv")
+        .readNullable[List[Uci]]
+        .map(~_)
+        .and((__ \ "score").read(using scoreReads))
+        .and((__ \ "time").readNullable[Int])
+        .and((__ \ "nodes").readNullable[Long].map(_.map(_.toSaturatedInt)))
+        .and((__ \ "nps").readNullable[Long].map(_.map(_.toSaturatedInt)))
+        .and((__ \ "depth").readNullable[Depth])
+    )(Request.Evaluation.apply)
+    given Reads[Option[EvalOrSkip]] = Reads:
       case JsNull => JsSuccess(None)
       case obj =>
-        if (~(obj boolean "skipped")) JsSuccess(Left(Request.Evaluation.Skipped).some)
-        else EvaluationReads reads obj map Right.apply map some
-    }
-    implicit val PostAnalysisReads: Reads[Request.PostAnalysis] = Json.reads[Request.PostAnalysis]
-  }
+        if ~(obj.boolean("skipped")) then JsSuccess(EvalOrSkip.Skipped.some)
+        else EvaluationReads.reads(obj).map(EvalOrSkip.Evaluated(_).some)
+    given Reads[Request.PostAnalysis] = Json.reads
 
-  object writers {
-    implicit val VariantWrites = Writes[Variant] { v =>
-      JsString(v.key)
-    }
-    implicit val GameWrites: Writes[Game] = Json.writes[Game]
-    implicit val WorkIdWrites = Writes[Work.Id] { id =>
-      JsString(id.value)
-    }
-    implicit val WorkWrites = OWrites[Work] { work =>
-      (work match {
+  object writers:
+    given Writes[Variant] = writeAs(_.key)
+    given Writes[Game] = Json.writes
+    given OWrites[Work] = OWrites { work =>
+      (work match
         case a: Analysis =>
           Json.obj(
             "work" -> Json.obj(
               "type" -> "analysis",
-              "id"   -> a.id,
+              "id" -> a.id,
               "nodes" -> Json.obj(
-                "nnue"      -> a.nodes,
-                "classical" -> a.nodes * 2
-              )
+                "sf18" -> a.nodes,
+                "sf17_1" -> a.nodes,
+                "sf16" -> a.nodes,
+                "classical" -> a.nodes * 3
+              ),
+              "timeout" -> Cleaner.timeoutPerPly.toMillis
             ),
-            "nodes"         -> a.nodes * 2, // bc for fishnet 1.x clients without nnue
             "skipPositions" -> a.skipPositions
           )
-      }) ++ Json.toJson(work.game).as[JsObject]
+      ) ++ Json.toJson(work.game).as[JsObject]
     }
-  }
-}

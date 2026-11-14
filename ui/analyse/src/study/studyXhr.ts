@@ -1,29 +1,39 @@
-import { StudyChapterConfig, ReloadData } from './interfaces';
-import * as xhr from 'common/xhr';
+import { text as xhrText, json as xhrJson, form as xhrForm, textRaw as xhrRaw, ensureOk } from 'lib/xhr';
 
-export const reload = (baseUrl: string, id: string, chapterId?: string): Promise<ReloadData> => {
-  let url = '/' + baseUrl + '/' + id;
+import type { StudyChapterConfig, ReloadData, ChapterData } from './interfaces';
+
+export const reload = (
+  baseUrl: string,
+  id: string,
+  chapterId?: string,
+  withChapters = false,
+): Promise<ReloadData> => {
+  let url = `/${baseUrl}/${id}`;
   if (chapterId) url += '/' + chapterId;
-  return xhr.json(url);
+  if (withChapters) url += '?chapters=1';
+  return xhrJson(url);
 };
 
-export const variants = () => xhr.json('/variant', { cache: 'default' });
+export const variants = () => xhrJson('/variant', { cache: 'default' });
 
-export const glyphs = () => xhr.json(`/study/glyphs/${document.documentElement!.lang}.json`, { cache: 'default' });
+export const glyphs = () =>
+  xhrJson(`/study/glyphs/${document.documentElement.lang}.json`, { cache: 'default' });
 
 export const chapterConfig = (studyId: string, chapterId: string): Promise<StudyChapterConfig> =>
-  xhr.json(`/study/${studyId}/${chapterId}/meta`);
+  xhrJson(`/study/${studyId}/${chapterId}/config`);
 
 export const practiceComplete = (chapterId: string, nbMoves: number) =>
-  xhr.json(`/practice/complete/${chapterId}/${nbMoves}`, {
+  xhrText(`/practice/complete/${chapterId}/${nbMoves}`, {
     method: 'POST',
   });
 
-export const importPgn = (studyId: string, data: any) =>
-  xhr.json(`/study/${studyId}/import-pgn?sri=${lichess.sri}`, {
+export const importPgn = async (
+  studyId: string,
+  data: ChapterData & Record<string, string | boolean | null | undefined>,
+) => {
+  const res = await xhrRaw(`/study/${studyId}/import-pgn?sri=${site.sri}`, {
     method: 'POST',
-    body: xhr.form(data),
+    body: xhrForm(data),
   });
-
-export const multiBoard = (studyId: string, page: number, playing: boolean) =>
-  xhr.json(`/study/${studyId}/multi-board?page=${page}&playing=${playing}`);
+  return ensureOk(res).then(r => r.text());
+};

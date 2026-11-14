@@ -1,120 +1,153 @@
 package controllers
 
-import scala.concurrent.duration._
-import views._
-
-import lila.app._
-import lila.common.{ HTTPRequest, IpAddress }
+import lila.app.{ *, given }
+import lila.core.i18n.I18nKey as trans
+import lila.core.id.{ ForumCategId, ForumTopicSlug }
+import lila.core.msg.SystemMsg
 import lila.msg.MsgPreset
 
-final class ForumPost(env: Env) extends LilaController(env) with ForumController {
+final class ForumPost(env: Env) extends LilaController(env) with ForumController:
 
-  private val CreateRateLimit =
-    new lila.memo.RateLimit[IpAddress](4, 5.minutes, key = "forum.post")
+  def search(text: String, page: Int) = AuthBody: _ ?=>
+    _ ?=>
+      NotForKids:
+        if text.trim.isEmpty
+        then Redirect(routes.ForumCateg.index)
+        else
+          for
+            ids <- env.forumSearch(text, page)
+            posts <- ids.mapFutureList(env.forum.postApi.viewsFromIds)
+            pager <- posts.mapFutureResults: post =>
+              access
+                .isGrantedRead(post.topic.categId)
+                .map:
+                  lila.forum.PostView.WithReadPerm(post, _)
+            page <- renderPage(views.forum.post.search(text, pager))
+          yield Ok(page)
 
-  def search(text: String, page: Int) =
-    OpenBody { implicit ctx =>
-      NotForKids {
-        if (text.trim.isEmpty) Redirect(routes.ForumCateg.index).fuccess
-        else env.forumSearch(text, page, ctx.troll) map { html.forum.search(text, _) }
-      }
-    }
-
-  def create(categSlug: String, slug: String, page: Int) =
-    AuthBody { implicit ctx => me =>
-      NoBot {
-        CategGrantWrite(categSlug) {
-          implicit val req = ctx.body
-          OptionFuResult(topicApi.show(categSlug, slug, page, ctx.me)) { case (categ, topic, posts) =>
-            if (topic.closed) fuccess(BadRequest("This topic is closed"))
-            else if (topic.isOld) fuccess(BadRequest("This topic is archived"))
-            else
-              categ.team.?? { env.team.cached.isLeader(_, me.id) } flatMap { inOwnTeam =>
-                forms
-                  .post(me, inOwnTeam)
-                  .bindFromRequest()
-                  .fold(
+  def create(categId: ForumCategId, slug: ForumTopicSlug, page: Int) = AuthBody { ctx ?=> me ?=>
+    NoBot:
+      Found(topicApi.show(categId, slug, page)): (categ, topic, posts) =>
+        if topic.closed then BadRequest("This topic is closed")
+        else if topic.isOld then BadRequest("This topic is archived")
+        else
+          for
+            canModCateg <- access.isGrantedMod(categ.id)
+            replyBlocked <- access.isReplyBlockedOnUBlog(topic, canModCateg)
+            res <-
+              if replyBlocked then BadRequest.snip(trans.ublog.youBlockedByBlogAuthor()).toFuccess
+              else
+                categ.team.so(env.team.api.isLeader).flatMap { inOwnTeam =>
+                  bindForm(forms.post(inOwnTeam))(
                     err =>
-                      for {
-                        captcha     <- forms.anyCaptcha
-                        unsub       <- env.timeline.status(s"forum:${topic.id}")(me.id)
-                        canModCateg <- isGrantedMod(categ.slug)
-                      } yield BadRequest(
-                        html.forum.topic
-                          .show(categ, topic, posts, Some(err -> captcha), unsub, canModCateg = canModCateg)
-                      ),
+                      CategGrantWrite(categId, tryingToPostAsMod = true):
+                        for
+                          unsub <- env.timeline.status(s"forum:${topic.id}")
+                          canModCateg <- access.isGrantedMod(categ.id)
+                          page <- renderPage:
+                            views.forum.topic
+                              .show(
+                                categ,
+                                topic,
+                                posts,
+                                Some(err -> anyCaptcha),
+                                unsub,
+                                canModCateg = canModCateg
+                              )
+                        yield BadRequest(page)
+                    ,
                     data =>
-                      CreateRateLimit(HTTPRequest ipAddress ctx.req) {
-                        postApi.makePost(categ, topic, data, me) map { post =>
-                          Redirect(routes.ForumPost.redirect(post.id))
-                        }
-                      }(rateLimitedFu)
+                      CategGrantWrite(categId, tryingToPostAsMod = ~data.modIcon):
+                        limit.forumPost(ctx.ip, rateLimited):
+                          for
+                            post <- postApi.makePost(categ, topic, data)
+                            url = routes.ForumPost.redirect(post.id).url
+                            _ <- env.memo.picfitApi
+                              .addRef(Markdown(post.text), lila.forum.picRef(post.id), url.some)
+                            _ = discard(maybeAutomod(post))
+                          yield Redirect(url)
                   )
-              }
-          }
-        }
-      }
-    }
+                }
+          yield res
+  }
 
-  def edit(postId: String) =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      env.forum.postApi.teamIdOfPostId(postId) flatMap { teamId =>
-        teamId.?? { env.team.cached.isLeader(_, me.id) } flatMap { inOwnTeam =>
-          forms
-            .postEdit(me, inOwnTeam)
-            .bindFromRequest()
-            .fold(
-              _ => Redirect(routes.ForumPost.redirect(postId)).fuccess,
-              data =>
-                CreateRateLimit(HTTPRequest ipAddress ctx.req) {
-                  postApi.editPost(postId, data.changes, me).map { post =>
-                    Redirect(routes.ForumPost.redirect(post.id))
-                  }
-                }(rateLimitedFu)
-            )
-        }
-      }
-    }
+  def edit(postId: ForumPostId) = AuthBody { ctx ?=> me ?=>
+    Found(postApi.getPost(postId)): post =>
+      for
+        teamId <- env.forum.postApi.teamIdOfPost(post)
+        inOwnTeam <- teamId.so(env.team.api.isLeader)
+        res <- bindForm(forms.postEdit(inOwnTeam, post.text))(
+          _ => Redirect(routes.ForumPost.redirect(postId)).toFuccess,
+          data =>
+            limit.forumPost(ctx.ip, rateLimited):
+              for
+                post <- postApi.editPost(postId, data.changes)
+                url = routes.ForumPost.redirect(post.id).url
+                _ <- env.memo.picfitApi.addRef(Markdown(post.text), lila.forum.picRef(post.id), url.some)
+                _ = discard(maybeAutomod(post))
+              yield Redirect(url)
+        )
+      yield res
+  }
 
-  def delete(categSlug: String, id: String) =
-    AuthBody { implicit ctx => me =>
-      postApi getPost id flatMap {
-        _ ?? { post =>
-          if (me.id == ~post.userId && !post.erased)
-            postApi.erasePost(post) inject Redirect(routes.ForumPost.redirect(id))
-          else
-            isGrantedMod(categSlug) flatMap { granted =>
-              postApi.delete(categSlug, id, me) inject {
-                implicit val req = ctx.body
-                for {
-                  userId    <- post.userId
-                  reasonOpt <- forms.deleteWithReason.bindFromRequest().value
-                  reason    <- reasonOpt.filter(MsgPreset.forumDeletion.presets.contains)
-                  preset =
-                    if (isGranted(_.ModerateForum)) MsgPreset.forumDeletion.byModerator
-                    else MsgPreset.forumDeletion.byTeamLeader
-                } env.msg.api.systemPost(userId, preset(reason))
-                NoContent
-              }
-            }
-        }
-      }
-    }
+  def delete(id: ForumPostId) = AuthBody { ctx ?=> me ?=>
+    Found(postApi.getPost(id).flatMapz(postApi.viewOf)): view =>
+      val post = view.post
+      if post.userId.exists(_.is(me)) && !post.erased then
+        if view.topic.nbPosts == 1 then
+          env.forum.delete.deleteTopic(view).inject(Redirect(routes.ForumCateg.show(view.categ.id)))
+        else postApi.erasePost(post).inject(Redirect(routes.ForumPost.redirect(id)))
+      else
+        TopicGrantModById(post.categId, post.topicId):
+          env.forum.delete
+            .deletePost(view)
+            .inject:
+              for
+                userId <- post.userId
+                reasonOpt <- forms.deleteWithReason.bindFromRequest().value
+                topic <- topicRepo.forUser(me.some).byId(post.topicId)
+                reason <- reasonOpt.filter(MsgPreset.forumDeletion.presets.contains)
+                preset =
+                  if isGranted(_.ModerateForum) then MsgPreset.forumDeletion.byModerator
+                  else if topic.exists(_.isUblogAuthor(me)) then
+                    MsgPreset.forumDeletion.byBlogAuthor(me.username)
+                  else MsgPreset.forumDeletion.byTeamLeader(post.categId)
+              do env.msg.api.systemPost(SystemMsg.standard(userId, preset(reason, view.logFormatted)))
+              NoContent
+  }
 
-  def react(id: String, reaction: String, v: Boolean) =
-    Auth { implicit ctx => me =>
-      postApi.react(id, me, reaction, v) map {
-        _ ?? { post =>
-          Ok(views.html.forum.post.reactions(post, canReact = true))
-        }
-      }
-    }
+  def relocate(id: ForumPostId) = SecureBody(_.ModerateForum) { ctx ?=> me ?=>
+    Found(postApi.getPost(id).flatMapz(postApi.viewOf)): post =>
+      forms.relocateTo
+        .bindFromRequest()
+        .value
+        .so: to =>
+          env.forum.topicApi
+            .relocate(post.topic, to)
+            .map: topic =>
+              post.post.userId.foreach: op =>
+                val newUrl = routes.ForumTopic.show(to, topic.slug, 1).url
+                env.msg.api.systemPost:
+                  SystemMsg.standard(op, MsgPreset.forumRelocation(topic.name, newUrl))
+              Redirect(routes.ForumCateg.show(to)).flashSuccess
+  }
 
-  def redirect(id: String) =
-    Open { implicit ctx =>
-      OptionResult(postApi.urlData(id, ctx.me)) { case lila.forum.PostUrlData(categ, topic, page, number) =>
-        Redirect(routes.ForumTopic.show(categ, topic, page).url + "#" + number)
-      }
-    }
-}
+  def react(categId: ForumCategId, id: ForumPostId, reaction: String, v: Boolean) = Auth { _ ?=> me ?=>
+    CategGrantWrite(categId):
+      FoundSnip(postApi.react(categId, id, reaction, v)): post =>
+        lila.ui.Snippet(views.forum.post.reactions(post, canReact = true))
+  }
+
+  def redirect(id: ForumPostId) = Open:
+    Found(postApi.urlData(id, ctx.me)):
+      case lila.forum.PostUrlData(categ, topic, page, postId) =>
+        val call = routes.ForumTopic.show(categ, topic, page)
+        Redirect(s"$call#$postId").withCanonical(call)
+
+  private def maybeAutomod(post: lila.forum.ForumPost)(using me: Me) = for
+    teamId <- env.forum.postApi.teamIdOfPost(post)
+    onlyIfFlaggedImages <- teamId.fold(fuccess(false)): teamId =>
+      env.team.api.forumAccessOf(teamId).map(_ != lila.core.team.Access.Everyone)
+    url = routes.ForumPost.redirect(post.id).url
+    _ <- env.report.api.automodComms(post.text, url, onlyIfFlaggedImages)
+  yield ()

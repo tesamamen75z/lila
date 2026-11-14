@@ -1,30 +1,32 @@
-import * as game from 'game';
-import throttle from 'common/throttle';
-import modal from 'common/modal';
-import notify from 'common/notification';
-import * as xhr from './xhr';
-import * as sound from './sound';
-import RoundController from './ctrl';
-import { Untyped } from './interfaces';
-import { defined } from 'common';
+import { COLORS } from 'chessops';
 
-export interface RoundSocket extends Untyped {
-  send: SocketSend;
-  handlers: Untyped;
+import { throttle } from 'lib/async';
+import { type Simul, setOnGame, isPlayerTurn, plyColor } from 'lib/game';
+import { pubsub } from 'lib/pubsub';
+import { wsSign, wsVersion } from 'lib/socket';
+import { domDialog } from 'lib/view';
+
+import type RoundController from './ctrl';
+import type {
+  RoundSocketSend,
+  EventsWithoutPayload,
+  SocketInEvents,
+  TakeBackOffers,
+  Reloads,
+  ReloadEvent,
+} from './interfaces';
+import { reload as xhrReload } from './xhr';
+
+type Handlers = SocketInEvents & Reloads;
+export interface RoundSocket {
+  send: RoundSocketSend;
+  handlers: Handlers;
   moreTime(): void;
   outoftime(): void;
   berserk(): void;
-  sendLoading(typ: string, data?: any): void;
-  receive(typ: string, data: any): boolean;
-}
-
-interface Incoming {
-  t: string;
-  d: any;
-}
-
-interface Handlers {
-  [key: string]: (data: any) => void;
+  sendLoading(typ: EventsWithoutPayload): void;
+  receive<T extends keyof SocketInEvents>(typ: T, data: Parameters<SocketInEvents[T]>): boolean;
+  reload<K extends keyof Reloads>(o?: ReloadEvent<K>, isRetry?: boolean): void;
 }
 
 type Callback = (...args: any[]) => void;
@@ -37,12 +39,12 @@ function backoff(delay: number, factor: number, callback: Callback): Callback {
     const self: any = this;
     const elapsed = performance.now() - lastExec;
 
-    function exec() {
+    const exec = () => {
       timer = undefined;
       lastExec = performance.now();
       delay *= factor;
       callback.apply(self, args);
-    }
+    };
 
     if (timer) clearTimeout(timer);
 
@@ -51,62 +53,63 @@ function backoff(delay: number, factor: number, callback: Callback): Callback {
   };
 }
 
-export function make(send: SocketSend, ctrl: RoundController): RoundSocket {
-  lichess.socket.sign(ctrl.sign);
+export function make(send: RoundSocketSend, ctrl: RoundController): RoundSocket {
+  wsSign(ctrl.sign);
 
-  function reload(o: Incoming, isRetry?: boolean) {
+  const reload = <K extends keyof Reloads>(o?: ReloadEvent<K>, isRetry?: boolean) => {
     // avoid reload if possible!
-    if (o && o.t) {
+    if (o?.t) {
       ctrl.setLoading(false);
-      handlers[o.t](o.d);
+      const handler = handlers[o.t] as unknown as (cb: Parameters<Reloads[K]>) => void;
+      handler(o.d);
     } else
-      xhr.reload(ctrl).then(data => {
-        if (lichess.socket.getVersion() > data.player.version) {
+      xhrReload(ctrl.data).then(data => {
+        const version = wsVersion();
+        if (version !== false && version > data.player.version) {
           // race condition! try to reload again
-          if (isRetry) lichess.reload();
+          if (isRetry) site.reload();
           // give up and reload the page
           else reload(o, true);
         } else ctrl.reload(data);
-      }, lichess.reload);
-  }
+      }, site.reload);
+  };
 
   const handlers: Handlers = {
-    takebackOffers(o) {
-      ctrl.setLoading(false);
+    takebackOffers(o: TakeBackOffers) {
       ctrl.data.player.proposingTakeback = o[ctrl.data.player.color];
       const fromOp = (ctrl.data.opponent.proposingTakeback = o[ctrl.data.opponent.color]);
-      if (fromOp) notify(ctrl.noarg('yourOpponentProposesATakeback'));
+      if (fromOp) ctrl.opponentRequest('takeback', i18n.site.yourOpponentProposesATakeback);
       ctrl.redraw();
     },
     move: ctrl.apiMove,
     drop: ctrl.apiMove,
     reload,
     redirect: ctrl.setRedirecting,
-    clockInc(o) {
+    clockInc(o: { color: Color; time: number }) {
       if (ctrl.clock) {
         ctrl.clock.addTime(o.color, o.time);
         ctrl.redraw();
       }
     },
-    cclock(o) {
+    cclock(o: { white: number; black: number }) {
       if (ctrl.corresClock) {
-        ctrl.data.correspondence.white = o.white;
-        ctrl.data.correspondence.black = o.black;
+        ctrl.data.correspondence!.white = o.white;
+        ctrl.data.correspondence!.black = o.black;
         ctrl.corresClock.update(o.white, o.black);
         ctrl.redraw();
       }
     },
-    crowd(o) {
-      ['white', 'black'].forEach(c => {
-        if (defined(o[c])) game.setOnGame(ctrl.data, c as Color, o[c]);
+    crowd(o: { white: boolean; black: boolean }) {
+      COLORS.forEach(c => {
+        setOnGame(ctrl.data, c, o[c]);
       });
       ctrl.redraw();
     },
     endData: ctrl.endWithData,
-    rematchOffer(by: Color) {
+    rematchOffer(by?: Color) {
       ctrl.data.player.offeringRematch = by === ctrl.data.player.color;
       if ((ctrl.data.opponent.offeringRematch = by === ctrl.data.opponent.color))
-        notify(ctrl.noarg('yourOpponentWantsToPlayANewGameWithYou'));
+        ctrl.opponentRequest('rematch', i18n.site.yourOpponentWantsToPlayANewGameWithYou);
       ctrl.redraw();
     },
     rematchTaken(nextId: string) {
@@ -114,15 +117,15 @@ export function make(send: SocketSend, ctrl: RoundController): RoundSocket {
       if (!ctrl.data.player.spectator) ctrl.setLoading(true);
       else ctrl.redraw();
     },
-    drawOffer(by) {
+    drawOffer(by?: Color) {
       if (ctrl.isPlaying()) {
         ctrl.data.player.offeringDraw = by === ctrl.data.player.color;
         const fromOp = (ctrl.data.opponent.offeringDraw = by === ctrl.data.opponent.color);
-        if (fromOp) notify(ctrl.noarg('yourOpponentOffersADraw'));
+        if (fromOp) ctrl.opponentRequest('draw', i18n.site.yourOpponentOffersADraw);
       }
       if (by) {
         let ply = ctrl.lastPly();
-        if ((by == 'white') == (ply % 2 == 0)) ply++;
+        if (by === plyColor(ply)) ply++;
         ctrl.data.game.drawOffers = (ctrl.data.game.drawOffers || []).concat([ply]);
       }
       ctrl.redraw();
@@ -132,51 +135,52 @@ export function make(send: SocketSend, ctrl: RoundController): RoundSocket {
     },
     gone: ctrl.setGone,
     goneIn: ctrl.setGone,
-    checkCount(e) {
-      ctrl.data.player.checks = ctrl.data.player.color == 'white' ? e.white : e.black;
-      ctrl.data.opponent.checks = ctrl.data.opponent.color == 'white' ? e.white : e.black;
+    checkCount(e: { white: number; black: number }) {
+      ctrl.data.player.checks = ctrl.data.player.color === 'white' ? e.white : e.black;
+      ctrl.data.opponent.checks = ctrl.data.opponent.color === 'white' ? e.white : e.black;
       ctrl.redraw();
     },
     simulPlayerMove(gameId: string) {
       if (
         ctrl.opts.userId &&
         ctrl.data.simul &&
-        ctrl.opts.userId == ctrl.data.simul.hostId &&
+        ctrl.opts.userId === ctrl.data.simul.hostId &&
         gameId !== ctrl.data.game.id &&
         ctrl.moveOn.get() &&
-        !game.isPlayerTurn(ctrl.data)
+        !isPlayerTurn(ctrl.data)
       ) {
         ctrl.setRedirecting();
-        sound.move();
-        location.href = '/' + gameId;
+        site.sound.play('move');
+        location.href = '/game/' + gameId;
       }
     },
-    simulEnd(simul: game.Simul) {
-      lichess.loadCssPath('modal');
-      modal({
-        content: $(
-          '<p>Simul complete!</p><br /><br />' +
-            `<a class="button" href="/simul/${simul.id}">Back to ${simul.name} simul</a>`
-        ),
+    simulEnd(simul: Simul) {
+      domDialog({
+        closeButton: true,
+        easyClose: 'clickOutside',
+        htmlText:
+          '<div><p>Simul complete!</p><br /><br />' +
+          `<a class="button" href="/simul/${simul.id}">Back to ${simul.name} simul</a></div>`,
       });
     },
   };
 
-  lichess.pubsub.on('ab.rep', n => send('rep', { n }));
+  pubsub.on('ab.rep', n => send('rep', { n }));
 
   return {
     send,
     handlers,
     moreTime: throttle(300, () => send('moretime')),
     outoftime: backoff(500, 1.1, () => send('flag', ctrl.data.game.player)),
-    berserk: throttle(200, () => send('berserk', null, { ackable: true })),
-    sendLoading(typ: string, data?: any) {
+    berserk: throttle(200, () => send('berserk', undefined, { ackable: true })),
+    sendLoading(typ: EventsWithoutPayload) {
       ctrl.setLoading(true);
-      send(typ, data);
+      send(typ);
     },
-    receive(typ: string, data: any): boolean {
-      if (handlers[typ]) {
-        handlers[typ](data);
+    receive<T extends keyof SocketInEvents>(typ: T, data: Parameters<SocketInEvents[T]>): boolean {
+      const handler = handlers[typ] as ((cb: Parameters<SocketInEvents[T]>) => void) | undefined;
+      if (handler) {
+        handler(data);
         return true;
       }
       return false;

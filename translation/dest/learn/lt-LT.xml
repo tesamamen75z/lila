@@ -54,15 +54,15 @@ Tačiau pasiekę kitą lentos pusę, jie tampa stipresnėmis figūromis!</string
 Tačiau kartais gali praversti ir žirgas!</string>
   <string name="pawnsMoveForward">Pėstininkai eina į priekį,
 tačiau kerta įstrižai!</string>
-  <string name="captureThenPromote">Nukirsk ir perkelk į aukštesnį lygį!</string>
-  <string name="useAllThePawns">Naudok visus pėstininkus! Paversti juos nebūtina.</string>
+  <string name="captureThenPromote">Nukirskite ir paaukštinkite!</string>
+  <string name="useAllThePawns">Naudok visus pėstininkus! Nebūtina juos paaukštinti.</string>
   <string name="aPawnOnTheSecondRank">Nuo antros gulstinės pėstininkai gali judėti per du laukelius iš karto!</string>
   <string name="grabAllTheStarsNoNeedToPromote">Griebk visas žvaigždes!
-Paversti nebūtina.</string>
+Paaukštinti nebūtina.</string>
   <string name="pawnComplete">Sveikiname! Pėstininkai nebeturi tau jokių paslapčių.</string>
   <string name="pawnPromotion">Pėstininkų pavertimas</string>
   <string name="yourPawnReachedTheEndOfTheBoard">Tavo pėstininkas pasiekė lentos galą!</string>
-  <string name="itNowPromotesToAStrongerPiece">Dabar jis virsta stipresne figūra.</string>
+  <string name="itNowPromotesToAStrongerPiece">Jis dabar paaukštinamas į stipresnę figūrą.</string>
   <string name="selectThePieceYouWant">Pasirink, kurios figūros nori!</string>
   <string name="fundamentals">Pagrindai</string>
   <string name="capture">Kirtimas</string>
@@ -116,6 +116,7 @@ Norėdami pradėti padarykite ėjimą.</string>
   <string name="pawnsFormTheFrontLine">Pėstininkai sudaro priekinę liniją. Darykite ėjimą tam, kad pradėti.</string>
   <string name="boardSetupComplete">Sveikiname. Jūs žinote kaip sudėti šachmatų figūras.</string>
   <string name="castling">Rokiruotė</string>
+  <string name="enPassant">Kirtimas prasilenkiant</string>
   <string name="theSpecialKingMove">Specialus karaliaus ėjimas</string>
   <string name="castlingIntro">Paslėpk savo karalių saugioje vietoje bei išvesk bokštą į puolimą!</string>
   <string name="castleKingSide">Pajudink savo karalių per du laukelius,
@@ -139,7 +140,6 @@ atlikti trumpąją rokiruotę!</string>
   <string name="findAWayToCastleQueenSide">Rask būdą
 atlikti ilgąją rokiruotę!</string>
   <string name="castlingComplete">Sveikiname! Partijos metu beveik visada gera mintis atlikti rokiruotę.</string>
-  <string name="enPassant">Kirtimas prasilenkiant</string>
   <string name="theSpecialPawnMove">Specialusis ėjimas pėstininku</string>
   <string name="enPassantIntro">Kai varžovo pėstininkas pajudėjo per du laukelius, gali kirsti jį lyg būtų paėjęs vieną.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Juodieji ką tik paėjo pėstininku
@@ -219,8 +219,8 @@ dviem ėjimais!</string>
   <string name="nailedIt">Tiesiai į dešimtuką.</string>
   <string name="rightOn">Tiksliai!</string>
   <string name="stageXComplete">%s lygis baigtas</string>
-  <string name="yourScore">Jūsų rezultatas</string>
   <string name="next">Sekantis</string>
+  <string name="nextX">Kita: %s</string>
   <string name="backToMenu">Grįžti į meniu</string>
   <string name="puzzleFailed">Suklydote užduotyje!</string>
   <string name="retry">Bandykite dar kartą</string>

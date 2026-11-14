@@ -1,175 +1,137 @@
 package lila.study
 
-import play.api.libs.json._
-import reactivemongo.api.bson._
-import scala.concurrent.duration._
+import reactivemongo.api.bson.*
 
-import lila.common.Future
+import lila.common.LilaFuture
 import lila.db.AsyncColl
-import lila.db.dsl._
-import lila.user.User
+import lila.db.dsl.{ *, given }
 
-case class StudyTopic(value: String) extends AnyVal with StringValue
-
-object StudyTopic {
+opaque type StudyTopic = String
+object StudyTopic extends OpaqueString[StudyTopic]:
 
   val minLength = 2
   val maxLength = 50
+  val broadcast: StudyTopic = "Broadcast"
 
   def fromStr(str: String): Option[StudyTopic] =
-    str.trim match {
+    str.trim match
       case s if s.lengthIs >= minLength && s.lengthIs <= maxLength => StudyTopic(s).some
-      case _                                                       => none
-    }
+      case _ => none
 
-  implicit val topicIso = lila.common.Iso.string[StudyTopic](StudyTopic.apply, _.value)
-}
+opaque type StudyTopics = List[StudyTopic]
+object StudyTopics extends TotalWrapper[StudyTopics, List[StudyTopic]]:
+  extension (e: StudyTopics)
+    def diff(other: StudyTopics): StudyTopics = e.toSet.diff(other.value.toSet).toList
+    def ++(other: StudyTopics): StudyTopics = (e.value ++ other.value).distinct.take(StudyTopics.userMax)
 
-case class StudyTopics(value: List[StudyTopic]) extends AnyVal {
+  val empty: StudyTopics = Nil
+  val studyMax = 30
+  val userMax = 200
 
-  def diff(other: StudyTopics) =
-    StudyTopics {
-      value.toSet.diff(other.value.toSet).toList
-    }
-
-  def ++(other: StudyTopics) =
-    StudyTopics {
-      value.toSet.++(other.value.toSet).toList
-    }
-}
-
-object StudyTopics {
-
-  val empty = StudyTopics(Nil)
-
-  def fromStrs(strs: Seq[String]) =
-    StudyTopics {
-      strs.view
-        .flatMap(StudyTopic.fromStr)
-        .take(64)
-        .toList
-        .distinct
-    }
-}
+  def fromStrs(strs: Seq[String], max: Int): StudyTopics =
+    strs.view.flatMap(StudyTopic.fromStr).toList.distinct.take(max)
 
 final private class StudyTopicRepo(val coll: AsyncColl)
 final private class StudyUserTopicRepo(val coll: AsyncColl)
 
 final class StudyTopicApi(topicRepo: StudyTopicRepo, userTopicRepo: StudyUserTopicRepo, studyRepo: StudyRepo)(
-    implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem
-) {
-
-  import BSONHandlers.{ StudyTopicBSONHandler, StudyTopicsBSONHandler }
+    using
+    Executor,
+    Scheduler
+):
 
   def byId(str: String): Fu[Option[StudyTopic]] =
-    topicRepo.coll(_.byId[Bdoc](str)) dmap { _ flatMap docTopic }
+    topicRepo.coll(_.byId[Bdoc](str)).dmap(_.flatMap(docTopic))
 
-  def findLike(str: String, myId: Option[User.ID], nb: Int = 10): Fu[StudyTopics] = {
-    (str.lengthIs >= 2) ?? {
+  def findLike(str: String, myId: Option[UserId], nb: Int = 10): Fu[StudyTopics] = StudyTopics.from:
+    (str.lengthIs >= 2).so:
       val favsFu: Fu[List[StudyTopic]] =
-        myId.?? { userId =>
-          userTopics(userId).map {
-            _.value.filter(_.value startsWith str) take nb
-          }
-        }
-      favsFu flatMap { favs =>
+        myId.so: userId =>
+          userTopics(userId).map:
+            _.value.filter(_.value.startsWith(str)).take(nb)
+      favsFu.flatMap: favs =>
         topicRepo
-          .coll {
-            _.find($doc("_id".$startsWith(java.util.regex.Pattern.quote(str), "i")))
-              .sort($sort.naturalAsc)
-              .cursor[Bdoc](readPref)
+          .coll:
+            _.find(bdoc("_id".regexStart(java.util.regex.Pattern.quote(str), "i")))
+              .sort(sort.naturalAsc)
+              .cursor[Bdoc]()
               .list(nb - favs.size)
-          }
-          .dmap { _ flatMap docTopic }
-          .dmap { favs ::: _ }
-      }
-    }
-  } dmap StudyTopics.apply
+          .dmap(_.flatMap(docTopic))
+          .dmap(favs ::: _)
 
-  def userTopics(userId: User.ID): Fu[StudyTopics] =
-    userTopicRepo.coll(_.byId(userId)).dmap {
-      _.flatMap(_.getAsOpt[StudyTopics]("topics")) | StudyTopics.empty
-    }
+  def userTopics(userId: UserId): Fu[StudyTopics] =
+    userTopicRepo.coll:
+      _.primitiveOne[List[StudyTopic]](bid(userId), "topics")
+        .dmap(_.fold(StudyTopics.empty)(StudyTopics(_)))
 
-  private case class TagifyTopic(value: String)
-  implicit private val TagifyTopicReads = Json.reads[TagifyTopic]
+  def userTopics(user: User, topics: StudyTopics): Funit =
+    userTopicRepo
+      .coll:
+        _.update.one(
+          bid(user.id),
+          set("topics" -> topics),
+          upsert = true
+        )
+      .void
 
-  def userTopics(user: User, json: String): Funit = {
-    val topics =
-      if (json.trim.isEmpty) StudyTopics.empty
-      else
-        Json.parse(json).validate[List[TagifyTopic]] match {
-          case JsSuccess(topics, _) => StudyTopics fromStrs topics.map(_.value)
-          case _                    => StudyTopics.empty
-        }
-    userTopicRepo.coll {
-      _.update.one(
-        $id(user.id),
-        $set("topics" -> topics),
-        upsert = true
+  def userTopicsAdd(userId: UserId, topics: StudyTopics): Funit =
+    topics.value.nonEmpty.so(userTopics(userId).flatMap { prev =>
+      val newTopics = prev ++ topics
+      (newTopics != prev).so(
+        userTopicRepo
+          .coll:
+            _.update.one(bid(userId), set("topics" -> newTopics), upsert = true)
+          .void
       )
-    }.void
-  }
+    })
 
-  def userTopicsAdd(userId: User.ID, topics: StudyTopics): Funit =
-    topics.value.nonEmpty ??
-      userTopicRepo.coll {
-        _.update
-          .one(
-            $id(userId),
-            $addToSet("topics" -> $doc("$each" -> topics)),
-            upsert = true
-          )
-      }.void
+  def userTopicsDelete(userId: UserId) =
+    userTopicRepo.coll(_.delete.one(bid(userId)))
 
   def popular(nb: Int): Fu[StudyTopics] =
-    topicRepo
-      .coll {
-        _.find($empty)
-          .sort($sort.naturalAsc)
-          .cursor[Bdoc]()
-          .list(nb)
-      }
-      .dmap {
-        _ flatMap docTopic
-      }
-      .dmap(StudyTopics.apply)
+    StudyTopics.from(
+      topicRepo
+        .coll:
+          _.find(emptyBdoc)
+            .sort(sort.naturalAsc)
+            .cursor[Bdoc]()
+            .list(nb)
+        .dmap:
+          _.flatMap(docTopic)
+    )
 
   private def docTopic(doc: Bdoc): Option[StudyTopic] =
     doc.getAsOpt[StudyTopic]("_id")
 
-  private val recomputeWorkQueue = new lila.hub.DuctSequencer(
-    maxSize = 1,
-    timeout = 61 seconds,
+  private val recomputeWorkQueue = scalalib.actor.AsyncActorSequencer(
+    maxSize = Max(1),
+    timeout = 61.seconds,
     name = "studyTopicAggregation",
-    logging = false
+    lila.mon.asyncActorMonitor.unhandled
   )
 
-  def recompute(): Unit =
-    recomputeWorkQueue(Future.makeItLast(60 seconds)(recomputeNow)).recover {
-      case _: lila.hub.BoundedDuct.EnqueueException => ()
-      case e: Exception                             => logger.warn("Can't recompute study topics!", e)
-    }.unit
+  private[study] def recompute(): Unit =
+    recomputeWorkQueue(LilaFuture.makeItLast(60.seconds)(recomputeNow)).recover:
+      case _: scalalib.actor.AsyncActorBounded.EnqueueException => ()
+      case e: Exception => logger.warn("Can't recompute study topics!", e)
 
   private def recomputeNow: Funit =
-    studyRepo.coll {
-      _.aggregateWith[Bdoc]() { framework =>
-        import framework._
-        List(
-          Match(
-            $doc(
-              "topics" $exists true,
-              "visibility" -> "public"
-            )
-          ),
-          Project($doc("topics" -> true, "_id" -> false)),
-          UnwindField("topics"),
-          SortByFieldCount("topics"),
-          Project($doc("_id" -> true)),
-          Out(topicRepo.coll.name.value)
-        )
-      }.headOption
-    }.void
-}
+    studyRepo
+      .coll:
+        _.aggregateWith[Bdoc](): framework =>
+          import framework.*
+          List(
+            Match(
+              bdoc(
+                "topics" -> bdoc("$exists" -> true, "$ne" -> StudyTopic.broadcast),
+                "visibility" -> "public"
+              )
+            ),
+            Project(bdoc("topics" -> true, "_id" -> false)),
+            UnwindField("topics"),
+            SortByFieldCount("topics"),
+            Project(bdoc("_id" -> true)),
+            Out(topicRepo.coll.name.value)
+          )
+        .headOption
+      .void

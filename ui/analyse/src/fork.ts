@@ -1,103 +1,121 @@
-import { h } from 'snabbdom';
-import { renderIndexAndMove } from './moveView';
-import { defined } from 'common';
-import { ConcealOf } from './interfaces';
-import { onInsert } from './util';
-import AnalyseCtrl from './ctrl';
+import { defined } from 'lib';
+import { isTouchDevice } from 'lib/device';
+import { addPointerListeners } from 'lib/pointer';
+import type { TreeNode } from 'lib/tree/types';
+import { onInsert, hl } from 'lib/view';
 
-export interface ForkCtrl {
-  state(): {
-    node: Tree.Node;
-    selected: number;
-    displayed: boolean;
-  };
-  next: () => boolean | undefined;
-  prev: () => boolean | undefined;
-  proceed: (it?: number) => boolean | undefined;
-}
+import type AnalyseCtrl from './ctrl';
+import type { ConcealOf } from './interfaces';
+import { renderIndexAndMove } from './view/components';
 
-export function make(root: AnalyseCtrl): ForkCtrl {
-  let prev: Tree.Node | undefined;
-  let selected = 0;
-  function displayed() {
-    return root.node.children.length > 1;
+export class ForkCtrl {
+  selectedIndex = 0;
+
+  private hoveringIndex?: number;
+  private mostRecent?: TreeNode;
+
+  constructor(private readonly ctrl: AnalyseCtrl) {}
+
+  get forks(): TreeNode[] {
+    return this.ctrl.visibleChildren();
   }
-  return {
-    state() {
-      const node = root.node;
-      if (!prev || prev!.id !== node.id) {
-        prev = node;
-        selected = 0;
-      }
-      return {
-        node,
-        selected,
-        displayed: displayed(),
-      };
-    },
-    next() {
-      if (displayed()) {
-        selected = Math.min(root.node.children.length - 1, selected + 1);
+
+  get isVisible(): boolean {
+    return this.forks.length > 1;
+  }
+
+  get selected(): TreeNode | undefined {
+    return this.forks[this.hoveringIndex ?? this.selectedIndex];
+  }
+
+  update() {
+    if (this.mostRecent && this.mostRecent.id === this.ctrl.node.id) return;
+    this.mostRecent = this.ctrl.node;
+    this.selectedIndex = 0;
+    this.hoveringIndex = undefined;
+  }
+
+  select(which: 'next' | 'prev') {
+    if (!this.isVisible) return false;
+    const numKids = this.forks.length;
+    this.selectedIndex = (numKids + this.selectedIndex + (which === 'next' ? 1 : -1)) % numKids;
+    return true;
+  }
+
+  hover(uci: Uci | null) {
+    this.hoveringIndex = this.forks.findIndex(n => n.uci === uci);
+    if (isTouchDevice() || this.hoveringIndex < 0) this.hoveringIndex = undefined;
+  }
+
+  highlight(it?: number) {
+    if (!this.isVisible || !defined(it)) {
+      this.ctrl.explorer.setHovering(this.ctrl.node.fen, null);
+      return;
+    }
+
+    const nodeUci = this.forks[it]?.uci;
+    const uci = defined(nodeUci) ? nodeUci : null;
+
+    this.ctrl.explorer.setHovering(this.ctrl.node.fen, uci);
+  }
+
+  proceed(it?: number) {
+    if (this.isVisible) {
+      it = it ?? this.hoveringIndex ?? this.selectedIndex;
+
+      const childNode = this.forks[it];
+      if (defined(childNode)) {
+        this.ctrl.userJumpIfCan(this.ctrl.path + childNode.id);
         return true;
       }
-      return undefined;
-    },
-    prev() {
-      if (displayed()) {
-        selected = Math.max(0, selected - 1);
-        return true;
-      }
-      return undefined;
-    },
-    proceed(it) {
-      if (displayed()) {
-        it = defined(it) ? it : selected;
-        root.userJumpIfCan(root.path + root.node.children[it].id);
-        return true;
-      }
-      return undefined;
-    },
-  };
+    }
+    return undefined;
+  }
 }
 
-export function view(root: AnalyseCtrl, concealOf?: ConcealOf) {
-  if (root.embed || root.retro) return;
-  const state = root.fork.state();
-  if (!state.displayed) return;
-  const isMainline = concealOf && root.onMainline;
-  return h(
+const eventToIndex = (e: MouseEvent): number => {
+  const target = e.target as HTMLElement;
+  return parseInt(
+    (target.parentNode as HTMLElement).getAttribute('data-it') || target.getAttribute('data-it') || '',
+  );
+};
+
+export function view(ctrl: AnalyseCtrl, concealOf?: ConcealOf) {
+  if (ctrl.retro?.isSolving() || ctrl.study?.hideMoves()) return undefined;
+  ctrl.fork.update();
+  if (!ctrl.fork.isVisible) return undefined;
+  const isMainline = concealOf && ctrl.onMainline;
+  return hl(
     'div.analyse__fork',
     {
       hook: onInsert(el => {
-        el.addEventListener('click', e => {
-          const target = e.target as HTMLElement,
-            it = parseInt(
-              (target.parentNode as HTMLElement).getAttribute('data-it') || target.getAttribute('data-it') || ''
-            );
-          root.fork.proceed(it);
-          root.redraw();
+        addPointerListeners(el, {
+          click: e => {
+            ctrl.fork.proceed(eventToIndex(e));
+            ctrl.redraw();
+          },
         });
+        if (isTouchDevice()) return;
+        el.addEventListener('mouseover', e => ctrl.fork.highlight(eventToIndex(e)));
+        el.addEventListener('mouseout', () => ctrl.fork.highlight());
       }),
     },
-    state.node.children.map((node, it) => {
-      const conceal = isMainline && concealOf!(true)(root.path + node.id, node);
-      if (!conceal)
-        return h(
-          'move',
-          {
-            class: { selected: it === state.selected },
-            attrs: { 'data-it': it },
+    ctrl.visibleChildren().map((node, it) => {
+      const conceal = isMainline && concealOf(true)(ctrl.path + node.id, node);
+      if (conceal) return undefined;
+
+      return hl(
+        'move',
+        {
+          class: {
+            selected: it === ctrl.fork.selectedIndex && !isTouchDevice(),
+            correct: ctrl.isGamebook() && it === 0,
+            wrong: ctrl.isGamebook() && it > 0,
           },
-          renderIndexAndMove(
-            {
-              withDots: true,
-              showEval: root.showComputer(),
-              showGlyphs: root.showComputer(),
-            },
-            node
-          )!
-        );
-      return undefined;
-    })
+          attrs: { 'data-it': it },
+        },
+        renderIndexAndMove(node, ctrl.settings.showMainlineAnalysis, ctrl.settings.showMainlineAnalysis),
+      );
+    }),
   );
 }

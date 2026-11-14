@@ -13,13 +13,16 @@ db.swiss.find().forEach(swiss => {
       {
         $set: {
           p: [index[p.p[0]], index[p.p[1]]],
-          t: p.t == p.p[0] ? NumberInt(0) : p.t == p.p[1] ? NumberInt(1) : p.t,
+          t: p.t === p.p[0] ? NumberInt(0) : p.t === p.p[1] ? NumberInt(1) : p.t,
         },
-      }
+      },
     );
   });
 
   db.swiss_player.update({ s: swiss._id }, { $unset: { n: 1 } }, { multi: 1 });
 });
 
-db.swiss.ensureIndex({ nbPlayers: -1 }, { partialFilterExpression: { featurable: true, 'settings.i': { $lte: 600 } } });
+db.swiss.ensureIndex(
+  { nbPlayers: -1 },
+  { partialFilterExpression: { featurable: true, 'settings.i': { $lte: 600 } } },
+);

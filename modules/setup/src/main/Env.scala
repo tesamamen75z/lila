@@ -1,27 +1,17 @@
 package lila.setup
 
-import com.softwaremill.macwire._
-import play.api.Configuration
-
-import lila.common.config._
-import lila.oauth.OAuthServer
+import com.softwaremill.macwire.*
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    gameRepo: lila.game.GameRepo,
-    idGenerator: lila.game.IdGenerator,
-    fishnetPlayer: lila.fishnet.FishnetPlayer,
-    onStart: lila.round.OnStart,
-    gameCache: lila.game.Cached,
-    oauthServer: OAuthServer
-)(implicit ec: scala.concurrent.ExecutionContext, mat: akka.stream.Materializer) {
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
+    onStart: lila.core.game.OnStart,
+    gameApi: lila.core.game.GameApi
+)(using Executor, lila.core.game.IdGenerator, lila.core.game.NewPlayer):
 
-  private lazy val maxPlaying = appConfig.get[Max]("setup.max_playing")
+  val forms = SetupForm
 
-  lazy val forms = SetupForm
+  val setupForm: lila.core.setup.SetupForm = SetupForm.api
 
-  lazy val processor = wire[Processor]
-
-  lazy val bulk = wire[SetupBulkApi]
-}
+  val processor = wire[Processor]

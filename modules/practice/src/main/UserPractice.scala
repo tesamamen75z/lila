@@ -1,39 +1,34 @@
 package lila.practice
 
-import lila.study.{ Chapter, Study }
+import lila.study.{ ChapterPreview, Study }
 
 case class UserPractice(
     structure: PracticeStructure,
     progress: PracticeProgress
-) {
+):
 
-  def progressOn(studyId: Study.Id) = {
-    val chapterIds = structure.study(studyId).??(_.chapterIds)
+  def progressOn(studyId: StudyId) =
+    val chapterIds = structure.study(studyId).so(_.chapterIds)
     Completion(
-      done = progress countDone chapterIds,
+      done = progress.countDone(chapterIds),
       total = chapterIds.size
     )
-  }
 
-  lazy val nbDoneChapters = structure.chapterIds count progress.chapters.contains
+  lazy val nbDoneChapters = structure.chapterIds.count(progress.chapters.contains)
 
   lazy val progressPercent = nbDoneChapters * 100 / structure.nbChapters.atLeast(1)
-}
 
 case class UserStudy(
     practice: UserPractice,
     practiceStudy: PracticeStudy,
-    chapters: List[Chapter.Metadata],
+    chapters: ChapterPreview.AsJsons,
     study: Study.WithChapter,
     section: PracticeSection
-) {
+):
+  def url = routes.Practice.show(section.id, practiceStudy.slug, study.study.id).url
 
-  def url = s"/practice/${section.id}/${practiceStudy.slug}/${study.study.id}"
-}
+case class Completion(done: Int, total: Int):
 
-case class Completion(done: Int, total: Int) {
-
-  def percent = if (total == 0) 0 else done * 100 / total
+  def percent = if total == 0 then 0 else done * 100 / total
 
   def complete = done >= total
-}

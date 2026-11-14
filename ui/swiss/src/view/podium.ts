@@ -1,46 +1,35 @@
-import { h, VNode } from 'snabbdom';
-import SwissCtrl from '../ctrl';
-import { PodiumPlayer } from '../interfaces';
-import { userName } from './util';
+import { h, type VNode } from 'snabbdom';
 
-function podiumStats(p: PodiumPlayer, trans: Trans): VNode {
-  const noarg = trans.noarg;
-  return h('table.stats', [
-    h('tr', [h('th', 'Points'), h('td', '' + p.points)]),
-    h('tr', [h('th', 'Tie Break'), h('td', '' + p.tieBreak)]),
-    p.performance ? h('tr', [h('th', noarg('performance')), h('td', '' + p.performance)]) : null,
+import { defined } from 'lib';
+import { userLink } from 'lib/view/userLink';
+
+import type SwissCtrl from '../ctrl';
+import type { PodiumPlayer } from '../interfaces';
+
+const podiumStats = (p: PodiumPlayer, ctrl: SwissCtrl): VNode =>
+  h('table.stats', [
+    h('tr', [h('th', i18n.site.points), h('td', p.points)]),
+    h('tr', [h('th', i18n.swiss.tieBreak), h('td', p.tieBreak)]),
+    p.performance && ctrl.opts.showRatings
+      ? h('tr', [h('th', i18n.site.performance), h('td', p.performance)])
+      : null,
   ]);
-}
 
-function podiumPosition(p: PodiumPlayer, pos: string, trans: Trans): VNode | undefined {
-  return p
-    ? h(
-        'div.' + pos,
-        {
-          class: {
-            engine: !!p.engine,
-          },
-        },
-        [
-          h('div.trophy'),
-          h(
-            'a.text.ulpt.user-link',
-            {
-              attrs: { href: '/@/' + p.user.name },
-            },
-            userName(p.user)
-          ),
-          podiumStats(p, trans),
-        ]
-      )
-    : undefined;
+function podiumPosition(p: PodiumPlayer, pos: string, ctrl: SwissCtrl): VNode | undefined {
+  if (!p) return undefined;
+  const patron = defined(p.user.patronColor);
+  return h('div.' + pos, { class: { lame: !!p.lame } }, [
+    h('div.trophy'),
+    userLink({ ...p.user, line: patron, online: patron }),
+    podiumStats(p, ctrl),
+  ]);
 }
 
 export default function podium(ctrl: SwissCtrl) {
   const p = ctrl.data.podium || [];
   return h('div.podium', [
-    podiumPosition(p[1], 'second', ctrl.trans),
-    podiumPosition(p[0], 'first', ctrl.trans),
-    podiumPosition(p[2], 'third', ctrl.trans),
+    podiumPosition(p[1], 'second', ctrl),
+    podiumPosition(p[0], 'first', ctrl),
+    podiumPosition(p[2], 'third', ctrl),
   ]);
 }

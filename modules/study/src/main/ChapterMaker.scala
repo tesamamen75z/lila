@@ -1,64 +1,71 @@
 package lila.study
 
-import chess.format.pgn.Tags
-import chess.format.{ FEN, Forsyth }
-import chess.variant.{ Crazyhouse, Variant }
-import lila.chat.{ Chat, ChatApi }
-import lila.game.{ Game, Namer }
-import lila.user.User
-import chess.Color
+import chess.format.Fen
+import chess.format.pgn.{ PgnStr, Tags }
+import chess.variant.Variant
+
+import lila.core.game.Namer
+import lila.core.id.GameFullId
+import lila.tree.{ Branches, Root }
 
 final private class ChapterMaker(
-    net: lila.common.config.NetConfig,
-    lightUser: lila.user.LightUserApi,
-    chatApi: ChatApi,
-    gameRepo: lila.game.GameRepo,
-    pgnFetch: PgnFetch,
-    pgnDump: lila.game.PgnDump
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    net: lila.core.config.NetConfig,
+    lightUser: lila.core.user.LightUserApi,
+    chatApi: lila.core.chat.ChatApi,
+    gameRepo: lila.core.game.GameRepo,
+    pgnDump: lila.core.game.PgnDump,
+    namer: lila.core.game.Namer,
+    gameOpening: lila.core.game.GameOpening
+)(using Executor):
 
-  import ChapterMaker._
+  import ChapterMaker.*
 
-  def apply(study: Study, data: Data, order: Int, userId: User.ID): Fu[Chapter] =
-    data.game.??(parseGame) flatMap {
-      case None =>
-        data.game ?? pgnFetch.fromUrl flatMap {
-          case Some(pgn) => fromFenOrPgnOrBlank(study, data.copy(pgn = pgn.some), order, userId)
-          case _         => fromFenOrPgnOrBlank(study, data, order, userId)
-        }
-      case Some(game) => fromGame(study, game, data, order, userId)
-    } map { (c: Chapter) =>
-      if (c.name.value.isEmpty) c.copy(name = Chapter defaultName order) else c
-    }
+  def apply(
+      study: Study,
+      data: Data,
+      order: Int,
+      userId: UserId,
+      withRatings: Boolean,
+      nameOrder: Option[Int] = None
+  ): Fu[Chapter] =
+    data.game
+      .so(parseGame)
+      .flatMap:
+        case None => fromFenOrPgnOrBlank(study, data, order, userId)
+        case Some(game) => fromGame(study, game, data, order, userId, withRatings)
+      .map: c =>
+        if c.name.value.isEmpty then c.copy(name = Chapter.defaultName(nameOrder | order)) else c
 
-  def fromFenOrPgnOrBlank(study: Study, data: Data, order: Int, userId: User.ID): Fu[Chapter] =
-    data.pgn.filter(_.trim.nonEmpty) match {
+  def fromFenOrPgnOrBlank(study: Study, data: Data, order: Int, userId: UserId): Fu[Chapter] =
+    data.pgn.filter(_.value.trim.nonEmpty) match
       case Some(pgn) => fromPgn(study, pgn, data, order, userId)
-      case None      => fuccess(fromFenOrBlank(study, data, order, userId))
-    }
+      case None => fuccess(fromFenOrBlank(study, data, order, userId))
 
-  private def fromPgn(study: Study, pgn: String, data: Data, order: Int, userId: User.ID): Fu[Chapter] =
-    for {
-      contributors <- lightUser.asyncMany(study.members.contributorIds.toList)
-      parsed <- PgnImport(pgn, contributors.flatten).toFuture recoverWith { case e: Exception =>
-        fufail(ValidationException(e.getMessage))
+  def toStudyPgn(
+      study: Study,
+      pgn: PgnStr,
+      importerId: UserId,
+      strict: Boolean
+  ): Fu[StudyPgnImport.Result] = for
+    contributors <- lightUser.asyncMany(study.members.contributorIds.toList).map(_.flatten)
+    importer = contributors.find(_.id == importerId)
+    parsed <- StudyPgnImport
+      .result(pgn, contributors, strict = strict, importer = importer)
+      .toFuture
+      .recoverWith { case e: Exception =>
+        fufail(StudyValidationException(e.getMessage))
       }
-    } yield Chapter.make(
+  yield parsed
+
+  private def fromPgn(study: Study, pgn: PgnStr, data: Data, order: Int, userId: UserId): Fu[Chapter] =
+    for parsed <- toStudyPgn(study, pgn, userId, strict = false)
+    yield Chapter.make(
       studyId = study.id,
-      name = parsed.tags(_.White).flatMap { white =>
-        parsed
-          .tags(_.Black)
-          .ifTrue {
-            data.name.value.isEmpty || data.isDefaultName
-          }
-          .map { black =>
-            Chapter.Name(s"$white - $black")
-          }
-      } | data.name,
+      name = getChapterNameFromPgn(data, parsed),
       setup = Chapter.Setup(
         none,
         parsed.variant,
-        resolveOrientation(data.realOrientation, parsed.root, parsed.tags)
+        resolveOrientation(data, parsed.root, userId, parsed.tags)
       ),
       root = parsed.root,
       tags = parsed.tags,
@@ -66,190 +73,205 @@ final private class ChapterMaker(
       ownerId = userId,
       practice = data.isPractice,
       gamebook = data.isGamebook,
-      conceal = data.isConceal option Chapter.Ply(parsed.root.ply)
+      conceal = data.isConceal.option(parsed.root.ply)
     )
 
-  private def resolveOrientation(orientation: Orientation, root: Node.Root, tags: Tags = Tags.empty): Color =
-    orientation match {
-      case Orientation.Fixed(color)        => color
-      case _ if tags.resultColor.isDefined => Color.white
-      case _                               => root.lastMainlineNode.color
-    }
+  private def getChapterNameFromPgn(data: Data, parsed: StudyPgnImport.Result): StudyChapterName =
+    def fromPgnTags =
+      (parsed.tags(_.White), parsed.tags(_.Black)) match
+        case (Some(white), Some(black)) => Some(s"$white - $black")
+        case (Some(white), None) => Some(white)
+        case (None, Some(black)) => Some(black)
+        case (None, None) => parsed.tags("Event")
+    data.name.some
+      .ifFalse(data.isDefaultName)
+      .orElse(parsed.chapterNameHint)
+      .orElse:
+        StudyChapterName.from:
+          fromPgnTags.map(_.trim).filter(_.nonEmpty)
+      .getOrElse(data.name)
 
-  private def fromFenOrBlank(study: Study, data: Data, order: Int, userId: User.ID): Chapter = {
-    val variant = data.variant.flatMap(Variant.apply) | Variant.default
-    (data.fen.filterNot(_.initial).flatMap { Forsyth.<<<@(variant, _) } match {
-      case Some(sit) =>
-        Node.Root(
-          ply = sit.turns,
-          fen = Forsyth >> sit,
-          check = sit.situation.check,
-          clock = none,
-          crazyData = sit.situation.board.crazyData,
-          children = Node.emptyChildren
-        ) -> true
-      case None =>
-        Node.Root(
-          ply = 0,
-          fen = variant.initialFen,
-          check = false,
-          clock = none,
-          crazyData = variant.crazyhouse option Crazyhouse.Data.init,
-          children = Node.emptyChildren
-        ) -> false
-    }) match {
-      case (root, isFromFen) =>
-        Chapter.make(
-          studyId = study.id,
-          name = data.name,
-          setup = Chapter.Setup(
-            none,
-            variant,
-            resolveOrientation(data.realOrientation, root),
-            fromFen = isFromFen option true
-          ),
-          root = root,
-          tags = Tags.empty,
-          order = order,
-          ownerId = userId,
-          practice = data.isPractice,
-          gamebook = data.isGamebook,
-          conceal = None
-        )
-    }
-  }
-
-  private[study] def fromGame(
-      study: Study,
-      game: Game,
-      data: Data,
-      order: Int,
-      userId: User.ID,
-      initialFen: Option[FEN] = None
-  ): Fu[Chapter] =
-    for {
-      root <- game2root(game, initialFen)
-      tags <- pgnDump.tags(game, initialFen, none, withOpening = true)
-      name <- {
-        if (data.isDefaultName)
-          Namer.gameVsText(game, withRatings = false)(lightUser.async) dmap Chapter.Name.apply
-        else fuccess(data.name)
-      }
-      _ = notifyChat(study, game, userId)
-    } yield Chapter.make(
-      studyId = study.id,
-      name = name,
-      setup = Chapter.Setup(
-        !game.synthetic option game.id,
-        game.variant,
-        data.realOrientation match {
-          case Orientation.Auto         => Color.white
-          case Orientation.Fixed(color) => color
+  private def resolveOrientation(data: Data, root: Root, userId: UserId, tags: Tags = Tags.empty): Color =
+    def isMe(name: Option[chess.PlayerName]) = name.flatMap(n => UserStr.read(n.value)).exists(_.is(userId))
+    data.orientation match
+      case Orientation.Fixed(color) => color
+      case _ =>
+        tags("Orientation").flatMap(Color.fromName) | {
+          if isMe(tags.names.white) then Color.white
+          else if isMe(tags.names.black) then Color.black
+          // If it is a concealed chapter (puzzles from a coach/book/course), start from side which moves first
+          else if data.isConceal then root.color
+          // if an outcome is known, then it's a finished game, which we show from white perspective by convention
+          else if tags.outcome.isDefined then Color.white
+          // in gamebooks (interactive chapter), we guess the orientation based on the last node
+          else if data.isGamebook then !root.lastMainlineNode.color
+          // else we show from the perspective of whoever turn it is to move
+          else root.lastMainlineNode.color
         }
+
+  def fromFenOrBlank(study: Study, data: Data, order: Int, userId: UserId): Chapter =
+    val variant = data.variant | Variant.default
+    val (root, isFromFen) =
+      data.fen.filterNot(_.isInitial).flatMap(Fen.readWithMoveNumber(variant, _)) match
+        case Some(game) =>
+          Root(
+            ply = game.ply,
+            fen = Fen.write(game),
+            clock = none,
+            crazyData = game.position.crazyData,
+            children = Branches.empty
+          ) -> true
+        case None => Root.default(variant) -> false
+    Chapter.make(
+      studyId = study.id,
+      name = data.name,
+      setup = Chapter.Setup(
+        none,
+        variant,
+        resolveOrientation(data, root, userId),
+        fromFen = isFromFen.option(true)
       ),
       root = root,
-      tags = PgnTags(tags),
+      tags = Tags.empty,
       order = order,
       ownerId = userId,
       practice = data.isPractice,
       gamebook = data.isGamebook,
-      conceal = data.isConceal option Chapter.Ply(root.ply)
+      conceal = data.isConceal.option(root.ply)
     )
 
-  def notifyChat(study: Study, game: Game, userId: User.ID) =
-    if (study.isPublic) List(game.id, s"${game.id}/w") foreach { chatId =>
-      chatApi.userChat.write(
-        chatId = Chat.Id(chatId),
-        userId = userId,
-        text = s"I'm studying this game on ${net.domain}/study/${study.id}",
-        publicSource = none,
-        _.Round,
-        persist = false
-      )
-    }
+  private def fromGame(
+      study: Study,
+      game: Game,
+      data: Data,
+      order: Int,
+      userId: UserId,
+      withRatings: Boolean,
+      initialFen: Option[Fen.Full] = None
+  ): Fu[Chapter] =
+    for
+      root <- makeRoot(game, data.pgn, initialFen)
+      tags <- pgnDump.tags(game, initialFen, none, gameOpening(game, true), withRatings)
+      name <-
+        if data.isDefaultName then
+          StudyChapterName.from(namer.gameVsText(game, withRatings)(using lightUser.async))
+        else fuccess(data.name)
+      _ = notifyChat(study, game, userId)
+    yield Chapter.make(
+      studyId = study.id,
+      name = name,
+      setup = Chapter.Setup(
+        (!game.synthetic).option(game.id),
+        game.variant,
+        data.orientation match
+          case Orientation.Auto => Color.white
+          case Orientation.Fixed(color) => color
+      ),
+      root = root,
+      tags = StudyPgnTags(tags),
+      order = order,
+      ownerId = userId,
+      practice = data.isPractice,
+      gamebook = data.isGamebook,
+      conceal = data.isConceal.option(root.ply)
+    )
 
-  private[study] def game2root(game: Game, initialFen: Option[FEN]): Fu[Node.Root] =
-    initialFen.fold(gameRepo initialFen game) { fen =>
-      fuccess(fen.some)
-    } map { GameToRoot(game, _, withClocks = true) }
+  def notifyChat(study: Study, game: Game, userId: UserId) =
+    if study.isPublic then
+      List(game.hasUserId(userId).option(game.id.value), s"${game.id}/w".some).flatten.foreach { chatId =>
+        chatApi.write(
+          chatId = ChatId(chatId),
+          userId = userId,
+          text = s"I'm studying this game on ${net.domain}/study/${study.id}",
+          publicSource = none,
+          _.round,
+          persist = false
+        )
+      }
+
+  def makeRoot(game: Game, pgnOpt: Option[PgnStr], initialFen: Option[Fen.Full]): Fu[Root] =
+    initialFen
+      .fold(gameRepo.initialFen(game)): fen =>
+        fuccess(fen.some)
+      .map: goodFen =>
+        def gameToRoot(withEndComment: Boolean) =
+          GameToRoot(game, goodFen, withClocks = true, withEndComment = withEndComment)
+        pgnOpt.flatMap(StudyPgnImport.result(_, Nil).toOption.map(_.root)) match
+          case Some(r) => gameToRoot(!hasGameEndComment(game, r)).merge(r)
+          case None => gameToRoot(withEndComment = false)
+
+  private def hasGameEndComment(game: Game, root: Root): Boolean =
+    game.finished &&
+      root.mainline.lastOption.exists: last =>
+        val result = chess.Outcome.showResult(chess.Outcome(game.winnerColor).some)
+        val status = lila.tree.StatusText(game.status, game.winnerColor, game.variant)
+        val text = s"$result $status"
+        last.comments.value.exists: comment =>
+          comment.text.value == text && comment.by == lila.tree.Node.Comment.Author.Lichess
 
   private val UrlRegex = {
     val escapedDomain = net.domain.value.replace(".", "\\.")
-    s"""$escapedDomain/(\\w{8,12})"""
+    s"""$escapedDomain/game/(\\w{8,12})"""
   }.r.unanchored
 
   @scala.annotation.tailrec
   private def parseGame(str: String): Fu[Option[Game]] =
-    str match {
-      case s if s.lengthIs == Game.gameIdSize => gameRepo game s
-      case s if s.lengthIs == Game.fullIdSize => gameRepo game Game.takeGameId(s)
-      case UrlRegex(id)                       => parseGame(id)
-      case _                                  => fuccess(none)
-    }
-}
+    str match
+      case s if s.lengthIs == GameId.size => gameRepo.game(GameId(s))
+      case s if s.lengthIs == GameFullId.size => gameRepo.game(GameId.take(s))
+      case UrlRegex(id) => parseGame(id)
+      case _ => fuccess(none)
 
-private[study] object ChapterMaker {
+private object ChapterMaker:
 
-  case class ValidationException(message: String) extends lila.base.LilaException
-
-  sealed trait Mode {
+  enum Mode:
     def key = toString.toLowerCase
-  }
-  object Mode {
-    case object Normal   extends Mode
-    case object Practice extends Mode
-    case object Gamebook extends Mode
-    case object Conceal  extends Mode
-    val all                = List(Normal, Practice, Gamebook, Conceal)
-    def apply(key: String) = all.find(_.key == key)
-  }
+    case Normal, Practice, Gamebook, Conceal
+  object Mode:
+    def apply(key: String) = values.find(_.key == key)
 
-  trait ChapterData {
-    def orientation: String
-    def mode: String
-    def realOrientation = Color.fromName(orientation).fold[Orientation](Orientation.Auto)(Orientation.Fixed)
-    def isPractice      = mode == Mode.Practice.key
-    def isGamebook      = mode == Mode.Gamebook.key
-    def isConceal       = mode == Mode.Conceal.key
-  }
+  trait ChapterData:
+    def orientation: Orientation
+    def mode: ChapterMaker.Mode
+    def isPractice = mode == Mode.Practice
+    def isGamebook = mode == Mode.Gamebook
+    def isConceal = mode == Mode.Conceal
 
-  sealed trait Orientation
-  object Orientation {
-    case class Fixed(color: Color) extends Orientation
-    case object Auto               extends Orientation
-  }
+  enum Orientation(val key: String, val resolve: Option[Color]):
+    case Fixed(color: Color) extends Orientation(color.name, color.some)
+    case Auto extends Orientation("automatic", none)
+  object Orientation:
+    def apply(str: String) = Color.fromName(str.toLowerCase()).fold[Orientation](Auto)(Fixed.apply)
 
   case class Data(
-      name: Chapter.Name,
+      name: StudyChapterName,
       game: Option[String] = None,
-      variant: Option[String] = None,
-      fen: Option[FEN] = None,
-      pgn: Option[String] = None,
-      orientation: String = "white", // can be "automatic"
-      mode: String = ChapterMaker.Mode.Normal.key,
+      variant: Option[Variant] = None,
+      fen: Option[Fen.Full] = None,
+      pgn: Option[PgnStr] = None,
+      orientation: Orientation = Orientation.Auto,
+      mode: ChapterMaker.Mode = ChapterMaker.Mode.Normal,
       initial: Boolean = false,
       isDefaultName: Boolean = true
-  ) extends ChapterData {
+  ) extends ChapterData:
 
-    def manyGames =
+    def manyGames: Option[List[Data]] =
       game
-        .??(_.linesIterator.take(Study.maxChapters).toList)
+        .so(_.linesIterator.take(Study.maxChapters.value).toList)
         .map(_.trim)
         .filter(_.nonEmpty)
-        .map { g => copy(game = g.some) }
+        .map(g => copy(game = g.some))
         .some
         .filter(_.sizeIs > 1)
-  }
 
   case class EditData(
-      id: Chapter.Id,
-      name: Chapter.Name,
-      orientation: String,
-      mode: String,
+      id: StudyChapterId,
+      name: StudyChapterName,
+      orientation: Orientation,
+      mode: ChapterMaker.Mode,
       description: String // boolean
-  ) extends ChapterData {
+  ) extends ChapterData:
     def hasDescription = description.nonEmpty
-  }
 
-  case class DescData(id: Chapter.Id, desc: String)
-}
+  case class DescData(id: StudyChapterId, desc: String):
+    lazy val clean = lila.common.String.fullCleanUp(desc)

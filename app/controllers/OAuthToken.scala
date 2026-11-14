@@ -1,45 +1,39 @@
 package controllers
 
-import views._
+import lila.app.{ *, given }
+import lila.core.misc.oauth.AccessTokenId
+import lila.oauth.OAuthTokenForm
 
-import lila.app._
-import lila.oauth.{ AccessToken, OAuthTokenForm }
-
-final class OAuthToken(env: Env) extends LilaController(env) {
+final class OAuthToken(env: Env) extends LilaController(env):
 
   private val tokenApi = env.oAuth.tokenApi
 
-  def index =
-    Auth { implicit ctx => me =>
-      tokenApi.listPersonal(me) map { tokens =>
-        Ok(html.oAuth.token.index(tokens))
-      }
-    }
+  def index = Auth { ctx ?=> me ?=>
+    for
+      tokens <- tokenApi.listPersonal
+      page <- Ok.page(views.oAuth.token.index(tokens))
+    yield page.hasPersonalData
+  }
 
-  def create =
-    Auth { implicit ctx => me =>
-      val form = OAuthTokenForm.create fill OAuthTokenForm.Data(
+  def create = Auth { ctx ?=> me ?=>
+    val form = OAuthTokenForm.create.fill(
+      OAuthTokenForm.Data(
         description = ~get("description"),
         scopes = (~ctx.req.queryString.get("scopes[]")).toList
       )
-      Ok(html.oAuth.token.create(form, me)).fuccess
-    }
+    )
+    Ok.page(views.oAuth.token.create(form, me))
+  }
 
-  def createApply =
-    AuthBody { implicit ctx => me =>
-      implicit val req = ctx.body
-      OAuthTokenForm.create
-        .bindFromRequest()
-        .fold(
-          err => BadRequest(html.oAuth.token.create(err, me)).fuccess,
-          setup =>
-            tokenApi.create(setup, me, env.clas.studentCache.isStudent(me.id)) inject
-              Redirect(routes.OAuthToken.index).flashSuccess
-        )
-    }
+  def createApply = AuthBody { ctx ?=> me ?=>
+    bindForm(OAuthTokenForm.create)(
+      err => BadRequest.page(views.oAuth.token.create(err, me)),
+      setup =>
+        for _ <- tokenApi.create(setup, env.clas.filters.student(me))
+        yield Redirect(routes.OAuthToken.index).flashSuccess
+    )
+  }
 
-  def delete(id: String) =
-    Auth { _ => me =>
-      tokenApi.revokeById(AccessToken.Id(id), me) inject Redirect(routes.OAuthToken.index).flashSuccess
-    }
-}
+  def delete(id: String) = Auth { _ ?=> _ ?=>
+    tokenApi.revokeById(AccessTokenId(id)).inject(Redirect(routes.OAuthToken.index).flashSuccess)
+  }

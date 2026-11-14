@@ -1,16 +1,13 @@
 package lila
 
-object log {
+object log:
 
-  def apply(name: String): Logger = new Logger(name)
+  type Logger = play.api.LoggerLike
 
-  final class Logger(name: String) extends play.api.LoggerLike {
+  def apply(name: String): Logger = new:
+    val logger = org.slf4j.LoggerFactory.getLogger(name)
 
-    val logger = org.slf4j.LoggerFactory getLogger name
+  val system = apply("system")
 
-    def branch(childName: String) = new Logger(name = s"$name.$childName")
-  }
-
-  def http(status: Int, body: String) =
-    s"$status ${body.linesIterator.take(1).toList.headOption getOrElse "-"}"
-}
+  def http(res: play.api.libs.ws.StandaloneWSResponse): String =
+    s"${res.status} ${(res.body: String).linesIterator.find(_.exists(_.isLetter)).getOrElse("-")}"

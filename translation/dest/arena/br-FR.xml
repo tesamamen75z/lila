@@ -23,7 +23,6 @@ Ret eo c\'hoari muioc\'h evit 7 fiñvadenn evit kaout ar poent ouzhpenn.</string
   <string name="howIsTheWinnerDecided">Penaos ober evit gounit?</string>
   <string name="howIsTheWinnerDecidedAnswer">An hini he/en do ar muiañ a boentoù e fin an tournamant a yay ar maout ganti/gantañ.
 Pa vez meur a hini gant ar memes niver a boentoù e fin an abadenn e vez keñveriet efedusted pep hini.</string>
-  <string name="howDoesPairingWork">Penaos e ra ar mekanik evit kavout un enebour din?</string>
   <string name="howDoesPairingWorkAnswer">E penn kentañ an tournamant e vez lakaet ar c\'hoarierien damheñvel o renkadur da c\'hoari an eil re a-enep ar re all. Ur wech echu ar c\'hrogad kentañ e tistroer d\'ar sal c\'hortoz: c\'hoari a reoc\'h a-enep unan renket eveldoc\'h en tournamant. Mod-se ne c\'hortozoc\'h ket kalz daoust ma n\'ho po ket tro da c\'hoari a-enep an holl.
 Grit buan da vezañ trec\'h evit distreiñ d\'ar sal c\'hortoz da c\'hounit muioc\'h a grogadoù goude-se.</string>
   <string name="howDoesItEnd">Penaos e echu an traoù?</string>
@@ -39,6 +38,24 @@ Grit buan da vezañ trec\'h evit distreiñ d\'ar sal c\'hortoz da c\'hounit muio
   </plurals>
   <string name="thisIsPrivate">Prevez eo an tournamant-mañ</string>
   <string name="shareUrl">Skignit an URL-mañ da zesachañ c\'hoarierien: %s</string>
-  <string name="drawStreak">Bezañ rampo meur a wech da heul: N\'eus ket nemet ar rampo kentañ hag a zegas ur poent pe krogadoù rampo hag a bad muioc\'h evit %s fiñvadenn. Gant un trec\'h e c\'hall bezañ torret chadenn ar c\'hrogadoù rampo, ne vo ket na gant ul lamm na gant ur rampo all.</string>
+  <string name="minimumGameLength">Padelezh izelañ rekis</string>
   <string name="history">Istor an Arenoù</string>
+  <plurals name="viewAllXTeams" comment="viewAllXTeams [one] [other]&#10;&#10;%s is the number of teams that can be viewed">
+    <item quantity="one">Gwelet ar skipailh</item>
+    <item quantity="two">Gwelet %s skipailh</item>
+    <item quantity="few">Gwelet %s skipailh</item>
+    <item quantity="many">Gwelet %s skipailh</item>
+    <item quantity="other">Gwelet %s skipailh</item>
+  </plurals>
+  <string name="newTeamBattle">Emgann skipailh nevez</string>
+  <string name="customStartDate">Deiziad kemmet</string>
+  <string name="allowBerserk">Aotren ar Berserk</string>
+  <string name="allowBerserkHelp">Aotren ar c\'hoarierien da zaouhanteriñ o amzer evit gounit ur poent ouzhpenn</string>
+  <string name="allowChatHelp">Reiñ an aotre da flapañ</string>
+  <string name="arenaStreaks">Heuliad trec\'h en Arena</string>
+  <string name="arenaStreaksHelp">Adalek an trede trec\'h da heul e vo roet 4 foent ha n\'eo ket 2.</string>
+  <string name="noBerserkAllowed">Ne c\'haller ket Berserk</string>
+  <string name="averagePerformance">Efedusted keitat</string>
+  <string name="averageScore">Disoc\'h keitat</string>
+  <string name="myTournaments">Ma zournamantoù</string>
 </resources>

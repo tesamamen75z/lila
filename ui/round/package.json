@@ -1,34 +1,17 @@
 {
   "name": "round",
-  "version": "2.0.0",
   "private": true,
-  "description": "lichess.org round",
-  "keywords": [
-    "chess",
-    "lichess",
-    "play",
-    "replay"
-  ],
-  "author": "Thibault Duplessis",
-  "license": "AGPL-3.0-or-later",
-  "devDependencies": {
-    "@build/rollupProject": "2.0.0",
-    "@types/lichess": "2.0.0"
-  },
+  "type": "module",
   "dependencies": {
-    "ab": "https://github.com/lichess-org/ab-stub",
-    "chat": "2.0.0",
-    "chess": "2.0.0",
-    "chessground": "^8.1.3",
-    "common": "2.0.0",
-    "game": "2.0.0",
-    "nvui": "2.0.0",
-    "snabbdom": "^3.0.1"
+    "keyboard-move": "workspace:*",
+    "lib": "workspace:*",
+    "shepherd.js": "11.2.0",
+    "voice": "workspace:*"
   },
-  "scripts": {
-    "dev": "rollup --config",
-    "prod": "rollup --config --config-prod",
-    "plugin-dev": "rollup --config --config-plugin",
-    "plugin-prod": "rollup --config --config-prod --config-plugin"
+  "build": {
+    "bundle": "src/**/round.*ts"
+  },
+  "exports": {
+    ".": "./dist/interfaces.d.ts"
   }
 }

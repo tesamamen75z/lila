@@ -130,6 +130,7 @@ Düz vəzirin yanına.</string>
 Davam etmək üçün bir gediş edir.</string>
   <string name="boardSetupComplete">Təbriklər! Artıq şahmat lövhəsini necə quracağınızı bilirsiniz.</string>
   <string name="castling">Qalaqurma</string>
+  <string name="enPassant">Keçiddə götürmə</string>
   <string name="theSpecialKingMove">Xüsusi şah gedişi</string>
   <string name="castlingIntro">Şahı təhlükəsiz yerə gətirin və hücum üçün topu hazırlayın!</string>
   <string name="castleKingSide">Qısa qalaqurma üçün
@@ -151,7 +152,6 @@ Hücumu bloklayın sonra qalaqurma edin!</string>
   <string name="findAWayToCastleKingSide">Qısa qalaqurmanın bir yolunu tap!</string>
   <string name="findAWayToCastleQueenSide">Vəzir tərəfə qalaqurmanın bir yolunu tapın!</string>
   <string name="castlingComplete">Təbriklər! Demək olar hər bir oyunda qalaqurma etməlisən.</string>
-  <string name="enPassant">Keçiddə götürmə</string>
   <string name="theSpecialPawnMove">Xüsusi piyada gedişi</string>
   <string name="enPassantIntro">Rəqib piyada iki xana hərəkət etdikdə, onu bir xana hərəkət etdiyi kimi qəbul edə bilərsiniz.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Qaralar piyadanı iki xana 
@@ -224,7 +224,6 @@ Piyada = 1</string>
   <string name="nailedIt">Bacardın.</string>
   <string name="rightOn">Bax belə!</string>
   <string name="stageXComplete">Mərhələ %s tamamlandı</string>
-  <string name="yourScore">Sizin reytinq</string>
   <string name="next">Növbəti</string>
   <string name="backToMenu">Menyuya qayıt</string>
   <string name="puzzleFailed">Tapmaca həll olunmadı!</string>

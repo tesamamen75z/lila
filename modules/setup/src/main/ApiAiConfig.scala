@@ -1,84 +1,77 @@
 package lila.setup
 
-import chess.Clock
-import chess.format.FEN
+import chess.format.Fen
 import chess.variant.{ FromPosition, Variant }
+import chess.{ ByColor, Clock }
+import scalalib.model.Days
 
-import lila.game.{ Game, Player, Pov, Source }
-import lila.lobby.Color
-import lila.user.User
+import lila.core.game.{ IdGenerator, NewPlayer, Source }
+import lila.core.user.GameUser
+import lila.lobby.TriColor
 
 final case class ApiAiConfig(
     variant: Variant,
     clock: Option[Clock.Config],
-    daysO: Option[Int],
-    color: Color,
+    daysO: Option[Days],
+    color: TriColor,
     level: Int,
-    fen: Option[FEN] = None
+    fen: Option[Fen.Full] = None
 ) extends Config
-    with Positional {
+    with Positional
+    with WithColor:
 
   val strictFen = false
 
-  val days      = ~daysO
-  val increment = clock.??(_.increment.roundSeconds)
-  val time      = clock.??(_.limit.roundSeconds / 60)
+  val days = daysO | Days(2)
+  val time = clock.so(_.limitInMinutes)
+  val increment = clock.fold(Clock.IncrementSeconds(0))(_.incrementSeconds)
   val timeMode =
-    if (clock.isDefined) TimeMode.RealTime
-    else if (daysO.isDefined) TimeMode.Correspondence
+    if clock.isDefined then TimeMode.RealTime
+    else if daysO.isDefined then TimeMode.Correspondence
     else TimeMode.Unlimited
 
-  def game(user: Option[User]) =
-    fenGame { chessGame =>
-      val perfPicker = lila.game.PerfPicker.mainOrDefault(
-        chess.Speed(chessGame.clock.map(_.config)),
-        chessGame.situation.board.variant,
-        makeDaysPerTurn
-      )
-      Game
-        .make(
-          chess = chessGame,
-          whitePlayer = creatorColor.fold(
-            Player.make(chess.White, user, perfPicker),
-            Player.make(chess.White, level.some)
-          ),
-          blackPlayer = creatorColor.fold(
-            Player.make(chess.Black, level.some),
-            Player.make(chess.Black, user, perfPicker)
-          ),
-          mode = chess.Mode.Casual,
-          source = if (chessGame.board.variant.fromPosition) Source.Position else Source.Ai,
-          daysPerTurn = makeDaysPerTurn,
-          pgnImport = None
-        )
-        .sloppy
-    } start
+  private def game(user: GameUser)(using idGenerator: IdGenerator, newPlayer: NewPlayer): Fu[Game] =
+    fenGame: chessGame =>
+      lila.rating.PerfType(chessGame.position.variant, chess.Speed(chessGame.clock.map(_.config)))
+      idGenerator.withUniqueId:
+        lila.core.game
+          .newGame(
+            chess = chessGame,
+            players = ByColor: c =>
+              if creatorColor == c
+              then newPlayer(c, user)
+              else newPlayer.anon(c, level.some),
+            rated = chess.Rated.No,
+            source = if chessGame.position.variant.fromPosition then Source.Position else Source.Ai,
+            daysPerTurn = makeDaysPerTurn,
+            pgnImport = None
+          )
+    .dmap(_.start)
 
-  def pov(user: Option[User]) = Pov(game(user), creatorColor)
+  def pov(user: GameUser)(using IdGenerator, NewPlayer) = game(user).dmap(Pov(_, creatorColor))
 
   def autoVariant =
-    if (variant.standard && fen.exists(!_.initial)) copy(variant = FromPosition)
+    if variant.standard && fen.exists(!_.isInitial)
+    then copy(variant = FromPosition)
     else this
-}
 
-object ApiAiConfig extends BaseConfig {
+object ApiAiConfig extends BaseConfig:
 
   // lazy val clockLimitSeconds: Set[Int] = Set(0, 15, 30, 45, 60, 90) ++ (2 to 180).view.map(60 *).toSet
 
   def from(
       l: Int,
-      v: Option[String],
+      v: Option[Variant.LilaKey],
       cl: Option[Clock.Config],
-      d: Option[Int],
+      d: Option[Days],
       c: Option[String],
-      pos: Option[FEN]
+      pos: Option[Fen.Full]
   ) =
-    new ApiAiConfig(
-      variant = chess.variant.Variant.orDefault(~v),
+    ApiAiConfig(
+      variant = Variant.orDefault(v),
       clock = cl,
       daysO = d,
-      color = Color.orDefault(~c),
+      color = TriColor.orDefault(~c),
       level = l,
       fen = pos
     ).autoVariant
-}

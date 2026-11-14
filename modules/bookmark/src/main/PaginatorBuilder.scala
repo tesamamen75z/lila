@@ -1,44 +1,41 @@
 package lila.bookmark
 
-import reactivemongo.api.ReadPreference
+import scalalib.paginator.*
 
-import lila.common.paginator._
-import lila.db.dsl._
-import lila.game.Game
-import lila.game.GameRepo
-import lila.user.User
+import lila.core.game.{ Game, GameRepo }
+import lila.db.dsl.{ *, given }
 
 final class PaginatorBuilder(
     coll: Coll,
     gameRepo: GameRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor):
 
   def byUser(user: User, page: Int): Fu[Paginator[Game]] =
     Paginator(
       new UserAdapter(user),
       currentPage = page,
-      maxPerPage = lila.common.config.MaxPerPage(12)
+      maxPerPage = MaxPerPage(12)
     )
 
-  final class UserAdapter(user: User) extends AdapterLike[Game] {
+  final class UserAdapter(user: User) extends AdapterLike[Game]:
 
-    def nbResults: Fu[Int] = coll countSel selector
+    def nbResults: Fu[Int] = coll.countSel(selector)
 
     def slice(offset: Int, length: Int): Fu[Seq[Game]] =
       coll
-        .aggregateList(length, readPreference = ReadPreference.secondaryPreferred) { framework =>
-          import framework._
+        .aggregateList(length, _.sec): framework =>
+          import framework.*
           Match(selector) -> List(
             Sort(Descending("d")),
             Skip(offset),
             Limit(length),
-            Project($doc("_id" -> false, "g" -> true)),
+            Project(bdoc("_id" -> false, "g" -> true)),
             PipelineOperator(
-              $doc(
-                "$lookup" -> $doc(
-                  "from"         -> gameRepo.coll.name,
-                  "as"           -> "game",
-                  "localField"   -> "g",
+              bdoc(
+                "$lookup" -> bdoc(
+                  "from" -> gameRepo.coll.name,
+                  "as" -> "game",
+                  "localField" -> "g",
                   "foreignField" -> "_id"
                 )
               )
@@ -46,11 +43,7 @@ final class PaginatorBuilder(
             Unwind("game"),
             ReplaceRootField("game")
           )
-        }
-        .map {
-          _.flatMap(lila.game.BSONHandlers.gameBSONHandler.readOpt)
-        }
+        .map:
+          _.flatMap(gameRepo.gameHandler.readOpt)
 
-    private def selector = $doc("u" -> user.id)
-  }
-}
+    private def selector = bdoc("u" -> user.id)

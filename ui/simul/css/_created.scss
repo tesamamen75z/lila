@@ -10,7 +10,7 @@
     margin-bottom: 20px;
 
     &:first-child {
-      border-right: $border;
+      border-inline-end: $border;
     }
 
     .variant::before {
@@ -27,11 +27,11 @@
     }
 
     &.candidates tr.me {
-      border-left: 10px solid $c-brag;
+      border-inline-start: 10px solid $c-brag;
     }
 
     &.accepted tr.me {
-      border-right: 10px solid $c-brag;
+      border-inline-end: 10px solid $c-brag;
     }
   }
 

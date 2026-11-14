@@ -1,310 +1,319 @@
 package lila.study
 
-import actorApi.Who
-import cats.data.Validated
+import cats.mtl.Handle.*
 import chess.Centis
-import chess.format.pgn.{ Glyph, Glyphs }
-import play.api.libs.json._
-import scala.concurrent.duration._
+import chess.format.UciPath
+import chess.format.pgn.Glyph
+import play.api.libs.json.*
+import scalalib.actor.SyncActorMap
 
 import lila.common.Bus
-import lila.room.RoomSocket.{ Protocol => RP, _ }
-import lila.socket.RemoteSocket.{ Protocol => P, _ }
-import lila.socket.Socket.{ makeMessage, Sri }
-import lila.socket.{ AnaAny, AnaDests, AnaDrop, AnaMove }
-import lila.tree.Node.{ defaultNodeJsonWriter, Comment, Gamebook, Shape, Shapes }
-import lila.user.User
+import lila.common.Json.{ *, given }
+import lila.core.socket.{ protocol as P, * }
+import lila.core.study.Visibility
+import lila.room.RoomSocket.{ Protocol as RP, * }
+import lila.tree.Branch
+import lila.tree.Node.{ Comment, Gamebook, Shape, Shapes, lichobileNodeJsonWriter }
 
 final private class StudySocket(
     api: StudyApi,
     jsonView: JsonView,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    chatApi: lila.chat.ChatApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    mode: play.api.Mode
-) {
+    socketKit: SocketKit,
+    socketRequest: SocketRequester,
+    chatApi: lila.core.chat.ChatApi
+)(using Executor, Scheduler):
 
-  import StudySocket._
+  import StudySocket.{ *, given }
 
-  implicit def roomIdToStudyId(roomId: RoomId)    = Study.Id(roomId.value)
-  implicit def studyIdToRoomId(studyId: Study.Id) = RoomId(studyId.value)
+  lazy val rooms: SyncActorMap[RoomId, RoomState] = makeRoomMap(send)
 
-  lazy val rooms = makeRoomMap(send)
+  subscribeChat(rooms, _.study)
 
-  subscribeChat(rooms, _.Study)
-
-  def isPresent(studyId: Study.Id, userId: User.ID): Fu[Boolean] =
-    remoteSocketApi.request[Boolean](
-      id => send(Protocol.Out.getIsPresent(id, studyId, userId)),
+  def isPresent(studyId: StudyId, userId: UserId): Fu[Boolean] =
+    socketRequest[Boolean](
+      id => send.exec(Protocol.Out.getIsPresent(id, studyId, userId)),
       _ == "true"
     )
 
-  def onServerEval(studyId: Study.Id, eval: ServerEval.Progress): Unit =
-    eval match {
-      case ServerEval.Progress(chapterId, tree, analysis, division) =>
-        import lila.game.JsonView.divisionWriter
-        import JsonView._
-        send(
-          RP.Out.tellRoom(
-            studyId,
-            makeMessage(
-              "analysisProgress",
-              Json.obj(
-                "analysis" -> analysis,
-                "ch"       -> chapterId,
-                "tree"     -> defaultNodeJsonWriter.writes(tree),
-                "division" -> division
-              )
-            )
+  def onServerEval(studyId: StudyId, eval: serverEval.Progress): Unit =
+    import eval.*
+    send.exec(
+      RP.Out.tellRoom(
+        studyId,
+        makeMessage(
+          "analysisProgress",
+          Json.obj(
+            "analysis" -> analysis,
+            "ch" -> chapterId,
+            "tree" -> lichobileNodeJsonWriter.writes(tree),
+            "division" -> division
           )
         )
-    }
+      )
+    )
 
-  private lazy val studyHandler: Handler = {
+  private lazy val studyHandler: SocketHandler =
     case RP.In.ChatSay(roomId, userId, msg) => api.talk(userId, roomId, msg)
     case RP.In.TellRoomSri(studyId, P.In.TellSri(sri, user, tpe, o)) =>
-      import Protocol.In.Data._
-      import JsonView.shapeReader
-      def who = user map { Who(_, sri) }
-      tpe match {
-        case "setPath" =>
-          reading[AtPosition](o) { position =>
-            who foreach api.setPath(studyId, position.ref)
-          }
-        case "like" =>
-          (o \ "d" \ "liked").asOpt[Boolean] foreach { v =>
-            who foreach api.like(studyId, v)
-          }
-        case "anaMove" =>
-          AnaMove parse o foreach { move =>
-            who foreach moveOrDrop(studyId, move, MoveOpts parse o)
-          }
-        case "anaDrop" =>
-          AnaDrop parse o foreach { drop =>
-            who foreach moveOrDrop(studyId, drop, MoveOpts parse o)
-          }
-        case "deleteNode" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "jumpTo").asOpt[String] map Path.apply foreach { jumpTo =>
-              who foreach api.setPath(studyId, position.ref.withPath(jumpTo))
-              who foreach api.deleteNodeAt(studyId, position.ref)
-            }
-          }
-        case "promote" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "toMainline").asOpt[Boolean] foreach { toMainline =>
-              who foreach api.promote(studyId, position.ref, toMainline)
-            }
-          }
-        case "forceVariation" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "force").asOpt[Boolean] foreach { force =>
-              who foreach api.forceVariation(studyId, position.ref, force)
-            }
-          }
-        case "setRole" =>
-          reading[SetRole](o) { d =>
-            who foreach api.setRole(studyId, d.userId, d.role)
-          }
-        case "kick" =>
-          o str "d" foreach { username =>
-            who foreach api.kick(studyId, username)
-          }
-        case "leave" =>
-          who foreach { w =>
-            api.kick(studyId, w.u)(w)
-          }
-        case "shapes" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "shapes").asOpt[List[Shape]] foreach { shapes =>
-              who foreach api.setShapes(studyId, position.ref, Shapes(shapes take 32))
-            }
-          }
-        case "addChapter" =>
-          reading[ChapterMaker.Data](o) { data =>
-            val sticky = o.obj("d").flatMap(_.boolean("sticky")) | true
-            who foreach api.addChapter(studyId, data, sticky = sticky)
-          }
-        case "setChapter" =>
-          o.get[Chapter.Id]("d") foreach { chapterId =>
-            who foreach api.setChapter(studyId, chapterId)
-          }
-        case "editChapter" =>
-          reading[ChapterMaker.EditData](o) { data =>
-            who foreach api.editChapter(studyId, data)
-          }
-        case "descStudy" =>
-          o str "d" foreach { desc =>
-            who foreach api.descStudy(studyId, desc)
-          }
-        case "descChapter" =>
-          reading[ChapterMaker.DescData](o) { data =>
-            who foreach api.descChapter(studyId, data)
-          }
-        case "deleteChapter" =>
-          o.get[Chapter.Id]("d") foreach { id =>
-            who foreach api.deleteChapter(studyId, id)
-          }
-        case "clearAnnotations" =>
-          o.get[Chapter.Id]("d") foreach { id =>
-            who foreach api.clearAnnotations(studyId, id)
-          }
-        case "sortChapters" =>
-          o.get[List[Chapter.Id]]("d") foreach { ids =>
-            who foreach api.sortChapters(studyId, ids)
-          }
-        case "editStudy" =>
-          (o \ "d").asOpt[Study.Data] foreach { data =>
-            who foreach api.editStudy(studyId, data)
-          }
-        case "setTag" =>
-          reading[actorApi.SetTag](o) { setTag =>
-            who foreach api.setTag(studyId, setTag)
-          }
-        case "setComment" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "text").asOpt[String] foreach { text =>
-              who foreach api.setComment(studyId, position.ref, Comment sanitize text)
-            }
-          }
-        case "deleteComment" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "id").asOpt[String] foreach { id =>
-              who foreach api.deleteComment(studyId, position.ref, Comment.Id(id))
-            }
-          }
-        case "setGamebook" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "gamebook").asOpt[Gamebook].map(_.cleanUp) foreach { gamebook =>
-              who foreach api.setGamebook(studyId, position.ref, gamebook)
-            }
-          }
-        case "toggleGlyph" =>
-          reading[AtPosition](o) { position =>
-            (o \ "d" \ "id").asOpt[Int] flatMap Glyph.find foreach { glyph =>
-              who foreach api.toggleGlyph(studyId, position.ref, glyph)
-            }
-          }
-        case "setTopics" =>
-          o strs "d" foreach { topics =>
-            who foreach api.setTopics(studyId, topics)
-          }
-        case "explorerGame" =>
-          reading[actorApi.ExplorerGame](o) { data =>
-            who foreach api.explorerGame(studyId, data)
-          }
-        case "requestAnalysis" =>
-          o.get[Chapter.Id]("d") foreach { chapterId =>
-            user foreach { api.analysisRequest(studyId, chapterId, _) }
-          }
-        case "invite" =>
-          for {
-            w        <- who
-            username <- o str "d"
-          } InviteLimitPerUser(w.u, cost = 1) {
-            api.invite(
-              w.u,
-              studyId,
-              username,
-              isPresent = userId => isPresent(studyId, userId),
-              onError = err => send(P.Out.tellSri(w.sri, makeMessage("error", err)))
-            )
-          }(funit)
-        case "relaySync" =>
-          who foreach { w =>
-            Bus.publish(actorApi.RelayToggle(studyId, ~(o \ "d").asOpt[Boolean], w), "relayToggle")
-          }
-        case t => logger.warn(s"Unhandled study socket message: $t")
-      }
-  }
+      import Protocol.In.{ *, given }
+      import JsonView.given
+      def who = user.map(Who(_, sri))
+      def applyWho(f: Who => Unit) = who.foreach(f)
 
-  private lazy val rHandler: Handler = roomHandler(
+      tpe match
+        case "setPath" =>
+          reading[AtPosition](o): position =>
+            applyWho(api.setPath(studyId, position.ref))
+
+        case "like" =>
+          (o \ "d" \ "liked")
+            .asOpt[Boolean]
+            .foreach: v =>
+              applyWho(api.like(studyId, v))
+
+        case "anaMove" =>
+          AnaMove
+            .parse(o)
+            .foreach: move =>
+              applyWho(moveOrDrop(studyId, move, MoveOpts.parse(o))(using _))
+
+        case "anaDrop" =>
+          AnaDrop
+            .parse(o)
+            .foreach: drop =>
+              applyWho(moveOrDrop(studyId, drop, MoveOpts.parse(o))(using _))
+
+        case "deleteNode" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "jumpTo")
+              .asOpt[UciPath]
+              .foreach: jumpTo =>
+                applyWho(api.setPath(studyId, position.ref.withPath(jumpTo)))
+                applyWho(api.deleteNodeAt(studyId, position.ref))
+
+        case "promote" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "toMainline")
+              .asOpt[Boolean]
+              .foreach: toMainline =>
+                applyWho(api.promote(studyId, position.ref, toMainline)(using _))
+
+        case "forceVariation" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "force")
+              .asOpt[Boolean]
+              .foreach: force =>
+                applyWho(api.forceVariation(studyId, position.ref, force))
+
+        case "setRole" =>
+          reading[SetRole](o): d =>
+            applyWho(api.setRole(studyId, d.userId, d.role))
+
+        case "kick" =>
+          o.get[UserStr]("d")
+            .foreach: username =>
+              applyWho: w =>
+                api.kick(studyId, username.id, w.myId)
+                Bus.pub(Kick(studyId, username.id, w.myId))
+
+        case "leave" =>
+          who.foreach: w =>
+            api.kick(studyId, w.u, w.myId)
+
+        case "shapes" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "shapes")
+              .asOpt[List[Shape]]
+              .foreach: shapes =>
+                applyWho(api.setShapes(studyId, position.ref, Shapes(shapes.take(32))))
+
+        case "addChapter" =>
+          reading[ChapterMaker.Data](o): data =>
+            val sticky = o.obj("d").flatMap(_.boolean("sticky")) | true
+            val withRatings = o.obj("d").flatMap(_.boolean("showRatings")) | true
+            who.foreach: w =>
+              allow:
+                api.addChapter(studyId, data, sticky = sticky, withRatings = withRatings)(w)
+              .rescue: err =>
+                fuccess(send.exec(P.Out.tellSri(w.sri, makeMessage("error", err))))
+
+        case "setChapter" =>
+          o.get[StudyChapterId]("d")
+            .foreach: chapterId =>
+              applyWho(api.setChapter(studyId, chapterId))
+
+        case "editChapter" =>
+          reading[ChapterMaker.EditData](o): data =>
+            applyWho(api.editChapter(studyId, data))
+
+        case "descStudy" =>
+          o.str("d")
+            .foreach: desc =>
+              applyWho(api.descStudy(studyId, desc))
+
+        case "descChapter" =>
+          reading[ChapterMaker.DescData](o): data =>
+            applyWho(api.descChapter(studyId, data))
+
+        case "deleteChapter" =>
+          o.get[StudyChapterId]("d")
+            .foreach: id =>
+              applyWho(api.deleteChapter(studyId, id))
+
+        case "clearAnnotations" =>
+          o.get[StudyChapterId]("d")
+            .foreach: id =>
+              applyWho(api.clearAnnotations(studyId, id))
+
+        case "clearVariations" =>
+          o.get[StudyChapterId]("d")
+            .foreach: id =>
+              applyWho(api.clearVariations(studyId, id))
+
+        case "sortChapters" =>
+          if o.arr("d").forall(_.value.sizeIs <= 200) then
+            o.get[List[StudyChapterId]]("d")
+              .foreach: ids =>
+                applyWho(api.sortChapters(studyId, ids))
+
+        case "editStudy" =>
+          (o \ "d")
+            .asOpt[StudyForm.FormData]
+            .foreach: data =>
+              applyWho(api.editStudy(studyId, data))
+
+        case "setTag" =>
+          reading[SetTag](o): setTag =>
+            applyWho(api.setTagFromUI(studyId, setTag))
+
+        case "setComment" =>
+          reading[AtPosition](o): position =>
+            for text <- (o \ "d" \ "text").asOpt[String]
+            do applyWho(api.setComment(studyId, position.ref, Comment.sanitize(text)))
+
+        case "deleteComment" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "id")
+              .asOpt[String]
+              .foreach: id =>
+                applyWho(api.deleteComment(studyId, position.ref, Comment.Id(id)))
+
+        case "setGamebook" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "gamebook")
+              .asOpt[Gamebook]
+              .map(_.cleanUp)
+              .foreach: gamebook =>
+                applyWho(api.setGamebook(studyId, position.ref, gamebook))
+
+        case "toggleGlyph" =>
+          reading[AtPosition](o): position =>
+            (o \ "d" \ "id")
+              .asOpt[Int]
+              .flatMap(Glyph.find)
+              .foreach: glyph =>
+                applyWho(api.toggleGlyph(studyId, position.ref, glyph))
+
+        case "setTopics" =>
+          o.strs("d")
+            .foreach: topics =>
+              applyWho(api.setTopics(studyId, topics))
+
+        case "explorerGame" =>
+          reading[ExplorerGame](o): data =>
+            applyWho(api.explorerGame(studyId, data))
+
+        case "requestAnalysis" =>
+          o.get[StudyChapterId]("d")
+            .foreach: chapterId =>
+              user.foreach(api.analysisRequest(studyId, chapterId, _))
+
+        case "invite" =>
+          for
+            w <- who
+            username <- o.get[UserStr]("d")
+          yield api
+            .invite(w.u, studyId, username, isPresent(studyId, _))
+            .recover:
+              case err: Exception => send.exec(P.Out.tellSri(w.sri, makeMessage("error", err.getMessage)))
+
+        case "relaySync" =>
+          applyWho: w =>
+            Bus.pub(RelayToggle(studyId, ~(o \ "d").asOpt[Boolean], w))
+
+        case t => logger.warn(s"Unhandled study socket message: $t")
+
+  private lazy val rHandler: SocketHandler = roomHandler(
     rooms,
     chatApi,
     logger,
     _ => _ => none, // the "talk" event is handled by the study API
     localTimeout = Some { (roomId, modId, suspectId) =>
-      api.isContributor(roomId, modId) >>& !api.isMember(roomId, suspectId)
+      api.isContributor(roomId, modId) >>& api.isMember(roomId, suspectId).not >>&
+        Bus.ask[Boolean, IsOfficialRelay](IsOfficialRelay(roomId, _)).not
     },
-    chatBusChan = _.Study
+    chatBusChan = _.study
   )
 
-  private def moveOrDrop(studyId: Study.Id, m: AnaAny, opts: MoveOpts)(who: Who) =
-    m.branch match {
-      case Validated.Valid(branch) if branch.ply < Node.MAX_PLIES =>
-        m.chapterId.ifTrue(opts.write) foreach { chapterId =>
-          api.addNode(
-            studyId,
-            Position.Ref(Chapter.Id(chapterId), Path(m.path)),
-            Node.fromBranch(branch) withClock opts.clock,
-            opts
-          )(who)
-        }
-      case _ =>
-    }
+  private def moveOrDrop(studyId: StudyId, m: AnaAny, opts: MoveOpts)(using Who) =
+    m.chapterId.foreach: chapterId =>
+      api.addNode(AddNode(studyId, Position.Ref(chapterId, m.path), m.branch, opts))
 
-  private lazy val send: String => Unit = remoteSocketApi.makeSender("study-out").apply _
+  private lazy val send = socketKit.send("study-out")
 
-  remoteSocketApi.subscribe("study-in", RP.In.reader)(
-    studyHandler orElse rHandler orElse remoteSocketApi.baseHandler
-  ) >>- send(P.Out.boot)
+  socketKit
+    .subscribe("study-in", RP.In.reader)(studyHandler.orElse(rHandler).orElse(socketKit.baseHandler))
+    .andDo(send.exec(P.Out.boot))
 
   // send API
 
-  import JsonView._
-  import jsonView.membersWrites
-  import lila.tree.Node.{
-    clockWrites,
-    commentWriter,
-    defaultNodeJsonWriter,
-    glyphsWriter,
-    openingWriter,
-    shapesWrites
-  }
-  private type SendToStudy = Study.Id => Unit
+  import JsonView.given
+  import jsonView.given
+  import lila.tree.Node.given
+  private type SendToStudy = StudyId => Unit
   private def version[A: Writes](tpe: String, data: A): SendToStudy =
-    studyId => rooms.tell(studyId.value, NotifyVersion(tpe, data))
-  private def notify[A: Writes](tpe: String, data: A): SendToStudy =
-    studyId => send(RP.Out.tellRoom(studyId, makeMessage(tpe, data)))
+    studyId => rooms.tell(studyId.into(RoomId), NotifyVersion(tpe, data))
   private def notifySri[A: Writes](sri: Sri, tpe: String, data: A): SendToStudy =
-    _ => send(P.Out.tellSri(sri, makeMessage(tpe, data)))
+    _ => send.exec(P.Out.tellSri(sri, makeMessage(tpe, data)))
 
   def setPath(pos: Position.Ref, who: Who) = version("path", Json.obj("p" -> pos, "w" -> who))
   def addNode(
       pos: Position.Ref,
-      node: Node,
+      node: Branch,
       variant: chess.variant.Variant,
       sticky: Boolean,
       relay: Option[Chapter.Relay],
       who: Who
-  ) = {
-    val dests = AnaDests(variant, node.fen, pos.path.toString, pos.chapterId.value.some)
+  ) =
+    AnaDests(variant, node.fen, pos.path.toString, pos.chapterId.some)
+    val relayPathDedup = relay
+      .map(_.path)
+      .map: path =>
+        if path == pos.path.+(node.id) then "!"
+        else path.toString
     version(
       "addNode",
       Json
         .obj(
-          "n" -> defaultNodeJsonWriter.writes(TreeBuilder.toBranch(node, variant)),
+          "n" -> defaultNodeJsonWriter.writes(node),
           "p" -> pos,
-          "w" -> who,
-          "d" -> dests.dests,
-          "o" -> dests.opening,
           "s" -> sticky
         )
-        .add("relay", relay)
+        .add("w", Option.when(relay.isEmpty)(who))
+        .add("relayPath", relayPathDedup)
     )
-  }
   def deleteNode(pos: Position.Ref, who: Who) = version("deleteNode", Json.obj("p" -> pos, "w" -> who))
   def promote(pos: Position.Ref, toMainline: Boolean, who: Who) =
     version(
       "promote",
       Json.obj(
-        "p"          -> pos,
+        "p" -> pos,
         "toMainline" -> toMainline,
-        "w"          -> who
+        "w" -> who
       )
     )
-  def setLiking(liking: Study.Liking, who: Who) = notify("liking", Json.obj("l" -> liking, "w" -> who))
+  def setLiking(liking: Study.Liking, who: Who) =
+    notifySri(who.sri, "liking", Json.obj("l" -> liking, "w" -> who))
   def setShapes(pos: Position.Ref, shapes: Shapes, who: Who) =
     version(
       "shapes",
@@ -314,8 +323,8 @@ final private class StudySocket(
         "w" -> who
       )
     )
-  def reloadMembers(members: StudyMembers, sendTo: Iterable[User.ID])(studyId: Study.Id) =
-    send(RP.Out.tellRoomUsers(studyId, sendTo, makeMessage("members", members)))
+  def reloadMembers(members: StudyMembers, sendTo: Iterable[UserId])(studyId: StudyId) =
+    send.exec(RP.Out.tellRoomUsers(studyId, sendTo, makeMessage("members", members)))
 
   def setComment(pos: Position.Ref, comment: Comment, who: Who) =
     version(
@@ -330,12 +339,12 @@ final private class StudySocket(
     version(
       "deleteComment",
       Json.obj(
-        "p"  -> pos,
+        "p" -> pos,
         "id" -> commentId,
-        "w"  -> who
+        "w" -> who
       )
     )
-  def setGlyphs(pos: Position.Ref, glyphs: Glyphs, who: Who) =
+  def setGlyphs(pos: Position.Ref, glyphs: lila.tree.Node.Glyphs, who: Who) =
     version(
       "glyphs",
       Json.obj(
@@ -344,36 +353,40 @@ final private class StudySocket(
         "w" -> who
       )
     )
-  def setClock(pos: Position.Ref, clock: Option[Centis], who: Who) =
+  def setClock(pos: Position.Ref, clock: Option[Centis], relayDenorm: Option[Chapter.BothClocks]) =
     version(
       "clock",
-      Json.obj(
-        "p" -> pos,
-        "c" -> clock,
-        "w" -> who
-      )
+      Json
+        .obj(
+          "p" -> pos,
+          "c" -> clock
+        )
+        .add(
+          "relayClocks",
+          relayDenorm.map: clocks =>
+            Json.arr(clocks.white, clocks.black)
+        )
     )
   def forceVariation(pos: Position.Ref, force: Boolean, who: Who) =
     version(
       "forceVariation",
       Json.obj(
-        "p"     -> pos,
+        "p" -> pos,
         "force" -> force,
-        "w"     -> who
+        "w" -> who
       )
     )
-  private[study] def reloadChapters(chapters: List[Chapter.Metadata]) = version("chapters", chapters)
-  def reloadAll                                                       = version("reload", JsNull)
-  def changeChapter(pos: Position.Ref, who: Who)                      = version("changeChapter", Json.obj("p" -> pos, "w" -> who))
-  def updateChapter(chapterId: Chapter.Id, who: Who) =
-    version("updateChapter", Json.obj("chapterId" -> chapterId, "w" -> who))
-  def descChapter(chapterId: Chapter.Id, desc: Option[String], who: Who) =
+  private[study] def sendChapterPreviews(previews: ChapterPreview.AsJsons) = version("chapters", previews)
+  def reloadAll = version("reload", JsNull)
+  def changeChapter(pos: Position.Ref, who: Who) = version("changeChapter", Json.obj("p" -> pos, "w" -> who))
+  def reloadStudy(who: Who) = version("reloadStudy", Json.obj("w" -> who))
+  def descChapter(chapterId: StudyChapterId, desc: Option[String], who: Who) =
     version(
       "descChapter",
       Json.obj(
         "chapterId" -> chapterId,
-        "desc"      -> desc,
-        "w"         -> who
+        "desc" -> desc,
+        "w" -> who
       )
     )
   def descStudy(desc: Option[String], who: Who) = version("descStudy", Json.obj("desc" -> desc, "w" -> who))
@@ -388,76 +401,66 @@ final private class StudySocket(
         "s" -> sticky
       )
     )
-  def setConceal(pos: Position.Ref, ply: Option[Chapter.Ply]) =
+  def setConceal(pos: Position.Ref, ply: Option[chess.Ply]) =
     version(
       "conceal",
       Json.obj(
-        "p"   -> pos,
-        "ply" -> ply.map(_.value)
+        "p" -> pos,
+        "ply" -> ply
       )
     )
-  def setTags(chapterId: Chapter.Id, tags: chess.format.pgn.Tags, who: Who) =
+  def setTags(chapterId: StudyChapterId, tags: chess.format.pgn.Tags, who: Who) =
     version(
       "setTags",
       Json.obj(
         "chapterId" -> chapterId,
-        "tags"      -> tags,
-        "w"         -> who
+        "tags" -> tags,
+        "w" -> who
       )
     )
   def reloadSri(sri: Sri) = notifySri(sri, "reload", JsNull)
-  def reloadSriBecauseOf(sri: Sri, chapterId: Chapter.Id) =
-    notifySri(sri, "reload", Json.obj("chapterId" -> chapterId))
+  def reloadSriBecauseOf(sri: Sri, chapterId: StudyChapterId, reason: Option["overweight"]) =
+    notifySri(sri, "reload", Json.obj("chapterId" -> chapterId).add("reason" -> reason))
   def validationError(error: String, sri: Sri) = notifySri(sri, "validationError", Json.obj("error" -> error))
 
-  private val InviteLimitPerUser = new lila.memo.RateLimit[User.ID](
-    credits = 50,
-    duration = 24 hour,
-    key = "study_invite.user"
-  )
+  api.registerSocket(this)
 
-  api registerSocket this
-}
+object StudySocket:
 
-object StudySocket {
+  given Conversion[RoomId, StudyId] = _.into(StudyId)
+  given Conversion[StudyId, RoomId] = _.into(RoomId)
 
-  object Protocol {
+  object Protocol:
 
-    object In {
+    object In:
+      import play.api.libs.functional.syntax.*
 
-      object Data {
-        import lila.common.Json._
-        import play.api.libs.functional.syntax._
-
-        def reading[A](o: JsValue)(f: A => Unit)(implicit reader: Reads[A]): Unit =
-          o obj "d" flatMap { d =>
+      def reading[A](o: JsValue)(f: A => Unit)(using reader: Reads[A]): Unit =
+        o.obj("d")
+          .flatMap: d =>
             reader.reads(d).asOpt
-          } foreach f
+          .foreach(f)
 
-        case class AtPosition(path: String, chapterId: Chapter.Id) {
-          def ref = Position.Ref(chapterId, Path(path))
-        }
-        implicit val chapterIdReader: Reads[Chapter.Id]     = stringIsoReader(Chapter.idIso)
-        implicit val chapterNameReader: Reads[Chapter.Name] = stringIsoReader(Chapter.nameIso)
-        implicit val atPositionReader: Reads[AtPosition] = (
-          (__ \ "path").read[String] and
-            (__ \ "ch").read[Chapter.Id]
-        )(AtPosition.apply _)
-        case class SetRole(userId: String, role: String)
-        implicit val SetRoleReader: Reads[SetRole]                       = Json.reads[SetRole]
-        implicit val ChapterDataReader: Reads[ChapterMaker.Data]         = Json.reads[ChapterMaker.Data]
-        implicit val ChapterEditDataReader: Reads[ChapterMaker.EditData] = Json.reads[ChapterMaker.EditData]
-        implicit val ChapterDescDataReader: Reads[ChapterMaker.DescData] = Json.reads[ChapterMaker.DescData]
-        implicit val StudyDataReader: Reads[Study.Data]                  = Json.reads[Study.Data]
-        implicit val setTagReader: Reads[actorApi.SetTag]                = Json.reads[actorApi.SetTag]
-        implicit val gamebookReader: Reads[Gamebook]                     = Json.reads[Gamebook]
-        implicit val explorerGame: Reads[actorApi.ExplorerGame]          = Json.reads[actorApi.ExplorerGame]
-      }
-    }
+      case class AtPosition(path: UciPath, chapterId: StudyChapterId):
+        def ref = Position.Ref(chapterId, path)
+      given Reads[AtPosition] =
+        ((__ \ "path").read[UciPath].and((__ \ "ch").read[StudyChapterId]))(AtPosition.apply)
+      case class SetRole(userId: UserId, role: String)
+      given Reads[SetRole] = Json.reads
+      given Reads[ChapterMaker.Mode] = optRead(ChapterMaker.Mode.apply)
+      given Reads[ChapterMaker.Orientation] = stringRead(ChapterMaker.Orientation.apply)
+      given Reads[Settings.UserSelection] = optRead(Settings.UserSelection.byKey.get)
+      given Reads[chess.variant.Variant] =
+        optRead(key => chess.variant.Variant(chess.variant.Variant.LilaKey(key)))
+      given Reads[ChapterMaker.Data] = Json.reads
+      given Reads[ChapterMaker.EditData] = Json.reads
+      given Reads[ChapterMaker.DescData] = Json.reads
+      given Reads[Visibility] = stringRead(v => Visibility.byKey.getOrElse(v, Visibility.public))
+      given Reads[StudyForm.FormData] = Json.reads
+      given Reads[SetTag] = Json.reads
+      given Reads[Gamebook] = Json.reads
+      given Reads[ExplorerGame] = Json.reads
 
-    object Out {
-      def getIsPresent(reqId: Int, studyId: Study.Id, userId: User.ID) =
+    object Out:
+      def getIsPresent(reqId: Int, studyId: StudyId, userId: UserId) =
         s"room/present $reqId $studyId $userId"
-    }
-  }
-}

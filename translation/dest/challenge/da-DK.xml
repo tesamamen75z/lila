@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Udfordringer</string>
+  <string name="challengesX">Udfordringer: %1$s</string>
   <string name="challengeToPlay">Udfordr til et spil</string>
   <string name="challengeDeclined">Udfordring afvist</string>
   <string name="challengeAccepted">Udfordring accepteret!</string>
@@ -12,7 +12,7 @@
   <string name="cannotChallengeDueToProvisionalXRating">Kan ikke udfordre på grund af provisorisk %s rating.</string>
   <string name="xOnlyAcceptsChallengesFromFriends">%s accepterer kun udfordringer fra venner.</string>
   <string name="declineGeneric">Jeg accepterer ikke udfordringer i øjeblikket.</string>
-  <string name="declineLater">Det er ikke et godt tidspunkt for mig, spørg venligst igen senere.</string>
+  <string name="declineLater">Det er ikke et godt tidspunkt for mig, spørg gerne igen senere.</string>
   <string name="declineTooFast">Denne tidskontrol er for hurtig for mig. Udfordr mig gerne igen med et langsommere spil.</string>
   <string name="declineTooSlow">Denne tidskontrol er for langsom for mig. Udfordr mig gerne igen med et hurtigere spil.</string>
   <string name="declineTimeControl">Jeg accepterer ikke udfordringer med denne tidskontrol.</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">Jeg er ikke villig til at spille denne variant lige nu.</string>
   <string name="declineNoBot">Jeg accepterer ikke udfordringer fra bots.</string>
   <string name="declineOnlyBot">Jeg accepterer kun udfordringer fra bots.</string>
+  <string name="inviteLichessUser">Eller inviter en Lichess-bruger:</string>
 </resources>

@@ -1,9 +1,14 @@
-package lila
+package lila.game
 
-package object game extends PackageObject {
+import alleycats.Zero
 
-  type PgnMoves    = Vector[String]
-  type RatingDiffs = chess.Color.Map[Int]
+export lila.core.lilaism.Lilaism.{ Game as CoreGame, Pov as CorePov, *, given }
+export lila.common.extensions.*
+export lila.core.id.{ GameFullId, GamePlayerId, GameAnyId }
 
-  private[game] def logger = lila.log("game")
-}
+type GameQuickOpening = lila.core.game.Game => Option[chess.opening.Opening]
+
+private lazy val logger = lila.log("game")
+
+def rematchAlternatesColor(game: lila.core.game.Game, users: List[Option[lila.core.user.User]]): Boolean =
+  !(game.fromPosition && users.count(_.exists(_.isBot)) == 1)

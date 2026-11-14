@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="team">Ушкӑн</string>
   <string name="teams">Ушкӑнсем</string>
   <plurals name="nbMembers">
     <item quantity="other">%s пайташ</item>
@@ -10,6 +11,6 @@
   <string name="noTeamFound">Пӗр ушкӑн та ҫук</string>
   <string name="joinTeam">Ушкӑна хутшӑн</string>
   <string name="quitTeam">Ушкӑнтан тух</string>
-  <string name="teamBestPlayers">Чи вӑйлӑ вӑйӑҫӑ</string>
   <string name="teamRecentMembers">Тин хутшӑннӑ пайташсем</string>
+  <string name="joinLichessVariantTeam">Хыпар тата пулӑм пирки пӗлсе тӑрас тесен ухвитсаллӑ %s ушкӑна хутшӑнмалла</string>
 </resources>

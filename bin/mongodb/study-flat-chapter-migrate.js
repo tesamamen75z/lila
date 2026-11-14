@@ -23,7 +23,9 @@ const dotRegex = /\./g;
 const dollarRegex = /\$/g;
 
 function encodePath(path) {
-  return path ? path.replace(dotRegex, String.fromCharCode(144)).replace(dollarRegex, String.fromCharCode(145)) : '';
+  return path
+    ? path.replace(dotRegex, String.fromCharCode(144)).replace(dollarRegex, String.fromCharCode(145))
+    : '';
 }
 
 let i = 0;
@@ -71,7 +73,7 @@ db.study_chapter_backup
     else batch.push(c);
     i++;
     sumMoves += nbMoves;
-    if (i % batchSize == 0) {
+    if (i % batchSize === 0) {
       coll.insertMany(batch, {
         ordered: false,
         writeConcern: { w: 0, j: false },
@@ -85,8 +87,8 @@ db.study_chapter_backup
         `${i} ${percent.toFixed(2)}% ${perSecond}/s ETA ${minutesLeft} minutes | size:${(
           sumSizeFrom / batchSize
         ).toFixed(0)}->${(sumSizeTo / batchSize).toFixed(0)} moves:${(sumMoves / batchSize).toFixed(
-          0
-        )} big:${tooBigNb} deep:${tooDeepNb}`
+          0,
+        )} big:${tooBigNb} deep:${tooDeepNb}`,
       );
       lastAt = at;
       sumSizeFrom = 0;

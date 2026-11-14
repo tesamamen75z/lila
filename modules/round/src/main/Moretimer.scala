@@ -1,61 +1,66 @@
 package lila.round
 
-import chess.Color
+import chess.{ ByColor, Color }
+import scalalib.data.Preload
 
-import lila.game.{ Event, Game, Pov, Progress }
+import lila.game.GameExt.withClock
+import lila.game.{ Event, Progress }
 import lila.pref.{ Pref, PrefApi }
-import scala.concurrent.duration.FiniteDuration
 
-final private class Moretimer(
-    messenger: Messenger,
-    prefApi: PrefApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+final class Moretimer(messenger: Messenger, prefApi: PrefApi):
+
+  private val minTime = 5.seconds
+  private val maxTime = 60.seconds
 
   // pov of the player giving more time
-  def apply(pov: Pov, duration: FiniteDuration): Fu[Option[Progress]] =
-    IfAllowed(pov.game) {
-      (pov.game moretimeable !pov.color) ?? {
-        if (pov.game.hasClock) give(pov.game, List(!pov.color), duration).some
-        else
-          pov.game.hasCorrespondenceClock option {
-            messenger.volatile(pov.game, s"${!pov.color} gets more time")
-            val p = pov.game.correspondenceGiveTime
-            p.game.correspondenceClock.map(Event.CorrespondenceClock.apply).fold(p)(p + _)
-          }
-      }
-    }
+  def apply(pov: Pov, duration: FiniteDuration, force: Boolean): Fu[Option[Progress]] =
+    isAllowedIn(pov.game, Preload.none, force).mapz:
+      if pov.game.clock.exists(_.moretimeable(!pov.color))
+      then
+        val progress = give(pov.game, List(!pov.color), duration)
+        tellTheBus(progress.game)
+        progress.some
+      else if pov.game.correspondenceClock.exists(_.moretimeable(!pov.color))
+      then
+        messenger.volatile(pov.game, s"${!pov.color} gets more time")
+        val p = Progress(pov.game, pov.game.copy(movedAt = nowInstant))
+        p.game.correspondenceClock.map(Event.CorrespondenceClock.apply).foldLeft(p)(_ + _).some
+      else none
 
-  def isAllowedIn(game: Game): Fu[Boolean] =
-    if (game.isMandatory) fuFalse
-    else isAllowedByPrefs(game)
+  def isAllowedIn(game: Game, prefs: Preload[ByColor[Pref]], force: Boolean): Fu[Boolean] =
+    (game.playable && !game.isUnlimited && game.canTakebackOrAddTime).so:
+      if force then fuccess(true)
+      else (!game.hasRule(_.noGiveTime)).so(isAllowedByPrefs(game, prefs))
 
-  private[round] def give(game: Game, colors: List[Color], duration: FiniteDuration): Progress =
-    game.clock.fold(Progress(game)) { clock =>
+  private[round] def give(
+      game: Game,
+      colors: List[Color],
+      unchecked: FiniteDuration,
+      reboot: Boolean = false
+  ): Progress =
+    game.clock.fold(Progress(game)): clock =>
+      val duration =
+        if unchecked < minTime then minTime
+        else if unchecked > maxTime then maxTime
+        else unchecked
       val centis = duration.toCentis
-      val newClock = colors.foldLeft(clock) { case (c, color) =>
+      val newClock = colors.foldLeft(clock): (c, color) =>
         c.giveTime(color, centis)
-      }
-      colors.foreach { c =>
-        messenger.volatile(game, s"$c + ${duration.toSeconds} seconds")
-      }
-      (game withClock newClock) ++ colors.map { Event.ClockInc(_, centis) }
-    }
+      colors.foreach: c =>
+        messenger.volatile(game, s"$c + ${duration.toSeconds} seconds", reboot = reboot)
+      (game.withClock(newClock)) ++ colors.map(Event.ClockInc(_, centis, newClock))
 
-  private def isAllowedByPrefs(game: Game): Fu[Boolean] =
-    game.userIds.map {
-      prefApi.getPref(_, (p: Pref) => p.moretime)
-    }.sequenceFu dmap {
-      _.forall { p =>
-        p == Pref.Takeback.ALWAYS || (p == Pref.Takeback.CASUAL && game.casual)
-      }
-    }
+  private def tellTheBus(game: Game): Unit =
+    if lila.game.Game.isBoardCompatible(game) then
+      lila.common.Bus.publishDyn(
+        lila.game.actorApi.BoardMoretime(game),
+        lila.game.actorApi.BoardMoretime.makeChan(game.id)
+      )
 
-  private def IfAllowed[A](game: Game)(f: => A): Fu[A] =
-    if (!game.playable) fufail(ClientError("[moretimer] game is over " + game.id))
-    else if (game.isMandatory) fufail(ClientError("[moretimer] game disallows it " + game.id))
-    else
-      isAllowedByPrefs(game) flatMap {
-        case true => fuccess(f)
-        case _    => fufail(ClientError("[moretimer] disallowed by preferences " + game.id))
-      }
-}
+  private def isAllowedByPrefs(game: Game, prefs: Preload[ByColor[Pref]]): Fu[Boolean] =
+    prefs
+      .orLoad:
+        prefApi.byId(game.userIdPair)
+      .dmap:
+        _.forall: p =>
+          p.moretime == Pref.Moretime.ALWAYS || (p.moretime == Pref.Moretime.CASUAL && game.rated.no)

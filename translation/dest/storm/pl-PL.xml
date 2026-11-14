@@ -17,10 +17,10 @@
     <item quantity="other">%s prób</item>
   </plurals>
   <plurals name="playedNbRunsOfPuzzleStorm">
-    <item quantity="one">Jedna próba rozwiązania %2$s</item>
-    <item quantity="few">%1$s próby rozwiązania %2$s</item>
-    <item quantity="many">%1$s prób rozwiązania %2$s</item>
-    <item quantity="other">%1$s prób rozwiązania %2$s</item>
+    <item quantity="one">Rozegrano jedną sesję %2$s</item>
+    <item quantity="few">Rozegrano %1$s sesje %2$s</item>
+    <item quantity="many">Rozegrano %1$s sesji %2$s</item>
+    <item quantity="other">Rozegrano %1$s sesji %2$s</item>
   </plurals>
   <string name="highscoreX">Rekord: %s</string>
   <string name="score">Wynik</string>
@@ -54,4 +54,13 @@
   <string name="skip">pomiń</string>
   <string name="skipHelp">W każdym wyścigu możesz pominąć jeden ruch:</string>
   <string name="skipExplanation">Pomiń ten ruch aby zachować serię! Działa tylko raz na wyścig.</string>
+  <string name="failedPuzzles">Zadania nieudane</string>
+  <string name="slowPuzzles">Zadania bez limitu czasu</string>
+  <string name="skippedPuzzle">Pominięte zadania</string>
+  <string name="thisWeek">W tym tygodniu</string>
+  <string name="thisMonth">W tym miesiącu</string>
+  <string name="allTime">Od początku</string>
+  <string name="clickToReload">Kliknij, aby przeładować</string>
+  <string name="thisRunHasExpired">To uruchomienie wygasło!</string>
+  <string name="thisRunWasOpenedInAnotherTab">To uruchomienie zostało już otwarte w innej karcie!</string>
 </resources>

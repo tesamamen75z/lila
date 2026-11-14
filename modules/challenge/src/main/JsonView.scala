@@ -1,101 +1,107 @@
 package lila.challenge
+import play.api.libs.json.*
 
-import play.api.libs.json._
-import play.api.i18n.Lang
-
-import lila.i18n.{ I18nKeys => trans }
-import lila.socket.Socket.SocketVersion
-import lila.socket.UserLagCache
+import lila.common.Json.given
+import lila.core.i18n.Translate
+import lila.core.id.GameFullId
+import lila.core.socket.{ SocketVersion, userLag }
+import lila.game.JsonView.given
+import lila.ui.Icon
 
 final class JsonView(
-    baseUrl: lila.common.config.BaseUrl,
-    getLightUser: lila.common.LightUser.GetterSync,
-    isOnline: lila.socket.IsOnline
-) {
+    baseUrl: lila.core.config.BaseUrl,
+    getLightUser: lila.core.LightUser.GetterSyncFallback,
+    getLagRating: userLag.GetLagRating,
+    isOnline: lila.core.socket.IsOnline
+):
 
-  import lila.game.JsonView._
-  import Challenge._
+  import Challenge.*
 
-  implicit private val RegisteredWrites = OWrites[Challenger.Registered] { r =>
-    val light = getLightUser(r.id)
-    Json
-      .obj(
-        "id"     -> r.id,
-        "name"   -> light.fold(r.id)(_.name),
-        "title"  -> light.map(_.title),
-        "rating" -> r.rating.int
-      )
-      .add("provisional" -> r.rating.provisional)
-      .add("patron" -> light.??(_.isPatron))
-      .add("online" -> isOnline(r.id))
-      .add("lag" -> UserLagCache.getLagRating(r.id))
-  }
+  private given OWrites[Challenger.Registered] = OWrites: r =>
+    Json.toJsObject(getLightUser(r.id)) ++
+      Json
+        .obj("rating" -> r.rating.int)
+        .add("provisional" -> r.rating.provisional)
+        .add("online" -> isOnline.exec(r.id))
+        .add("lag" -> getLagRating(r.id))
 
-  def apply(a: AllChallenges)(implicit lang: Lang): JsObject =
+  def apply(a: AllChallenges)(using Translate): JsObject =
     Json.obj(
-      "in"   -> a.in.map(apply(Direction.In.some)),
-      "out"  -> a.out.map(apply(Direction.Out.some)),
-      "i18n" -> lila.i18n.JsDump.keysToObject(i18nKeys, lang),
-      "reasons" -> JsObject(Challenge.DeclineReason.allExceptBot.map { r =>
-        r.key -> JsString(r.trans.txt())
-      })
+      "in" -> a.in.map(apply(Direction.In.some)),
+      "out" -> a.out.map(apply(Direction.Out.some)),
+      "reasons" -> JsObject(Challenge.DeclineReason.allExceptBot.map: r =>
+        r.key -> JsString(r.trans.txt()))
     )
 
-  def show(challenge: Challenge, socketVersion: SocketVersion, direction: Option[Direction])(implicit
-      lang: Lang
-  ) =
+  def websiteAndLichobile(
+      challenge: Challenge,
+      socketVersion: SocketVersion,
+      direction: Option[Direction]
+  )(using Translate) =
     Json.obj(
-      "challenge"     -> apply(direction)(challenge),
+      "challenge" -> apply(direction)(challenge),
       "socketVersion" -> socketVersion
     )
 
-  def apply(direction: Option[Direction])(c: Challenge)(implicit lang: Lang): JsObject =
+  def apiAndMobile(
+      challenge: Challenge,
+      socketVersion: Option[SocketVersion],
+      direction: Option[Direction],
+      fullId: Option[GameFullId] = none
+  )(using Translate) =
+    apply(direction)(challenge)
+      .add("socketVersion" -> socketVersion)
+      .add("fullId" -> fullId)
+
+  private given OWrites[Challenge.Open] = Json.writes
+
+  def apply(direction: Option[Direction])(c: Challenge)(using Translate): JsObject =
     Json
       .obj(
-        "id"         -> c.id,
-        "url"        -> s"$baseUrl/${c.id}",
-        "status"     -> c.status.name,
+        "id" -> c.id,
+        "url" -> s"$baseUrl/game/${c.id}",
+        "status" -> c.status.name,
         "challenger" -> c.challengerUser,
-        "destUser"   -> c.destUser,
-        "variant"    -> c.variant,
-        "rated"      -> c.mode.rated,
-        "speed"      -> c.speed.key,
-        "timeControl" -> (c.timeControl match {
+        "destUser" -> c.destUser,
+        "variant" -> c.variant,
+        "rated" -> c.rated,
+        "speed" -> c.speed.key,
+        "timeControl" -> c.timeControl.match
           case TimeControl.Clock(clock) =>
             Json.obj(
-              "type"      -> "clock",
-              "limit"     -> clock.limitSeconds,
+              "type" -> "clock",
+              "limit" -> clock.limitSeconds,
               "increment" -> clock.incrementSeconds,
-              "show"      -> clock.show
+              "show" -> clock.show
             )
           case TimeControl.Correspondence(d) =>
             Json.obj(
-              "type"        -> "correspondence",
+              "type" -> "correspondence",
               "daysPerTurn" -> d
             )
           case TimeControl.Unlimited => Json.obj("type" -> "unlimited")
-        }),
+        ,
         "color" -> c.colorChoice.toString.toLowerCase,
+        "finalColor" -> c.finalColor.toString.toLowerCase,
         "perf" -> Json.obj(
-          "icon" -> iconChar(c).toString,
+          "icon" -> iconOf(c),
           "name" -> c.perfType.trans
         )
       )
+      .add("rematchOf" -> c.rematchOf)
       .add("direction" -> direction.map(_.name))
       .add("initialFen" -> c.initialFen)
       .add("declineReason" -> c.declineReason.map(_.trans.txt()))
+      .add("declineReasonKey" -> c.declineReason.map(_.key))
+      .add("open" -> c.open)
+      .add("rules" -> c.nonEmptyRules)
 
-  private def iconChar(c: Challenge) =
-    if (c.variant == chess.variant.FromPosition) ''
-    else c.perfType.iconChar
+  def all(challenges: AllChallenges)(using Translate) = Json.obj(
+    "in" -> challenges.in.map(apply(Direction.In.some)),
+    "out" -> challenges.out.map(apply(Direction.Out.some))
+  )
 
-  private val i18nKeys = List(
-    trans.rated,
-    trans.casual,
-    trans.waiting,
-    trans.accept,
-    trans.decline,
-    trans.viewInFullSize,
-    trans.cancel
-  ).map(_.key)
-}
+  private def iconOf(c: Challenge): Icon =
+    if c.variant == chess.variant.FromPosition
+    then Icon.Feather
+    else c.perfType.icon

@@ -1,32 +1,41 @@
 package lila.analyse
 
-import lila.db.dsl._
-import lila.game.Game
+import reactivemongo.api.bson.*
 
-final class AnalysisRepo(val coll: Coll)(implicit ec: scala.concurrent.ExecutionContext) {
+import lila.db.dsl.{ *, given }
+import lila.tree.Analysis
 
-  import Analysis.analysisBSONHandler
+final class AnalysisRepo(val coll: Coll)(using Executor):
 
-  type ID = String
+  import AnalyseBsonHandlers.given
 
-  def save(analysis: Analysis) = coll.insert one analysis void
-
-  def byId(id: ID): Fu[Option[Analysis]] = coll.byId[Analysis](id)
+  def byId(id: Analysis.Id): Fu[Option[Analysis]] = coll.secondary.byId[Analysis](id)
 
   def byGame(game: Game): Fu[Option[Analysis]] =
-    game.metadata.analysed ?? byId(game.id)
+    game.metadata.analysed.so(byId(Analysis.Id(game.id)))
 
-  def byIds(ids: Seq[ID]): Fu[Seq[Option[Analysis]]] =
-    coll.optionsByOrderedIds[Analysis, Analysis.ID](ids)(_.id)
+  def byIds(ids: Seq[Analysis.Id]): Fu[Seq[Option[Analysis]]] =
+    coll.optionsByOrderedIds[Analysis, Analysis.Id](ids, readPref = _.sec)(_.id)
 
   def associateToGames(games: List[Game]): Fu[List[(Game, Analysis)]] =
-    byIds(games.map(_.id)) map { as =>
-      games zip as collect { case (game, Some(analysis)) =>
+    byIds(games.map(g => Analysis.Id(g.id))).map: as =>
+      games.zip(as).collect { case (game, Some(analysis)) =>
         game -> analysis
       }
-    }
 
-  def remove(id: String) = coll.delete one $id(id)
+  def byHash(workHash: Array[Byte]): Fu[Option[Analysis]] =
+    coll.one[Analysis](bdoc("hash" -> workHash))
 
-  def exists(id: String) = coll exists $id(id)
-}
+  private[analyse] def save(analysis: Analysis, workHash: Option[Array[Byte]]) =
+    val bson = toBdoc(analysis).get ++ workHash.so(h => bdoc("hash" -> h))
+    coll.update.one(bid(analysis.id), bson, upsert = true).void
+
+  def remove(id: GameId) = coll.delete.one(bid(Analysis.Id(id)))
+
+  def removeChapters(ids: Seq[StudyChapterId]) = coll.delete.one(inIds(ids.map(_.value)))
+  def setOrphans(id: Seq[StudyChapterId]) = coll.updateField(inIds(id.map(_.value)), "orphan", true)
+
+  def remove(ids: List[GameId]) = coll.delete.one(inIds(ids.map(Analysis.Id(_))))
+
+  def exists(id: GameId) = coll.exists(bid(Analysis.Id(id)))
+  def chapterExists(id: StudyChapterId) = coll.exists(bid(id.value))

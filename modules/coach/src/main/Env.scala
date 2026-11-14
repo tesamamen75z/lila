@@ -1,62 +1,30 @@
 package lila.coach
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
+import com.softwaremill.macwire.*
 
-import lila.common.config._
-import lila.security.Permission
-
-@Module
-final private class CoachConfig(
-    @ConfigName("collection.coach") val coachColl: CollName,
-    @ConfigName("collection.review") val reviewColl: CollName
-)
+import lila.core.config.*
 
 @Module
 final class Env(
-    appConfig: Configuration,
-    userRepo: lila.user.UserRepo,
-    notifyApi: lila.notify.NotifyApi,
+    perfsRepo: lila.core.user.PerfsRepo,
+    userRepo: lila.core.user.UserRepo,
+    userApi: lila.core.user.UserApi,
+    flagApi: lila.core.user.FlagApi,
     cacheApi: lila.memo.CacheApi,
     db: lila.db.Db,
-    imageRepo: lila.db.ImageRepo
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    picfitApi: lila.memo.PicfitApi,
+    picfitUrl: lila.memo.PicfitUrl
+)(using Executor, Scheduler):
 
-  private val config = appConfig.get[CoachConfig]("coach")(AutoConfig.loader)
+  private lazy val coachColl = db(CollName("coach"))
 
-  private lazy val coachColl = db(config.coachColl)
-
-  private lazy val photographer = new lila.db.Photographer(imageRepo, "coach")
-
-  lazy val api = new CoachApi(
-    coachColl = coachColl,
-    userRepo = userRepo,
-    reviewColl = db(config.reviewColl),
-    photographer = photographer,
-    notifyApi = notifyApi,
-    cacheApi = cacheApi
-  )
+  lazy val api = wire[CoachApi]
 
   lazy val pager = wire[CoachPager]
 
-  lila.common.Bus.subscribeFun(
-    "adjustCheater",
-    "adjustBooster",
-    "finishGame",
-    "shadowban",
-    "setPermissions"
-  ) {
-    case lila.hub.actorApi.mod.Shadowban(userId, true) =>
-      api.reviews.deleteAllBy(userId).unit
-    case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
-      api.reviews.deleteAllBy(userId).unit
-    case lila.hub.actorApi.mod.MarkBooster(userId) =>
-      api.reviews.deleteAllBy(userId).unit
-    case lila.game.actorApi.FinishGame(game, white, black) if game.rated =>
-      if (game.perfType.exists(lila.rating.PerfType.standard.contains)) {
-        white ?? api.setRating
-        black ?? api.setRating
-      }.unit
-  }
-}
+  lazy val jsonView = wire[CoachJsonView]
+
+  lila.common.Bus.sub[lila.core.game.FinishGame]:
+    case lila.core.game.FinishGame(game, users) if game.rated.yes =>
+      if lila.rating.PerfType.standardSet(game.perfKey)
+      then users.foreach(u => u.foreach(u => api.updateRatingFromDb(u._1)))

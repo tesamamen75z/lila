@@ -1,103 +1,101 @@
-import * as xhr from '../studyXhr';
-import { prop } from 'common';
-import { storedProp } from 'common/storage';
+import { type Prop, prop } from 'lib';
+import { api } from 'lib/api';
+import type { Search } from 'lib/ceval/types';
+import { storedBooleanProp } from 'lib/storage';
+
+import type AnalyseCtrl from '@/ctrl';
+
+import type { StudyData } from '../interfaces';
+import { practiceComplete } from '../studyXhr';
+import type { StudyPracticeData, Goal } from './interfaces';
 import makeSuccess from './studyPracticeSuccess';
-import { readOnlyProp } from '../../util';
-import { StudyPracticeData, Goal, StudyPracticeCtrl } from './interfaces';
-import { StudyData, StudyCtrl } from '../interfaces';
-import AnalyseCtrl from '../../ctrl';
 
-export default function (root: AnalyseCtrl, studyData: StudyData, data: StudyPracticeData): StudyPracticeCtrl {
-  const goal = prop<Goal>(root.data.practiceGoal!),
-    nbMoves = prop(0),
-    // null = ongoing, true = win, false = fail
-    success = prop<boolean | null>(null),
-    analysisUrl = prop(''),
-    autoNext = storedProp('practice-auto-next', true);
+export default class StudyPracticeCtrl {
+  goal: Prop<Goal>;
+  nbMoves = prop(0);
+  // null = ongoing, true = win, false = fail
+  success = prop<boolean | null>(null);
+  autoNext = storedBooleanProp('analyse.practice-auto-next', true);
 
-  lichess.sound.loadOggOrMp3('practiceSuccess', `${lichess.sound.baseUrl}/other/energy3`);
-  lichess.sound.loadOggOrMp3('practiceFailure', `${lichess.sound.baseUrl}/other/failure2`);
-
-  function onLoad() {
-    root.showAutoShapes = readOnlyProp(true);
-    root.showGauge = readOnlyProp(true);
-    root.showComputer = readOnlyProp(true);
-    goal(root.data.practiceGoal!);
-    nbMoves(0);
-    success(null);
-    const chapter = studyData.chapter;
-    history.replaceState(null, chapter.name, data.url + '/' + chapter.id);
-    analysisUrl('/analysis/standard/' + root.node.fen.replace(/ /g, '_') + '?color=' + root.bottomColor());
+  constructor(
+    readonly root: AnalyseCtrl,
+    readonly studyData: StudyData,
+    readonly data: StudyPracticeData,
+  ) {
+    this.goal = prop(root.data.practiceGoal!);
+    site.sound.load('practiceSuccess', site.sound.url('other/energy3.mp3'));
+    site.sound.load('practiceFailure', site.sound.url('other/failure2.mp3'));
+    this.onLoad();
   }
-  onLoad();
 
-  function computeNbMoves(): number {
-    let plies = root.node.ply - root.tree.root.ply;
-    if (root.bottomColor() !== root.data.player.color) plies--;
+  onLoad = () => {
+    this.goal(this.root.data.practiceGoal!);
+    this.nbMoves(0);
+    this.success(null);
+  };
+
+  computeNbMoves = (): number => {
+    let plies = this.root.node.ply - this.root.tree.root.ply;
+    if (this.root.bottomColor() !== this.root.data.player.color) plies--;
     return Math.ceil(plies / 2);
-  }
+  };
 
-  function getStudy(): StudyCtrl {
-    return root.study!;
-  }
-
-  function checkSuccess(): void {
-    const gamebook = getStudy().gamebookPlay();
+  checkSuccess = (): void => {
+    const gamebook = this.root.study?.gamebookPlay;
     if (gamebook) {
-      if (gamebook.state.feedback === 'end') onVictory();
+      if (gamebook.state.feedback === 'end') this.onVictory();
       return;
     }
-    if (!getStudy().data.chapter.practice) {
-      return saveNbMoves();
-    }
-    if (success() !== null) return;
-    nbMoves(computeNbMoves());
-    const res = success(makeSuccess(root, goal(), nbMoves()));
-    if (res) onVictory();
-    else if (res === false) onFailure();
-  }
-
-  function onVictory(): void {
-    saveNbMoves();
-    lichess.sound.play('practiceSuccess');
-    if (studyData.chapter.practice && autoNext()) setTimeout(getStudy().goToNextChapter, 1000);
-  }
-
-  function saveNbMoves(): void {
-    const chapterId = getStudy().currentChapter().id,
-      former = data.completion[chapterId];
-    if (typeof former === 'undefined' || nbMoves() < former) {
-      data.completion[chapterId] = nbMoves();
-      xhr.practiceComplete(chapterId, nbMoves());
-    }
-  }
-
-  function onFailure(): void {
-    root.node.fail = true;
-    lichess.sound.play('practiceFailure');
-  }
-
-  return {
-    onLoad,
-    onJump() {
-      // reset failure state if no failed move found in mainline history
-      if (success() === false && !root.nodeList.find(n => !!n.fail)) success(null);
-      checkSuccess();
-    },
-    onCeval: checkSuccess,
-    data,
-    goal,
-    success,
-    nbMoves,
-    reset() {
-      root.tree.root.children = [];
-      root.userJump('');
-      root.practice!.reset();
-      onLoad();
-      root.practice!.resume();
-    },
-    isWhite: root.bottomIsWhite,
-    analysisUrl,
-    autoNext,
+    if (this.success() !== null || !this.root.practice || !this.root.study?.data.chapter.practice) return;
+    this.nbMoves(this.computeNbMoves());
+    const res = this.success(makeSuccess(this.root, this.goal(), this.nbMoves()));
+    if (res) this.onVictory();
+    else if (res === false) this.onFailure();
   };
+
+  onVictory = (): void => {
+    site.sound.play('practiceSuccess');
+    this.onComplete();
+    if (this.studyData.chapter.practice && this.autoNext())
+      setTimeout(this.root.study!.goToNextChapter, 1000);
+  };
+
+  onComplete = (): void => {
+    this.saveNbMoves();
+  };
+
+  saveNbMoves = (): void => {
+    const chapterId = this.root.study!.currentChapter().id;
+    const former = this.data.completion[chapterId];
+    if (typeof former === 'undefined' || this.nbMoves() < former) {
+      this.data.completion[chapterId] = this.nbMoves();
+      practiceComplete(chapterId, this.nbMoves());
+    }
+  };
+
+  onFailure = (): void => {
+    this.root.node.fail = true;
+    site.sound.play('practiceFailure');
+  };
+
+  onJump = () => {
+    // reset failure state if no failed move found in mainline history
+    if (this.success() === false && !this.root.nodeList.some(n => !!n.fail)) this.success(null);
+    this.checkSuccess();
+  };
+  onCeval = this.checkSuccess;
+  reset = () => {
+    this.root.tree.root.children = [];
+    this.root.userJump('');
+    this.root.practice!.reset();
+    this.onLoad();
+    this.root.practice!.resume();
+  };
+  customCeval: { search: () => Search } = {
+    search: () =>
+      api.overrides.studyPracticeSearch?.() ?? { by: { nodes: 600_000 }, multiPv: 1, indeterminate: true },
+  };
+  isWhite = this.root.bottomIsWhite;
+  analysisUrl = () =>
+    `/analysis/standard/${this.root.node.fen.replace(/ /g, '_')}?color=${this.root.bottomColor()}`;
 }

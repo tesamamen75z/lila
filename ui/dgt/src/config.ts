@@ -1,16 +1,16 @@
-export default function () {
-  const form = document.getElementById('dgt-config') as HTMLFormElement,
-    voiceSelector = document.getElementById('dgt-speech-voice') as HTMLSelectElement;
+export default function (): void {
+  const form = document.getElementById('dgt-config') as HTMLFormElement;
+  const voiceSelector = document.getElementById('dgt-speech-voice') as HTMLSelectElement;
 
   (function populateVoiceList() {
-    if (typeof speechSynthesis === 'undefined') return;
+    if (!voiceSelector || typeof speechSynthesis === 'undefined') return;
     speechSynthesis.getVoices().forEach((voice, i) => {
       const option = document.createElement('option');
       option.value = voice.name;
       option.textContent = voice.name + ' (' + voice.lang + ')';
       if (voice.default) option.textContent += ' -- DEFAULT';
       voiceSelector.appendChild(option);
-      if (voice.name == localStorage.getItem('dgt-speech-voice')) voiceSelector.selectedIndex = i;
+      if (voice.name === localStorage.getItem('dgt-speech-voice')) voiceSelector.selectedIndex = i;
     });
     speechSynthesis.onvoiceschanged = populateVoiceList;
   })();
@@ -57,21 +57,23 @@ export default function () {
     ['dgt-speech-synthesis', 'dgt-speech-announce-all-moves', 'dgt-verbose'].forEach(k =>
       [true, false].forEach(v => {
         const input = document.getElementById(`${k}_${v}`) as HTMLInputElement;
-        input.checked = localStorage.getItem(k) == '' + v;
-      })
+        input.checked = localStorage.getItem(k) === v.toString();
+      }),
     );
     ['san', 'uci'].forEach(v => {
       const k = 'dgt-speech-announce-move-format';
       const input = document.getElementById(`${k}_${v}`) as HTMLInputElement;
-      input.checked = localStorage.getItem(k) == '' + v;
+      input.checked = localStorage.getItem(k) === v;
     });
   }
 
-  ensureDefaults();
-  populateForm();
+  if (form) {
+    ensureDefaults();
+    populateForm();
 
-  form.addEventListener('submit', (e: Event) => {
-    e.preventDefault();
-    Array.from(new FormData(form).entries()).forEach(([k, v]) => localStorage.setItem(k, v.toString()));
-  });
+    form.addEventListener('submit', (e: Event) => {
+      e.preventDefault();
+      Array.from(new FormData(form).entries()).forEach(([k, v]) => localStorage.setItem(k, v.toString()));
+    });
+  }
 }

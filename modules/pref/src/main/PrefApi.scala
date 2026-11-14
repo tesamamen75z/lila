@@ -1,106 +1,107 @@
 package lila.pref
 
-import play.api.mvc.RequestHeader
-import reactivemongo.api.bson._
-import scala.concurrent.duration._
+import chess.{ ByColor, Color }
+import reactivemongo.api.bson.*
 
-import lila.db.dsl._
-import lila.memo.CacheApi._
-import lila.user.User
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi.*
 
 final class PrefApi(
-    coll: Coll,
+    val coll: Coll,
     cacheApi: lila.memo.CacheApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor)
+    extends lila.core.pref.PrefApi:
 
-  import PrefHandlers._
+  import PrefHandlers.given
 
-  private def fetchPref(id: User.ID): Fu[Option[Pref]] = coll.find($id(id)).one[Pref]
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    coll.delete.one(bid(del.id)).void
 
-  private val cache = cacheApi[User.ID, Option[Pref]](65536, "pref.fetchPref") {
-    _.expireAfterAccess(10 minutes)
-      .buildAsyncFuture(fetchPref)
-  }
+  private def fetchPref(id: UserId): Fu[Option[Pref]] = coll.find(bid(id)).one[Pref]
 
-  def saveTag(user: User, tag: Pref.Tag.type => String, value: Boolean) = {
-    if (value)
-      coll.update
-        .one(
-          $id(user.id),
-          $set(s"tags.${tag(Pref.Tag)}" -> "1"),
-          upsert = true
-        )
-        .void
-    else
-      coll.update
-        .one($id(user.id), $unset(s"tags.${tag(Pref.Tag)}"))
-        .void >>- { cache invalidate user.id }
-  } >>- { cache invalidate user.id }
+  private val cache = cacheApi[UserId, Option[Pref]](200_000, "pref.fetchPref"):
+    _.expireAfterAccess(10.minutes).buildAsyncFuture(fetchPref)
 
-  def getPrefById(id: User.ID): Fu[Pref]    = cache get id dmap (_ getOrElse Pref.create(id))
-  val getPref                               = getPrefById _
-  def getPref(user: User): Fu[Pref]         = getPref(user.id)
-  def getPref(user: Option[User]): Fu[Pref] = user.fold(fuccess(Pref.default))(getPref)
+  def setDgt(user: User) = setPref(user, _.copy(hasDgt = true))
 
-  def getPref[A](user: User, pref: Pref => A): Fu[A]      = getPref(user) dmap pref
-  def getPref[A](userId: User.ID, pref: Pref => A): Fu[A] = getPref(userId) dmap pref
+  def get(user: User): Fu[Pref] = cache.get(user.id).dmap(_ | Pref.create(user))
 
-  def getPref(user: User, req: RequestHeader): Fu[Pref] =
-    getPref(user) dmap RequestPref.queryParamOverride(req)
+  def get[A](userId: UserId, pref: Pref => A): Fu[A] =
+    cache.get(userId).dmap(p => pref(p | Pref.default))
 
-  def followable(userId: User.ID): Fu[Boolean] =
-    coll.primitiveOne[Boolean]($id(userId), "follow") map (_ | Pref.default.follow)
+  def getWithReq(user: User)(using Req): Fu[Pref] =
+    get(user).dmap(RequestPref.queryParamOverride)
 
-  private def unfollowableIds(userIds: List[User.ID]): Fu[Set[User.ID]] =
-    coll.secondaryPreferred.distinctEasy[User.ID, Set](
+  def getWithReq(user: Option[User])(using Req): Fu[Pref] = user match
+    case Some(u) => get(u).dmap(RequestPref.queryParamOverride)
+    case None => fuccess(RequestPref.fromRequest)
+
+  def byId(userId: UserId): Fu[Pref] = cache
+    .get(userId)
+    .dmap(_ | Pref.create(userId))
+
+  def byId(both: ByColor[Option[UserId]]): Fu[ByColor[Pref]] =
+    both.traverse(_.fold(fuccess(Pref.default))(byId))
+
+  def get(both: ByColor[Option[User]], myPov: Color, myPref: Pref): Fu[ByColor[Pref]] =
+    both(!myPov)
+      .so(get)
+      .map: opponent =>
+        myPov.fold(ByColor(myPref, opponent), ByColor(opponent, myPref))
+
+  def getMessage(userId: UserId): Future[Int] = get(userId, _.message)
+  def getInsightShare(userId: UserId): Future[Int] = get(userId, _.insightShare)
+  def getChallenge(userId: UserId): Future[Int] = get(userId, _.challenge)
+  def getStudyInvite(userId: UserId): Future[Int] = get(userId, _.studyInvite)
+
+  def followable(userId: UserId): Fu[Boolean] =
+    coll.primitiveOne[Boolean](bid(userId), "follow").map(_ | Pref.default.follow)
+
+  private def unfollowableIds(userIds: List[UserId]): Fu[Set[UserId]] =
+    coll.secondary.distinctEasy[UserId, Set](
       "_id",
-      $inIds(userIds) ++ $doc("follow" -> false)
+      inIds(userIds) ++ bdoc("follow" -> false)
     )
 
-  def followableIds(userIds: List[User.ID]): Fu[Set[User.ID]] =
-    unfollowableIds(userIds) map userIds.toSet.diff
+  def followableIds(userIds: List[UserId]): Fu[Set[UserId]] =
+    unfollowableIds(userIds).map(userIds.toSet.diff)
 
-  def followables(userIds: List[User.ID]): Fu[List[Boolean]] =
-    followableIds(userIds) map { followables =>
-      userIds map followables.contains
-    }
+  def followables(userIds: List[UserId]): Fu[List[Boolean]] =
+    followableIds(userIds).map: followables =>
+      userIds.map(followables.contains)
 
-  private def unmentionableIds(userIds: Set[User.ID]): Fu[Set[User.ID]] =
-    coll.secondaryPreferred.distinctEasy[User.ID, Set](
+  private def unmentionableIds(userIds: Set[UserId]): Fu[Set[UserId]] =
+    coll.secondary.distinctEasy[UserId, Set](
       "_id",
-      $inIds(userIds) ++ $doc("mention" -> false)
+      inIds(userIds) ++ bdoc("mention" -> false)
     )
 
-  def mentionableIds(userIds: Set[User.ID]): Fu[Set[User.ID]] =
-    unmentionableIds(userIds) map userIds.diff
+  def mentionableIds(userIds: Set[UserId]): Fu[Set[UserId]] =
+    unmentionableIds(userIds).map(userIds.diff)
 
-  def setPref(pref: Pref): Funit =
-    coll.update.one($id(pref.id), pref, upsert = true).void >>-
-      cache.put(pref.id, fuccess(pref.some))
+  def setPref(user: User, pre: Pref): Funit =
+    val pref = pre.isolate(user.marks.isolate)
+    for _ <- coll.update.one(bid(pref.id), pref, upsert = true)
+    yield cache.put(pref.id, fuccess(pref.some))
 
   def setPref(user: User, change: Pref => Pref): Funit =
-    getPref(user) map change flatMap setPref
+    get(user).map(change).flatMap(setPref(user, _))
 
-  def setPref(userId: User.ID, change: Pref => Pref): Funit =
-    getPref(userId) map change flatMap setPref
+  def isolate(user: User) = setPref(user, identity[Pref])
 
-  def setPrefString(user: User, name: String, value: String): Funit =
-    getPref(user) map { _.set(name, value) } orFail
-      s"Bad pref ${user.id} $name -> $value" flatMap setPref
+  def agree(user: User): Funit =
+    for _ <- coll.update.one(bid(user.id), set("agreement" -> Pref.Agreement.current), upsert = true)
+    yield cache.invalidate(user.id)
 
-  def setBot(user: User): Funit =
-    setPref(
-      user,
-      (p: Pref) =>
-        p.copy(
-          takeback = Pref.Takeback.NEVER,
-          moretime = Pref.Moretime.NEVER,
-          insightShare = Pref.InsightShare.EVERYBODY
-        )
+  def setBot(user: User): Funit = setPref(
+    user,
+    _.copy(
+      takeback = Pref.Takeback.NEVER,
+      moretime = Pref.Moretime.NEVER,
+      insightShare = lila.core.pref.InsightShare.EVERYBODY
     )
+  )
 
-  def saveNewUserPrefs(user: User, req: RequestHeader): Funit = {
-    val reqPref = RequestPref fromRequest req
-    (reqPref != Pref.default) ?? setPref(reqPref.copy(_id = user.id))
-  }
-}
+  def saveNewUserPrefs(user: User)(using Req): Funit =
+    val reqPref = RequestPref.fromRequest
+    (reqPref != Pref.default).so(setPref(user, reqPref.copy(id = user.id)))

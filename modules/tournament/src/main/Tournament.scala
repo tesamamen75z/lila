@@ -1,130 +1,137 @@
 package lila.tournament
 
-import chess.Clock.{ Config => ClockConfig }
-import chess.format.FEN
-import chess.{ Mode, Speed }
-import org.joda.time.{ DateTime, Duration, Interval }
-import play.api.i18n.Lang
-import scala.util.chaining._
+import alleycats.Zero
+import chess.Clock.Config as ClockConfig
+import chess.format.Fen
+import chess.{ Rated, Speed }
+import scalalib.ThreadLocalRandom
+import scalalib.model.Seconds
 
-import lila.common.GreatPlayer
-import lila.common.ThreadLocalRandom
-import lila.i18n.defaultLang
+import lila.core.i18n.Translate
+import lila.core.tournament.Status
+import lila.gathering.{ GreatPlayer, Thematic }
 import lila.rating.PerfType
-import lila.user.User
 
 case class Tournament(
-    id: Tournament.ID,
+    id: TourId,
     name: String,
     status: Status,
     clock: ClockConfig,
     minutes: Int,
     variant: chess.variant.Variant,
-    position: Option[FEN],
-    mode: Mode,
+    position: Option[Fen.Standard],
+    rated: Rated,
     password: Option[String] = None,
-    conditions: Condition.All,
+    conditions: TournamentCondition.All,
     teamBattle: Option[TeamBattle] = None,
     noBerserk: Boolean = false,
     noStreak: Boolean = false,
-    schedule: Option[Schedule],
+    schedule: Option[Scheduled],
     nbPlayers: Int,
-    createdAt: DateTime,
-    createdBy: User.ID,
-    startsAt: DateTime,
-    winnerId: Option[User.ID] = None,
-    featuredId: Option[String] = None,
+    createdAt: Instant,
+    createdBy: UserId,
+    startsAt: Instant,
+    winnerId: Option[UserId] = None,
+    featured: Option[GameId] = None,
     spotlight: Option[Spotlight] = None,
     description: Option[String] = None,
+    payouts: Option[Payouts] = None,
     hasChat: Boolean = true
-) {
+) extends lila.core.tournament.Tournament:
 
-  def isCreated   = status == Status.Created
-  def isStarted   = status == Status.Started
-  def isFinished  = status == Status.Finished
+  def isCreated = status == Status.created
+  def isStarted = status == Status.started
+  def isFinished = status == Status.finished
   def isEnterable = !isFinished
 
   def isPrivate = password.isDefined
 
   def isTeamBattle = teamBattle.isDefined
+  def isTeamRelated = isTeamBattle || conditions.teamMember.isDefined
+  def singleTeamId: Option[TeamId] = conditions.teamMember.map(_.teamId)
+  def selectTeam(myTeams: Set[TeamId]): Option[TeamId] = singleTeamId match
+    case Some(teamId) => teamId.some.filter(myTeams.contains)
+    case None => teamBattle.flatMap(_.teams.intersect(myTeams).headOption)
 
-  def name(full: Boolean = true)(implicit lang: Lang): String = {
-    import lila.i18n.I18nKeys.tourname._
-    if (isMarathon || isUnique) name
-    else if (isTeamBattle && full) xTeamBattle.txt(name)
-    else if (isTeamBattle) name
-    else schedule.fold(if (full) s"$name Arena" else name)(_.name(full))
-  }
+  def name(full: Boolean = true)(using Translate): String =
+    if isMarathon || isUnique then name
+    else if isTeamBattle && full then lila.core.i18n.I18nKey.tourname.xTeamBattle.txt(name)
+    else if isTeamBattle then name
+    else TournamentName(this, full)
 
-  def isMarathon =
-    schedule.map(_.freq) exists {
-      case Schedule.Freq.ExperimentalMarathon | Schedule.Freq.Marathon => true
-      case _                                                           => false
-    }
+  def scheduleFreq: Option[Schedule.Freq] = schedule.map(_.freq)
+  def scheduleSpeed: Option[Schedule.Speed] = schedule.isDefined.option(Schedule.Speed.fromClock(clock))
+  def scheduleData: Option[(Schedule.Freq, Schedule.Speed)] = (scheduleFreq, scheduleSpeed).tupled
 
-  def isShield = schedule.map(_.freq) has Schedule.Freq.Shield
-
-  def isUnique = schedule.map(_.freq) has Schedule.Freq.Unique
-
-  def isMarathonOrUnique = isMarathon || isUnique
+  def isMarathon = scheduleFreq.has(Schedule.Freq.Marathon)
+  def isShield = scheduleFreq.has(Schedule.Freq.Shield)
+  def isUnique = scheduleFreq.has(Schedule.Freq.Unique)
 
   def isScheduled = schedule.isDefined
 
-  def isRated = mode == Mode.Rated
+  def finishesAt = startsAt.plusMinutes(minutes)
 
-  def finishesAt = startsAt plusMinutes minutes
+  def imminentStart = isCreated && (startsAt.toMillis - nowMillis) < 1000
 
-  def secondsToStart = (startsAt.getSeconds - nowSeconds).toInt atLeast 0
+  def secondsToStart = Seconds((startsAt.toSeconds - nowSeconds).toInt.atLeast(0))
 
-  def secondsToFinish = (finishesAt.getSeconds - nowSeconds).toInt atLeast 0
+  def secondsToFinish = Seconds((finishesAt.toSeconds - nowSeconds).toInt.atLeast(0))
 
-  def pairingsClosed = secondsToFinish < math.max(30, math.min(clock.limitSeconds / 2, 120))
+  def progressPercent: Int =
+    if isCreated then 0
+    else if isFinished then 100
+    else
+      val total = minutes * 60
+      val remaining = secondsToFinish.value
+      100 - (remaining * 100 / total)
 
-  def isStillWorthEntering =
-    isMarathonOrUnique || {
-      secondsToFinish > (minutes * 60 / 3).atMost(20 * 60)
-    }
+  def pairingsClosed = secondsToFinish < Seconds(math.max(30, math.min(clock.limitSeconds.value / 2, 120)))
 
-  def isRecentlyFinished = isFinished && (nowSeconds - finishesAt.getSeconds) < 30 * 60
+  def isStillWorthEntering = isEnterable && {
+    isMarathon || isUnique ||
+    secondsToFinish > Seconds((minutes * 60 / 3).atMost(20 * 60))
+  }
 
-  def isRecentlyStarted = isStarted && (nowSeconds - startsAt.getSeconds) < 15
+  def finishedSinceSeconds: Option[Long] = isFinished.option(nowSeconds - finishesAt.toSeconds)
 
-  def isNowOrSoon = startsAt.isBefore(DateTime.now plusMinutes 15) && !isFinished
+  def isRecentlyFinished = finishedSinceSeconds.exists(_ < 30 * 60)
 
-  def isDistant = startsAt.isAfter(DateTime.now plusDays 1)
+  def isRecentlyStarted = isStarted && (nowSeconds - startsAt.toSeconds) < 15
 
-  def duration = new Duration(minutes * 60 * 1000)
+  def isNowOrSoon = startsAt.isBefore(nowInstant.plusMinutes(15)) && !isFinished
 
-  def interval = new Interval(startsAt, duration)
+  def isDistant = startsAt.isAfter(nowInstant.plusDays(1))
 
-  def overlaps(other: Tournament) = interval overlaps other.interval
+  def duration = java.time.Duration.ofMinutes(minutes)
 
-  def similarTo(other: Tournament) =
-    (schedule, other.schedule) match {
-      case (Some(s1), Some(s2)) if s1 similarTo s2 => true
-      case _                                       => false
-    }
+  def interval = TimeInterval(startsAt, duration)
+
+  def overlaps(other: Tournament) = interval.overlaps(other.interval)
+
+  def similarSchedule(other: Tournament) =
+    schedule.isDefined && variant == other.variant && conditions == other.conditions &&
+      scheduleFreq == other.scheduleFreq && scheduleSpeed == other.scheduleSpeed
+
+  def sameNameAndTeam(other: Tournament) =
+    name == other.name && conditions.teamMember == other.conditions.teamMember
 
   def speed = Speed(clock)
 
-  def perfType: PerfType = PerfType(variant, speed)
+  def perfType: PerfType = lila.rating.PerfType(variant, speed)
 
   def durationString =
-    if (minutes < 60) s"${minutes}m"
-    else s"${minutes / 60}h" + (if (minutes % 60 != 0) s" ${minutes % 60}m" else "")
+    if minutes < 60 then s"${minutes}m"
+    else s"${minutes / 60}h" + (if minutes % 60 != 0 then s" ${minutes % 60}m" else "")
 
   def berserkable = !noBerserk && clock.berserkable
-  def streakable  = !noStreak
+  def streakable = !noStreak
 
   def clockStatus =
-    secondsToFinish pipe { s =>
-      "%02d:%02d".format(s / 60, s % 60)
-    }
-
-  def schedulePair = schedule map { this -> _ }
+    val s = secondsToFinish.value
+    "%02d:%02d".format(s / 60, s % 60)
 
   def winner =
-    winnerId map { userId =>
+    winnerId.map { userId =>
       Winner(
         tourId = id,
         userId = userId,
@@ -133,104 +140,109 @@ case class Tournament(
       )
     }
 
-  def nonLichessCreatedBy = (createdBy != User.lichessId) option createdBy
+  def byLichess = createdBy.is(UserId.lichess)
 
-  def ratingVariant = if (variant.fromPosition) chess.variant.Standard else variant
+  def nonLichessCreatedBy = byLichess.not.option(createdBy)
 
-  def startingPosition = position flatMap Thematic.byFen
+  def ratingVariant = if variant.fromPosition then chess.variant.Standard else variant
 
-  lazy val looksLikePrize = !isScheduled && lila.common.String.looksLikePrize(s"$name $description")
+  def startingPosition = position.flatMap(Thematic.byFen)
 
-  override def toString = s"$id $startsAt ${name()(defaultLang)} $minutes minutes, $clock, $nbPlayers players"
-}
+  lazy val prizeInDescription = lila.gathering.looksLikePrize(s"$name $description")
+  lazy val looksLikePrize = !isScheduled && prizeInDescription
+
+  def estimateNumberOfGamesOneCanPlay: Double =
+    // There are 2 players, and they don't always use all their time (0.8)
+    // add 15 seconds for pairing delay
+    val estimatedGameSeconds: Double = clock.estimateTotalSeconds * 2 * 0.8 + 15
+    (minutes * 60) / estimatedGameSeconds
+
+  def homepageSince: Option[Instant] = scheduleFreq.map: freq =>
+    startsAt.minusMinutes:
+      import Schedule.Freq.*
+      val base = freq match
+        case Unique => spotlight.flatMap(_.homepageHours).|(24) * 60
+        case Yearly | Marathon => 24 * 60
+        case Monthly | Shield => 6 * 60
+        case Weekly | Weekend => 3 * 45
+        case Daily => 1 * 30
+        case _ => 20
+      if variant.exotic && freq != Unique then base / 3 else base
+
+  def realNames = scheduleFreq.has(Schedule.Freq.Unique) && name.contains("Titled Arena")
+
+  override def toString =
+    s"$id $startsAt $name $minutes minutes, $clock, $nbPlayers players"
 
 case class EnterableTournaments(tours: List[Tournament], scheduled: List[Tournament])
 
-object Tournament {
-
-  type ID = String
-
+object Tournament:
   val minPlayers = 2
 
-  def make(
-      by: Either[User.ID, User],
-      name: Option[String],
-      clock: ClockConfig,
-      minutes: Int,
-      variant: chess.variant.Variant,
-      position: Option[FEN],
-      mode: Mode,
-      password: Option[String],
-      waitMinutes: Int,
-      startDate: Option[DateTime],
-      berserkable: Boolean,
-      streakable: Boolean,
-      teamBattle: Option[TeamBattle],
-      description: Option[String],
-      hasChat: Boolean
-  ) =
+  def fromSetup(setup: TournamentSetup)(using me: Me) =
     Tournament(
       id = makeId,
-      name = name | (position match {
-        case Some(pos) => Thematic.byFen(pos).fold("Custom position")(_.shortName)
-        case None      => GreatPlayer.randomName
-      }),
-      status = Status.Created,
-      clock = clock,
-      minutes = minutes,
-      createdBy = by.fold(identity, _.id),
-      createdAt = DateTime.now,
+      name = setup.name | setup.realPosition.match
+        case Some(pos) => Thematic.byFen(pos).fold("Custom position")(_.name.value)
+        case None => GreatPlayer.randomName
+      ,
+      status = Status.created,
+      clock = setup.clockConfig,
+      minutes = setup.minutes,
+      createdBy = me.userId,
+      createdAt = nowInstant,
       nbPlayers = 0,
-      variant = variant,
-      position = position,
-      mode = mode,
-      password = password,
-      conditions = Condition.All.empty,
-      teamBattle = teamBattle,
-      noBerserk = !berserkable,
-      noStreak = !streakable,
+      variant = setup.realVariant,
+      position = setup.realPosition,
+      rated = setup.realRated,
+      password = setup.password,
+      conditions = setup.conditions,
+      teamBattle = setup.teamBattleByTeam.map(TeamBattle.init),
+      noBerserk = !((setup.berserkable | true) && !setup.timeControlPreventsBerserk),
+      noStreak = !(setup.streakable | true),
       schedule = None,
-      startsAt = startDate match {
-        case Some(startDate) => startDate plusSeconds ThreadLocalRandom.nextInt(60)
-        case None            => DateTime.now plusMinutes waitMinutes
-      },
-      description = description,
-      hasChat = hasChat
+      startsAt =
+        setup.startDate | nowInstant.plusMinutes(setup.waitMinutes | TournamentForm.waitMinuteDefault),
+      description = setup.description,
+      payouts = setup.payouts,
+      hasChat = setup.hasChat | true
     )
 
-  def scheduleAs(sched: Schedule, minutes: Int) =
+  def scheduleAs(sched: Schedule, startsAt: Instant, minutes: Int)(using Translate) =
     Tournament(
       id = makeId,
-      name = sched.name(full = false)(defaultLang),
-      status = Status.Created,
-      clock = Schedule clockFor sched,
+      name = TournamentName(sched, full = false),
+      status = Status.created,
+      clock = Schedule.clockFor(sched),
       minutes = minutes,
-      createdBy = User.lichessId,
-      createdAt = DateTime.now,
+      createdBy = UserId.lichess,
+      createdAt = nowInstant,
       nbPlayers = 0,
       variant = sched.variant,
       position = sched.position,
-      mode = Mode.Rated,
+      rated = Rated.Yes,
       conditions = sched.conditions,
-      schedule = Some(sched),
-      startsAt = sched.at plusSeconds ThreadLocalRandom.nextInt(60)
+      schedule = Scheduled(sched.freq, sched.at).some,
+      startsAt = startsAt
     )
 
-  def tournamentUrl(tourId: String): String = s"https://lichess.org/tournament/$tourId"
+  def tournamentUrl(tourId: TourId) = Url(s"https://lichess.org/tournament/$tourId")
 
-  def makeId = ThreadLocalRandom nextString 8
+  def makeId = TourId(ThreadLocalRandom.nextString(8))
 
   case class PastAndNext(past: List[Tournament], next: List[Tournament])
 
-  sealed abstract class JoinResult(val error: Option[String]) {
+  enum JoinResult(val error: Option[String]):
     def ok = error.isEmpty
-  }
-  object JoinResult {
-    case object Ok            extends JoinResult(none)
-    case object WrongPassword extends JoinResult("Wrong password".some)
-    case object Paused        extends JoinResult("Your pause is not over yet".some)
-    case object Verdicts      extends JoinResult("Tournament restrictions".some)
-    case object MissingTeam   extends JoinResult("Missing team".some)
-    case object Nope          extends JoinResult("Couldn't join for some reason?".some)
-  }
-}
+    case Ok extends JoinResult(none)
+    case WrongEntryCode extends JoinResult("Wrong entry code".some)
+    case Paused extends JoinResult("Your pause is not over yet".some)
+    case Verdicts extends JoinResult("Tournament restrictions".some)
+    case MissingTeam extends JoinResult("Missing team".some)
+    case ArenaBanned extends JoinResult("You are not allowed to join arenas".some)
+    case PrizeBanned extends JoinResult("You are not allowed to play in prized tournaments".some)
+    case RateLimited extends JoinResult("You are joining too many tournaments".some)
+    case NotFound extends JoinResult("This tournament no longer exists".some)
+    case Nope extends JoinResult("Couldn't join for some reason?".some)
+  object JoinResult:
+    given Zero[Tournament.JoinResult] = Zero(NotFound)

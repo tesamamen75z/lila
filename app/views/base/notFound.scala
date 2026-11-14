@@ -1,46 +1,47 @@
-package views.html
-package base
+package views.base
 
-import lila.api.Context
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
+import lila.app.UiEnv.{ *, given }
 
-import controllers.routes
-
-object notFound {
-
-  def apply()(implicit ctx: Context) =
-    layout(
-      title = "Page not found",
-      moreJs = prismicJs,
-      moreCss = cssTag("not-found"),
-      csp = isGranted(_.Prismic) option defaultCsp.withPrismic(true)
-    ) {
-      main(cls := "not-found page-small box box-pad")(
-        header(
-          h1("404"),
-          div(
-            strong("Page not found!"),
-            p(
-              "Return to ",
-              a(href := routes.Lobby.home)("the homepage"),
-              span(cls := "or-play")(" or play this mini-game")
-            )
-          )
-        ),
-        div(cls := "game")(
-          iframe(
-            src := assetUrl(s"vendor/ChessPursuit/bin-release/index.html"),
-            st.frameborder := 0,
-            width := 400,
-            height := 500
-          ),
-          p(cls := "credits")(
-            a(href := "https://github.com/Saturnyn/ChessPursuit")("ChessPursuit"),
-            " courtesy of ",
-            a(href := "https://github.com/Saturnyn")("Saturnyn")
+def notFound(msg: Option[String]) =
+  Page(msg | "Page not found").css("bits.not-found"):
+    main(cls := "not-found page-small box box-pad")(
+      header(
+        h1("404"),
+        div(
+          strong("Page not found!"),
+          msg.map(em(_)),
+          p(
+            "Return to ",
+            a(href := routes.Lobby.home)("the homepage"),
+            span(cls := "or-play")(", or play this mini-game")
           )
         )
+      ),
+      div(cls := "game")(
+        iframe(
+          src := staticAssetPath(s"vendor/ChessPursuit/bin-release/index.html"),
+          st.frameborder := 0,
+          widthA := 400,
+          heightA := 500,
+          frame.credentialless
+        ),
+        p(cls := "credits")(
+          a(href := "https://github.com/Saturnyn/ChessPursuit")("ChessPursuit"),
+          " courtesy of ",
+          a(href := "https://github.com/Saturnyn")("Saturnyn")
+        )
       )
-    }
-}
+    )
+
+def notFoundEmbed(msg: Option[String])(using EmbedContext) =
+  views.base.embed.site(title = msg | "Page not found", cssKeys = List("bits.not-found-embed"))(
+    main(cls := "not-found page-small box box-pad")(
+      header(
+        h1("404"),
+        div(
+          strong("Page not found!"),
+          msg.map(em(_))
+        )
+      )
+    )
+  )

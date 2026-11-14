@@ -1,63 +1,60 @@
 package lila.gameSearch
 
-import chess.Mode
-import org.joda.time.DateTime
-import play.api.data._
-import play.api.data.Forms._
+import chess.Rated
+import play.api.data.*
+import play.api.data.Forms.*
+import smithy4s.time.Timestamp
 
-import lila.common.Form._
-import lila.search.Range
+import java.time.LocalDate
 
-final private[gameSearch] class GameSearchForm {
+import lila.common.Form.*
+import lila.core.i18n.Translate
+import lila.search.spec.{ DateRange, GameSorting as SpecSorting, IntRange, Query }
 
-  val search = Form(
+final private[gameSearch] class GameSearchForm:
+
+  def search(using Translate) = Form(
     mapping(
       "players" -> mapping(
-        "a"      -> optional(nonEmptyText),
-        "b"      -> optional(nonEmptyText),
-        "winner" -> optional(nonEmptyText),
-        "loser"  -> optional(nonEmptyText),
-        "white"  -> optional(nonEmptyText),
-        "black"  -> optional(nonEmptyText)
-      )(SearchPlayer.apply)(SearchPlayer.unapply),
-      "winnerColor" -> optional(numberIn(Query.winnerColors)),
-      "perf"        -> optional(numberIn(lila.rating.PerfType.nonPuzzle.map(_.id))),
-      "source"      -> optional(numberIn(Query.sources)),
-      "mode"        -> optional(numberIn(Query.modes)),
-      "turnsMin"    -> optional(numberIn(Query.turns)),
-      "turnsMax"    -> optional(numberIn(Query.turns)),
-      "ratingMin"   -> optional(numberIn(Query.averageRatings)),
-      "ratingMax"   -> optional(numberIn(Query.averageRatings)),
-      "hasAi"       -> optional(numberIn(Query.hasAis)),
-      "aiLevelMin"  -> optional(numberIn(Query.aiLevels)),
-      "aiLevelMax"  -> optional(numberIn(Query.aiLevels)),
-      "durationMin" -> optional(numberIn(Query.durations)),
-      "durationMax" -> optional(numberIn(Query.durations)),
-      "clock" -> mapping(
-        "initMin" -> optional(numberIn(Query.clockInits)),
-        "initMax" -> optional(numberIn(Query.clockInits)),
-        "incMin"  -> optional(numberIn(Query.clockIncs)),
-        "incMax"  -> optional(numberIn(Query.clockIncs))
-      )(SearchClock.apply)(SearchClock.unapply),
-      "dateMin"  -> GameSearchForm.dateField,
-      "dateMax"  -> GameSearchForm.dateField,
-      "status"   -> optional(numberIn(Query.statuses)),
-      "analysed" -> optional(number),
+        "a" -> optional(username.historicalField),
+        "b" -> optional(username.historicalField),
+        "winner" -> optional(username.historicalField),
+        "loser" -> optional(username.historicalField),
+        "white" -> optional(username.historicalField),
+        "black" -> optional(username.historicalField)
+      )(SearchPlayer.apply)(unapply),
+      "winnerColor" -> optional(numberIn(FormHelpers.winnerColors)),
+      "perf" -> optional(numberIn(perfKeys.map(_.id.value))),
+      "source" -> optional(numberIn(FormHelpers.sources)),
+      "mode" -> optional(numberIn(FormHelpers.modes)),
+      "turnsMin" -> optional(numberIn(FormHelpers.turns)),
+      "turnsMax" -> optional(numberIn(FormHelpers.turns)),
+      "ratingMin" -> optional(numberIn(FormHelpers.averageRatings)),
+      "ratingMax" -> optional(numberIn(FormHelpers.averageRatings)),
+      "hasAi" -> optional(numberIn(FormHelpers.hasAis)),
+      "aiLevelMin" -> optional(numberIn(FormHelpers.aiLevels)),
+      "aiLevelMax" -> optional(numberIn(FormHelpers.aiLevels)),
+      "durationMin" -> optional(numberIn(FormHelpers.durations)),
+      "durationMax" -> optional(numberIn(FormHelpers.durations)),
+      "clockInit" -> optional(numberIn(FormHelpers.clockInits)),
+      "clockInc" -> optional(numberIn(FormHelpers.clockIncs)),
+      "dateMin" -> GameSearchForm.dateField,
+      "dateMax" -> GameSearchForm.dateField,
+      "status" -> optional(numberIn(FormHelpers.statuses)),
+      "analysed" -> optional(tolerantBoolean),
       "sort" -> optional(
         mapping(
           "field" -> stringIn(Sorting.fields),
           "order" -> stringIn(Sorting.orders)
-        )(SearchSort.apply)(SearchSort.unapply)
+        )(SearchSort.apply)(unapply)
       )
-    )(SearchData.apply)(SearchData.unapply)
-  ) fill SearchData()
-}
+    )(SearchData.apply)(unapply)
+  ).fill(SearchData())
 
-private[gameSearch] object GameSearchForm {
-  val dateField = optional(ISODateOrTimestamp.isoDateOrTimestamp)
-}
+private[gameSearch] object GameSearchForm:
+  val dateField = optional(ISODateOrTimestamp.mapping)
 
-private[gameSearch] case class SearchData(
+case class SearchData(
     players: SearchPlayer = SearchPlayer(),
     winnerColor: Option[Int] = None,
     perf: Option[Int] = None,
@@ -72,71 +69,66 @@ private[gameSearch] case class SearchData(
     aiLevelMax: Option[Int] = None,
     durationMin: Option[Int] = None,
     durationMax: Option[Int] = None,
-    clock: SearchClock = SearchClock(),
-    dateMin: Option[DateTime] = None,
-    dateMax: Option[DateTime] = None,
+    clockInit: Option[Int] = None,
+    clockInc: Option[Int] = None,
+    dateMin: Option[LocalDate] = None,
+    dateMax: Option[LocalDate] = None,
     status: Option[Int] = None,
-    analysed: Option[Int] = None,
+    analysed: Option[Boolean] = None,
     sort: Option[SearchSort] = None
-) {
+):
 
   def sortOrDefault = sort | SearchSort()
 
-  def query =
-    Query(
-      user1 = players.cleanA,
-      user2 = players.cleanB,
-      winner = players.cleanWinner,
-      loser = players.cleanLoser,
-      winnerColor = winnerColor,
-      perf = perf,
-      source = source,
-      rated = mode flatMap Mode.apply map (_.rated),
-      turns = Range(turnsMin, turnsMax),
-      averageRating = Range(ratingMin, ratingMax),
-      hasAi = hasAi map (_ == 1),
-      aiLevel = Range(aiLevelMin, aiLevelMax),
-      duration = Range(durationMin, durationMax),
-      clock = Clocking(clock.initMin, clock.initMax, clock.incMin, clock.incMax),
-      date = Range(dateMin, dateMax),
-      status = status,
-      analysed = analysed map (_ == 1),
-      whiteUser = players.cleanWhite,
-      blackUser = players.cleanBlack,
-      sorting = Sorting(sortOrDefault.field, sortOrDefault.order)
-    )
+  def query: Query.Game = Query.game(
+    user1 = players.cleanA.map(_.value),
+    user2 = players.cleanB.map(_.value),
+    winner = players.cleanWinner.map(_.value),
+    loser = players.cleanLoser.map(_.value),
+    winnerColor = winnerColor,
+    perf =
+      if perf.exists(_ == 5) then List(1, 2, 3, 4, 6)
+      else perf.toList, // 1,2,3,4,6 are the perf types for standard games
+    source = source,
+    rated = mode.flatMap(Rated.apply).map(_.yes),
+    status = status,
+    turns = IntRange(turnsMin, turnsMax),
+    averageRating = IntRange(ratingMin, ratingMax),
+    hasAi = hasAi.map(_ == 1),
+    aiLevel = IntRange(aiLevelMin, aiLevelMax),
+    date = DateRange(dateMin.map(transform), dateMax.map(transform)),
+    duration = IntRange(durationMin, durationMax),
+    analysed = analysed,
+    whiteUser = players.cleanWhite.map(_.value),
+    blackUser = players.cleanBlack.map(_.value),
+    sorting = SpecSorting(sortOrDefault.field, sortOrDefault.order),
+    clockInit = clockInit,
+    clockInc = clockInc
+  )
 
-  def nonEmptyQuery = Some(query).filter(_.nonEmpty)
-}
+  def transform(l: LocalDate): Timestamp = Timestamp(l.getYear, l.getMonthValue, l.getDayOfMonth)
 
-private[gameSearch] case class SearchPlayer(
-    a: Option[String] = None,
-    b: Option[String] = None,
-    winner: Option[String] = None,
-    loser: Option[String] = None,
-    white: Option[String] = None,
-    black: Option[String] = None
-) {
+  def nonEmptyQuery: Option[Query.Game] = query.some.filter(_.nonEmpty)
 
-  lazy val cleanA = clean(a)
-  lazy val cleanB = clean(b)
+case class SearchPlayer(
+    a: Option[UserStr] = None,
+    b: Option[UserStr] = None,
+    winner: Option[UserStr] = None,
+    loser: Option[UserStr] = None,
+    white: Option[UserStr] = None,
+    black: Option[UserStr] = None
+):
+
+  lazy val cleanA = a.map(_.id)
+  lazy val cleanB = b.map(_.id)
   def cleanWinner = oneOf(winner)
-  def cleanLoser  = oneOf(loser)
-  def cleanWhite  = oneOf(white)
-  def cleanBlack  = oneOf(black)
+  def cleanLoser = oneOf(loser)
+  def cleanWhite = oneOf(white)
+  def cleanBlack = oneOf(black)
 
-  private def oneOf(s: Option[String]) = clean(s).filter(List(cleanA, cleanB).flatten.contains)
-  private def clean(s: Option[String]) = s map (_.trim.toLowerCase) filter (_.nonEmpty)
-}
+  private def oneOf(s: Option[UserStr]) = s.map(_.id).filter(List(cleanA, cleanB).flatten.contains)
 
-private[gameSearch] case class SearchSort(
+case class SearchSort(
     field: String = Sorting.default.f,
     order: String = Sorting.default.order
-)
-
-private[gameSearch] case class SearchClock(
-    initMin: Option[Int] = None,
-    initMax: Option[Int] = None,
-    incMin: Option[Int] = None,
-    incMax: Option[Int] = None
 )

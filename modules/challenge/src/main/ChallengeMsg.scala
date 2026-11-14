@@ -1,35 +1,34 @@
 package lila.challenge
 
-import scala.concurrent.ExecutionContext
+import chess.ByColor
 
-import lila.common.{ LightUser, Template }
-import lila.user.{ LightUserApi, User }
+import lila.core.LightUser
+import lila.core.data.Template
 
-final class ChallengeMsg(msgApi: lila.msg.MsgApi, lightUserApi: LightUserApi)(implicit
-    ec: ExecutionContext
-) {
+final class ChallengeMsg(msgApi: lila.core.msg.MsgApi)(using Executor):
 
-  def onApiPair(challenge: Challenge)(managedBy: User, template: Option[Template]): Funit =
-    challenge.userIds.map(lightUserApi.async).sequenceFu.flatMap {
-      _.flatten match {
-        case List(u1, u2) => onApiPair(challenge.id, u1, u2)(managedBy.id, template)
-        case _            => funit
-      }
-    }
-
-  def onApiPair(gameId: lila.game.Game.ID, u1: LightUser, u2: LightUser)(
-      managedById: User.ID,
+  // bulk
+  def onApiPair(gameId: GameId, users: ByColor[LightUser])(
+      managedById: UserId,
       template: Option[Template]
   ): Funit =
-    List(u1 -> u2, u2 -> u1)
-      .map { case (u1, u2) =>
-        val msg = template
-          .fold("Your game with {opponent} is ready: {game}.")(_.value)
-          .replace("{player}", s"@${u1.name}")
-          .replace("{opponent}", s"@${u2.name}")
-          .replace("{game}", s"#${gameId}")
-        msgApi.post(managedById, u1.id, msg, multi = true, ignoreSecurity = true)
-      }
-      .sequenceFu
-      .void
-}
+    if template.exists(_.value.toLowerCase.contains("{nomessage}")) then funit
+    else
+      List(users, users.swap)
+        .map(_.toPair)
+        .sequentiallyVoid: (u1, u2) =>
+          sendGameMessage(gameId, u1, u2, managedById, template)
+
+  private def sendGameMessage(
+      gameId: GameId,
+      u1: LightUser,
+      u2: LightUser,
+      sender: UserId,
+      template: Option[Template]
+  ) =
+    val msg = template
+      .fold("Your game with {opponent} is ready: {game}.")(_.value)
+      .replace("{player}", s"@${u1.name}")
+      .replace("{opponent}", s"@${u2.name}")
+      .replace("{game}", s"#${gameId}")
+    msgApi.post(sender, u1.id, msg, multi = true, ignoreSecurity = true)

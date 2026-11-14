@@ -1,30 +1,71 @@
 package lila.memo
 
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
+import com.softwaremill.macwire.*
+import play.api.{ ConfigLoader, Configuration }
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.common.config.given
+import lila.core.config.*
+import lila.core.data.Url
+import lila.core.id.ImageId
 
 final class MemoConfig(
     @ConfigName("collection.cache") val cacheColl: CollName,
-    @ConfigName("collection.config") val configColl: CollName
+    @ConfigName("collection.config") val configColl: CollName,
+    val picfit: PicfitConfig,
+    val cloudflare: CloudflareConfig
+)
+
+final class CloudflareConfig(
+    @ConfigName("zone_id") val zoneId: String,
+    @ConfigName("account_id") val accountId: String,
+    @ConfigName("alert_policy_id") val alertPolicyId: String,
+    @ConfigName("api_token") val apiToken: Secret
 )
 
 @Module
 final class Env(
     appConfig: Configuration,
-    mode: play.api.Mode,
-    db: lila.db.Db
-)(implicit ec: scala.concurrent.ExecutionContext, system: akka.actor.ActorSystem) {
+    db: lila.db.Db,
+    ws: play.api.libs.ws.StandaloneWSClient,
+    net: NetConfig
+)(using Executor, Scheduler, play.api.Mode):
 
-  private val config = appConfig.get[MemoConfig]("memo")(AutoConfig.loader)
+  given NetDomain = net.domain
 
-  lazy val configStore = wire[ConfigStore.Builder]
+  given ConfigLoader[PicfitConfig] = AutoConfig.loader
+  given ConfigLoader[CloudflareConfig] = AutoConfig.loader
+  val config = appConfig.get[MemoConfig]("memo")(using AutoConfig.loader)
+  private val picfitColl = db(config.picfit.collection)
+  private val picfitConfig = config.picfit
+  private val cloudflareConfig = config.cloudflare
 
-  lazy val settingStore = wire[SettingStore.Builder]
+  export config.picfit.imageGetOrigin
 
-  lazy val cacheApi = wire[CacheApi]
+  val cacheApi = wire[CacheApi]
 
-  lazy val mongoCacheApi = wire[MongoCache.Api]
-}
+  val settingStore = wire[SettingStore.Builder]
+
+  val mongoCacheApi = wire[MongoCache.Api]
+
+  val mongoRateLimitApi = wire[MongoRateLimitApi]
+
+  private val cloudflareApi = wire[CloudflareApi] // requires early loading
+
+  private val onPicfitUrl: (ImageId, Url) => Unit = wire[PicfitApi.OnNewUrl].apply
+
+  val picfitUrl = wire[PicfitUrl]
+
+  val picfitApi = wire[PicfitApi]
+
+  val markdown = wire[MarkdownCache]
+
+  val viewerCount = wire[ViewerCountApi]
+
+  val proxy = wire[HttpProxy]
+
+  lila.common.Cli.handle():
+    case "cache" :: "clear" :: name :: Nil =>
+      cacheApi.clearByName(name) match
+        case Some(nb) => fuccess(s"Cleared $nb entries from cache $name")
+        case None => fufail(s"No cache named $name")

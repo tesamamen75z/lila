@@ -15,7 +15,7 @@
   <string name="victories">Trec\'hioù</string>
   <string name="defeats">Lammoù</string>
   <string name="disconnections">Digevreadennoù</string>
-  <string name="notEnoughGames">N\'ho peus c\'hoariet a-walc\'h c\'hoazh</string>
+  <string name="notEnoughGames">N\'ho peus ket c\'hoariet a-walc\'h c\'hoazh</string>
   <string name="highestRating">Renkadur uhelañ: %s</string>
   <string name="lowestRating">Renkadur izelañ: %s</string>
   <string name="fromXToY">etre %1$s ha %2$s</string>
@@ -24,7 +24,6 @@
   <string name="longestStreak">Brasañ niver da heul: %s</string>
   <string name="currentStreak">Niver a grogadoù da heul evit poent: %s</string>
   <string name="bestRated">Gwellañ trec\'hioù renket</string>
-  <string name="worstRated">Gwashañ lammoù renket</string>
   <string name="gamesInARow">Krogadoù c\'hoariet hep troc\'h</string>
   <string name="lessThanOneHour">Nebeutoc\'h evit un eur etre daou grogad</string>
   <string name="maxTimePlaying">Ar muiañ a amzer o c\'hoari dizehan</string>

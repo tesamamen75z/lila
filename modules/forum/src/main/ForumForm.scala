@@ -1,92 +1,79 @@
 package lila.forum
 
-import lila.common.Form.cleanText
-import play.api.data._
-import play.api.data.Forms._
-import lila.user.User
+import play.api.data.*
+import play.api.data.Forms.*
+
+import lila.common.Form.given
+import lila.common.Form.{ cleanText, into }
 
 final private[forum] class ForumForm(
-    promotion: lila.security.PromotionApi,
-    val captcher: lila.hub.actors.Captcher
-)(implicit ec: scala.concurrent.ExecutionContext)
-    extends lila.hub.CaptchedForm {
+    promotion: lila.core.security.PromotionApi,
+    val captcha: lila.core.captcha.CaptchaApi
+):
 
-  import ForumForm._
+  import ForumForm.*
 
-  def postMapping(user: User, inOwnTeam: Boolean) =
+  def postMapping(inOwnTeam: Boolean)(using Me) =
     mapping(
-      "text"    -> userTextMapping(user, inOwnTeam),
-      "gameId"  -> text,
-      "move"    -> text,
+      "text" -> userTextMapping(inOwnTeam),
+      "gameId" -> of[GameId],
+      "move" -> text,
       "modIcon" -> optional(boolean)
-    )(PostData.apply)(PostData.unapply)
-      .verifying(captchaFailMessage, validateCaptcha _)
+    )(PostData.apply)(unapply)
+      .verifying(lila.core.captcha.failMessage, captcha.validateSync)
 
-  def post(user: User, inOwnTeam: Boolean) = Form(postMapping(user, inOwnTeam))
+  def post(inOwnTeam: Boolean)(using Me) = Form(postMapping(inOwnTeam))
 
-  def postEdit(user: User, inOwnTeam: Boolean) =
-    Form(
+  def postEdit(inOwnTeam: Boolean, previousText: String)(using Me) =
+    Form:
       mapping(
-        "changes" -> userTextMapping(user, inOwnTeam)
-      )(PostEdit.apply)(PostEdit.unapply)
-    )
+        "changes" -> userTextMapping(inOwnTeam, previousText.some)
+      )(PostEdit.apply)(_.changes.some)
 
-  def postWithCaptcha(user: User, inOwnTeam: Boolean) = withCaptcha(post(user, inOwnTeam))
+  def postWithCaptcha(inOwnTeam: Boolean)(using Me) = post(inOwnTeam) -> captcha.any
 
-  def topic(user: User, inOwnTeam: Boolean) =
-    Form(
+  def topic(inOwnTeam: Boolean)(using Me) =
+    Form:
       mapping(
         "name" -> cleanText(minLength = 3, maxLength = 100),
-        "post" -> postMapping(user, inOwnTeam)
-      )(TopicData.apply)(TopicData.unapply)
-    )
+        "post" -> postMapping(inOwnTeam)
+      )(TopicData.apply)(unapply)
 
-  val deleteWithReason = Form(
+  val deleteWithReason = Form:
     single("reason" -> optional(nonEmptyText))
-  )
 
-  private def userTextMapping(user: User, inOwnTeam: Boolean) =
-    cleanText(minLength = 3)
+  val relocateTo = Form:
+    single("categ" -> nonEmptyText.into[ForumCategId])
+
+  private def userTextMapping(inOwnTeam: Boolean, previousText: Option[String] = None)(using me: Me) =
+    cleanText(minLength = 3, 50_000)
       .verifying(
         "You have reached the daily maximum for links in forum posts.",
-        t => inOwnTeam || promotion.test(user)(t)
+        t => inOwnTeam || promotion.test(me, t, previousText)
       )
-}
+      .transform(_.replace("\r\n", "\n").replace('\r', '\n'), identity)
 
-object ForumForm {
+  val diagnostic = Form(
+    mapping(
+      "text" -> nonEmptyText(maxLength = 3_000_000), // high cap only used for bot move dumps
+      "plaintext" -> optional(boolean)
+    )(DiagnosticData.apply)(unapply)
+  )
+
+object ForumForm:
 
   case class PostData(
       text: String,
-      gameId: String,
+      gameId: GameId,
       move: String,
       modIcon: Option[Boolean]
-  )
+  ) extends lila.core.captcha.WithCaptcha
 
   case class TopicData(
       name: String,
       post: PostData
-  ) {
-
-    def looksLikeVenting =
-      List(name, post.text) exists { txt =>
-        mostlyUpperCase(txt) || ventingRegex.find(txt)
-      }
-  }
-
-  private def mostlyUpperCase(text: String) =
-    text.lengthIs > 5 && {
-      import java.lang.Character._
-      // true if >2/3 of the latin letters are upper
-      (text take 300).foldLeft(0) { (i, c) =>
-        getType(c) match {
-          case UPPERCASE_LETTER => i + 1
-          case LOWERCASE_LETTER => i - 2
-          case _                => i
-        }
-      } > 0
-    }
-
-  private val ventingRegex = """cheat|engine|rating|loser|banned|abort""".r
+  ):
+    def automodText = s"$name\n${post.text}"
 
   case class PostEdit(changes: String)
-}
+  case class DiagnosticData(text: String, plaintext: Option[Boolean])

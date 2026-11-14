@@ -1,9 +1,8 @@
-package lila
+package lila.analyse
 
-package object analyse extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
+export lila.tree.{ Advice, Analysis, Info }
 
-  type InfoAdvice  = (Info, Option[Advice])
-  type InfoAdvices = List[InfoAdvice]
-
-  type PgnMove = String
-}
+type GamePhase = "opening" | "middlegame" | "endgame"
+val phaseNames: List[GamePhase] = List("opening", "middlegame", "endgame")

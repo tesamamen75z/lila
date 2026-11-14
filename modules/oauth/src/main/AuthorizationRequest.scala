@@ -1,107 +1,90 @@
 package lila.oauth
 
-import java.net.URLEncoder
-import cats.data.Validated
-import com.roundeights.hasher.Algo
-import io.lemonlabs.uri.AbsoluteUrl
-import org.joda.time.DateTime
-import play.api.libs.json._
+object AuthorizationRequest:
 
-import lila.user.User
+  import Protocol.*
 
-object AuthorizationRequest {
-  import Protocol._
+  def fromReq(using Req): Either[Error, Prompt] =
+    import lila.common.HTTPRequest.{ queryStringGetAs as getAs, queryStringGet as get }
+    for
+      redirectUri <- get("redirect_uri").toRight(Error.RedirectUriRequired).flatMap(RedirectUri.from)
+      clientId <- getAs[ClientId]("client_id").toRight(Error.ClientIdRequired)
+      scopes <- readScopes(~get("scope"))
+    yield Prompt(
+      redirectUri,
+      clientId,
+      scopes,
+      getAs[State]("state"),
+      responseType = get("response_type"),
+      codeChallengeMethod = get("code_challenge_method"),
+      codeChallenge = getAs[CodeChallenge]("code_challenge"),
+      userId = getAs[UserStr]("username").flatMap(_.validateId)
+    )
 
-  case class Raw(
-      clientId: Option[String],
-      state: Option[String],
-      redirectUri: Option[String],
-      responseType: Option[String],
-      codeChallengeMethod: Option[String],
-      codeChallenge: Option[String],
-      scope: Option[String]
-  ) {
-    // In order to show a prompt and redirect back with error codes a valid
-    // redirect_uri is absolutely required. Ignore all other errors for now.
-    def prompt: Validated[Error, Prompt] =
-      for {
-        redirectUri <- redirectUri.toValid(Error.RedirectUriRequired).andThen(RedirectUri.from)
-        clientId    <- clientId.map(ClientId).toValid(Error.ClientIdRequired)
-      } yield Prompt(
-        redirectUri,
-        state.map(State.apply),
-        clientId = clientId,
-        responseType = responseType,
-        codeChallengeMethod = codeChallengeMethod,
-        codeChallenge = codeChallenge,
-        scope = scope
-      )
-  }
+  def readScopes(str: String): Either[Error, OAuthScopes] =
+    str
+      .split(" ")
+      .filter(_.nonEmpty)
+      .toList
+      .foldLeftM(List.empty[OAuthScope]): (acc, key) =>
+        OAuthScope.byKey.get(key).toRight(Error.InvalidScope(key)).map(_ :: acc)
+      .map(OAuthScopes(_))
 
   case class Prompt(
       redirectUri: RedirectUri,
-      state: Option[State],
       clientId: ClientId,
+      scopes: OAuthScopes,
+      state: Option[State],
       responseType: Option[String],
       codeChallengeMethod: Option[String],
-      codeChallenge: Option[String],
-      scope: Option[String]
-  ) {
+      codeChallenge: Option[CodeChallenge],
+      userId: Option[UserId]
+  ):
     def errorUrl(error: Error) = redirectUri.error(error, state)
 
     def cancelUrl = errorUrl(Error.AccessDenied)
 
-    private def validScopes: Validated[Error, List[OAuthScope]] =
-      (~scope)
-        .split(" ")
-        .filter(_ != "")
-        .foldLeft(Validated.valid[Error, List[OAuthScope]](List.empty[OAuthScope])) { case (acc, key) =>
-          acc.andThen { valid =>
-            OAuthScope.byKey.get(key).toValid(Error.InvalidScope(key)).map(_ :: valid)
-          }
-        }
-
-    def maybeScopes: List[OAuthScope] = validScopes.getOrElse(Nil)
-
     def maybeLegacy: Boolean = codeChallengeMethod.isEmpty && codeChallenge.isEmpty
 
+    lazy val trusted =
+      List(
+        "lichess.org",
+        "discotron.lichess.org",
+        "www.lichess4545.com",
+        "wiki.lichess.ovh",
+        "payments.lichess.org"
+      ).has:
+        ~redirectUri.host
+
+    lazy val isDanger = scopes.intersects(OAuthScope.dangerList) && !trusted
+
     def authorize(
-        user: User,
+        user: UserId,
         legacy: (ClientId, RedirectUri) => Fu[Option[LegacyClientApi.HashedClientSecret]]
-    ): Fu[Validated[Error, Authorized]] =
-      (codeChallengeMethod match {
+    )(using Executor): FuRaise[Error, Authorized] =
+      val challengeFu = codeChallengeMethod.match
         case None =>
-          legacy(clientId, redirectUri).dmap(
-            _.toValid[Error](Error.CodeChallengeMethodRequired).map(Left.apply)
-          )
+          legacy(clientId, redirectUri)
+            .flatMap(_.raiseIfNone(Error.CodeChallengeMethodRequired))
+            .map(Left(_))
         case Some(method) =>
-          fuccess(CodeChallengeMethod.from(method).andThen { _ =>
-            codeChallenge.map(CodeChallenge).toValid[Error](Error.CodeChallengeRequired).map(Right.apply)
-          })
-      }) dmap { challenge =>
-        for {
-          challenge    <- challenge
-          scopes       <- validScopes
-          responseType <- responseType.toValid(Error.ResponseTypeRequired).andThen(ResponseType.from)
-        } yield Authorized(
-          clientId,
-          redirectUri,
-          state,
-          user.id,
-          scopes,
-          challenge
-        )
-      }
-  }
+          CodeChallengeMethod
+            .check(method)
+            .raiseIfSome:
+              codeChallenge.raiseIfNone(Error.CodeChallengeMethodRequired).map(Right(_))
+
+      for
+        challenge <- challengeFu
+        tpe <- responseType.raiseIfNone(Error.ResponseTypeRequired)
+        _ <- ResponseType.check(tpe).raiseIfSome(funit)
+      yield Authorized(clientId, redirectUri, state, user, scopes, challenge)
 
   case class Authorized(
       clientId: ClientId,
       redirectUri: RedirectUri,
       state: Option[State],
-      user: User.ID,
-      scopes: List[OAuthScope],
+      user: UserId,
+      scopes: OAuthScopes,
       challenge: Either[LegacyClientApi.HashedClientSecret, CodeChallenge]
-  ) {
+  ):
     def redirectUrl(code: AuthorizationCode) = redirectUri.code(code, state)
-  }
-}

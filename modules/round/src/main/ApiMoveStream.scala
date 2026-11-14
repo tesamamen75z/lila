@@ -1,103 +1,114 @@
 package lila.round
 
-import akka.stream.OverflowStrategy
-import akka.stream.scaladsl._
-import chess.Color
-import chess.format.Forsyth
-import play.api.libs.json._
-import scala.concurrent.ExecutionContext
+import chess.format.{ Fen, Uci, UciDump }
+import chess.{ ByColor, Centis, Ply, Position }
+import org.apache.pekko.stream.scaladsl.*
+import play.api.libs.json.*
 
 import lila.common.Bus
+import lila.common.Json.given
+import lila.core.game.FinishGame
+import lila.game.GameRepo
 import lila.game.actorApi.MoveGameEvent
-import lila.game.{ Game, GameRepo }
-import chess.{ Centis, Replay }
-import lila.game.actorApi.FinishGame
 
-final class ApiMoveStream(gameRepo: GameRepo, gameJsonView: lila.game.JsonView)(implicit
-    ec: ExecutionContext
-) {
+final class ApiMoveStream(
+    gameRepo: GameRepo,
+    gameJsonView: lila.game.JsonView,
+    lightUserApi: lila.user.LightUserApi
+)(using Executor):
 
-  private val delayMovesBy         = 3
-  private val delayKeepsFirstMoves = 5
+  private val delayMovesBy = 3
 
-  def apply(game: Game): Source[JsObject, _] =
-    Source futureSource {
-      gameRepo.initialFen(game) map { initialFen =>
-        val buffer = scala.collection.mutable.Queue.empty[JsObject]
-        var moves  = 0
-        Source(List(gameJsonView(game, initialFen))) concat
+  def apply(game: Game, delayMoves: Boolean): Source[JsObject, ?] =
+    val delayingMoves = delayMoves && game.hasClock && game.playable
+    Source.futureSource:
+      for
+        initialFen <- gameRepo.initialFen(game)
+        lightUsers <- lightUserApi.asyncManyOptions(game.players.mapList(_.userId))
+      yield
+        def makeGameJson(g: Game, full: Boolean) =
+          val base =
+            if full then gameJsonView.base(g, initialFen)
+            else gameJsonView.immutable(g, initialFen)
+          base ++ Json.obj(
+            "players" -> JsObject(g.players.all.zip(lightUsers).map { (p, user) =>
+              p.color.name -> gameJsonView.player(p, user)
+            })
+          )
+        Source(List(makeGameJson(game, full = false))).concat(
           Source
-            .queue[JsObject](16, akka.stream.OverflowStrategy.dropHead)
-            .statefulMapConcat { () => js =>
-              moves += 1
-              if (game.finished || moves <= delayKeepsFirstMoves) List(js)
-              else {
-                buffer.enqueue(js)
-                (buffer.size > delayMovesBy) ?? List(buffer.dequeue())
-              }
-            }
-            .mapMaterializedValue { queue =>
-              val clocks = ~(for {
-                clk   <- game.clock
-                times <- game.bothClockStates
-              } yield Vector(clk.config.initTime, clk.config.initTime) ++ times)
+            .queue[JsObject](
+              (game.ply.value + delayMovesBy).atLeast(16),
+              org.apache.pekko.stream.OverflowStrategy.dropHead
+            )
+            .mapMaterializedValue: queue =>
+              val clocks =
+                for
+                  clk <- game.clock
+                  clkHistory <- game.clockHistory
+                yield clkHistory.map(Vector(clk.config.initTime) ++ _)
               val clockOffset = game.startColor.fold(0, 1)
-              Replay.situations(game.pgnMoves, initialFen, game.variant) foreach {
-                _.zipWithIndex foreach { case (s, index) =>
-                  val clk = for {
-                    white <- clocks.lift(index + 1 - clockOffset)
-                    black <- clocks.lift(index - clockOffset)
-                  } yield (white, black)
-                  queue offer toJson(
-                    Forsyth exportBoard s.board,
-                    s.color,
-                    s.board.history.lastMove.map(_.uci),
-                    clk
-                  )
+              Position(game.variant, initialFen)
+                .playPositions(game.sans)
+                .foreach {
+                  _.zipWithIndex.foreach: (s, index) =>
+                    val clk = for
+                      c <- clocks
+                      white <- c.white.lift((index + 1 - clockOffset) >> 1)
+                      black <- c.black.lift((index + clockOffset) >> 1)
+                    yield ByColor(white, black)
+                    queue.offer(
+                      toJson(
+                        s,
+                        Fen.write(s, (game.startedAtPly + index).fullMoveNumber),
+                        s.history.lastMove,
+                        clk
+                      )
+                    )
                 }
-              }
-              if (game.finished) {
-                queue offer gameJsonView(game, initialFen)
+              if game.finished then
+                queue.offer(makeGameJson(game, full = true))
                 queue.complete()
-              } else {
-                val chans = List(MoveGameEvent makeChan game.id, "finishGame")
-                val sub = Bus.subscribeFun(chans: _*) {
+              else
+                val chan = MoveGameEvent.makeChan(game.id)
+                val subEvent = Bus.subscribeFunDyn(chan):
                   case MoveGameEvent(g, fen, move) =>
-                    queue.offer(toJson(g, fen, move.some)).unit
-                  case FinishGame(g, _, _) if g.id == game.id =>
-                    queue offer gameJsonView(g, initialFen)
-                    (1 to buffer.size) foreach { _ => queue.offer(Json.obj()) } // push buffer content out
+                    queue.offer(toJson(g, fen, move.some))
+                val subFinish = Bus.sub[FinishGame]:
+                  case FinishGame(g, _) if g.id == game.id =>
+                    queue.offer(makeGameJson(g, full = true))
+                    if delayingMoves then for _ <- 1 to delayMovesBy do queue.offer(Json.obj())
                     queue.complete()
-                }
-                queue.watchCompletion() dforeach { _ =>
-                  Bus.unsubscribe(sub, chans)
-                }
-              }
-            }
-      }
-    }
+                queue
+                  .watchCompletion()
+                  .addEffectAnyway:
+                    Bus.unsubscribeDyn(subEvent, List(chan))
+                    Bus.unsub[FinishGame](subFinish)
+            .pipe: source =>
+              if delayingMoves
+              then source.sliding(delayMovesBy + 1).mapConcat(_.headOption)
+              else source
+        )
+  end apply
 
-  private def toJson(game: Game, fen: String, lastMoveUci: Option[String]): JsObject =
+  private def toJson(game: Game, fen: Fen.Full, lastMove: Option[Uci]): JsObject =
     toJson(
+      game.position,
       fen,
-      game.turnColor,
-      lastMoveUci,
-      game.clock.map { clk =>
-        (clk.remainingTime(chess.White), clk.remainingTime(chess.Black))
-      }
+      lastMove,
+      game.clock.map: clk =>
+        ByColor(clk.remainingTime)
     )
 
   private def toJson(
-      boardFen: String,
-      turnColor: Color,
-      lastMoveUci: Option[String],
-      clock: Option[(Centis, Centis)]
+      position: Position,
+      fen: Fen.Full,
+      lastMove: Option[Uci],
+      clock: Option[ByColor[Centis]]
   ): JsObject =
     clock.foldLeft(
       Json
-        .obj("fen" -> s"$boardFen ${turnColor.letter}")
-        .add("lm" -> lastMoveUci)
-    ) { case (js, clk) =>
-      js ++ Json.obj("wc" -> clk._1.roundSeconds, "bc" -> clk._2.roundSeconds)
-    }
-}
+        .obj("fen" -> fen)
+        .add("lm" -> lastMove.map(UciDump.lastMove(_, position)))
+    ): (js, clk) =>
+      js ++ Json.obj("wc" -> clk.white.roundSeconds, "bc" -> clk.black.roundSeconds)

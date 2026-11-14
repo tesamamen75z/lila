@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="private">Прыватнае</string>
+  <string name="private">Прыватны</string>
   <string name="myStudies">Мае навучанні</string>
   <string name="studiesIContributeTo">Навучанні, якія я рэдагую</string>
   <string name="myPublicStudies">Мае публічныя навучанні</string>
@@ -46,31 +46,27 @@
   <string name="youAreNowAContributor">Вы цяпер рэдактар</string>
   <string name="youAreNowASpectator">Вы цяпер глядач</string>
   <string name="pgnTags">Тэгі PGN</string>
-  <string name="like">Падабайка</string>
+  <string name="like">Упадабаць</string>
   <string name="newTag">Новы тэг</string>
   <string name="commentThisPosition">Каментаваць пазіцыю</string>
   <string name="commentThisMove">Каментаваць гэты ход</string>
   <string name="annotateWithGlyphs">Дадаць знакавую анатацыю</string>
   <string name="theChapterIsTooShortToBeAnalysed">Раздел занадта кароткі для аналізу.</string>
   <string name="onlyContributorsCanRequestAnalysis">Толькі рэдактары навучання могуць запрасіць камп\'ютарны аналіз.</string>
-  <string name="getAFullComputerAnalysis">Атрымайце поўны серверны кампутарны аналіз галоўнай лініі.</string>
   <string name="makeSureTheChapterIsComplete">Пераканайцеся, што раздзел гатоў. Вы можаце запрасіць аналіз толькі адзін раз.</string>
   <string name="allSyncMembersRemainOnTheSamePosition">Усе сінхранізаваныя ўдзельнікі застаюцца на аднолькавай пазіцыі</string>
   <string name="shareChanges">Падзяліцца зменамі з гледачамі та захаваць іх на серверы</string>
   <string name="playing">Гуляецца</string>
-  <string name="first">На першую</string>
-  <string name="previous">Папярэдняя</string>
+  <string name="showEvalBar">Шкалы ацэнкі</string>
   <string name="next">Наступная</string>
-  <string name="last">На апошнюю</string>
   <string name="shareAndExport">Падзяліцца &amp; экспартаваць</string>
   <string name="cloneStudy">Кланаваць</string>
   <string name="studyPgn">PGN навучання</string>
-  <string name="downloadAllGames">Спампаваць усе гульні</string>
   <string name="chapterPgn">PGN раздзелу</string>
+  <string name="copyChapterPgn">Скапіраваць PGN</string>
   <string name="downloadGame">Спампаваць гульню</string>
   <string name="studyUrl">URL навучання</string>
   <string name="currentChapterUrl">URL бягучага раздзелу</string>
-  <string name="youCanPasteThisInTheForumToEmbed">Вы можаце ўставіць гэта на форум, каб убудаваць</string>
   <string name="startAtInitialPosition">Пачынаць у пачатковай пазіцыі</string>
   <string name="startAtX">Пачынаць з %s</string>
   <string name="embedInYourWebsite">Убудаваць у свой сайт або блог</string>
@@ -81,11 +77,13 @@
   <string name="studyNotFound">Навучанне не знойдзена</string>
   <string name="editChapter">Рэдагаваць раздзел</string>
   <string name="newChapter">Новы раздзел</string>
+  <string name="importFromChapterX">Імпартаваць з %s</string>
   <string name="orientation">Арыентацыя дошкі</string>
   <string name="analysisMode">Рэжым аналізу</string>
   <string name="pinnedChapterComment">Замацаваны каментар раздзелу</string>
   <string name="saveChapter">Захаваць раздзел</string>
   <string name="clearAnnotations">Ачысціць анатацыі</string>
+  <string name="clearVariations">Ачысціць варыянты</string>
   <string name="deleteChapter">Выдаліць раздзел</string>
   <string name="deleteThisChapter">Выдаліць гэты раздел? Гэта нельга будзе адмяніць!</string>
   <string name="clearAllCommentsInThisChapter">Выдаліць усе каментары, знакавыя анатацыі і намаляваныя фігуры ў гэтым раздзеле?</string>
@@ -103,16 +101,8 @@
   <string name="loadAPositionFromFen">Загрузіць пазіцыю з FEN</string>
   <string name="loadAGameFromPgn">Загрузіць гульні з PGN</string>
   <string name="automatic">Аўтаматычна</string>
-  <plurals name="pasteYourPgnTextHereUpToNbGames">
-    <item quantity="one">Устаўце сюды ваш PGN тэкст, не больш за %s гульню</item>
-    <item quantity="few">Устаўце сюды ваш PGN тэкст, не больш за %s гульні</item>
-    <item quantity="many">Устаўце сюды ваш PGN тэкст, не больш за %s гульняў</item>
-    <item quantity="other">Устаўце сюды ваш PGN тэкст, не больш за %s гульняў</item>
-  </plurals>
   <string name="urlOfTheGame">URL гульняў, адзін на радок</string>
-  <string name="loadAGameFromXOrY">Загрузіць партыі з %1$s або %2$s</string>
   <string name="createChapter">Стварыць раздзел</string>
-  <string name="configureLiveBroadcast">Наладзіць прамую трансляцыю</string>
   <string name="createStudy">Стварыць навучанне</string>
   <string name="editStudy">Рэдактаваць навучанне</string>
   <string name="visibility">Бачнасць</string>
@@ -130,16 +120,13 @@
   <string name="noLetPeopleBrowseFreely">Не: хай людзі вольна праглядаюць пазіцыі</string>
   <string name="pinnedStudyComment">Замацаваць каментар да занятку</string>
   <string name="start">Пачаць</string>
-  <string name="save">Захаваць</string>
   <string name="clearChat">Ачысціць чат</string>
   <string name="deleteTheStudyChatHistory">Выдаліць гісторыю чата навучання цалкам? Гэта нельга будзе адмяніць!</string>
   <string name="deleteStudy">Выдаліць навучанне</string>
-  <string name="deleteTheEntireStudy">Выдаліць навучанне цалкам? Гэта нельга будзе адмяніць!</string>
+  <string name="confirmDeleteStudy" comment="%s is replaced with the name of the study">Выдаліць навучанне поўнасцю? Гэта нельга будзе адмяніць! Увядзіце назву навучання каб падцвердзіць: %s</string>
   <string name="whereDoYouWantToStudyThat">Дзе вы жадаеце навучацца?</string>
   <string name="goodMove">Добры ход</string>
-  <string name="mistake">Памылка</string>
   <string name="brilliantMove">Бліскучы ход</string>
-  <string name="blunder">Позех</string>
   <string name="interestingMove">Цікавы ход</string>
   <string name="dubiousMove" comment="dubiousMove&#10;A questionable move.">Сумнеўны ход</string>
   <string name="onlyMove" comment="onlyMove&#10;The only possible move. This is a label that can be placed in a study of a past game. It may not technically be the only move, but the only feasible one.">Адзіны ход</string>
@@ -162,5 +149,13 @@
   <string name="withTheIdea" comment="withTheIdea&#10;A label that can be applied to a position in a Lichess study. Noun.&#10;&#10;Shows that the player was following the theory around an opening, even after the initial opening moves.">З ідэяй</string>
   <string name="nextChapter">Наступны раздзел</string>
   <string name="prevChapter">Папярэдні раздзел</string>
-  <string name="studyActions" comment="studyActions&#10;&#10;Heading in the keyboard shortcuts help screen (press ? on the keyboard to invoke it). These are actions you can perform while looking at a study, by pressing a specific key on the keyboard">Дзеянні ў навучанні</string>
+  <string name="studyActions">Дзеянні ў навучанні</string>
+  <string name="topics">Тэмы</string>
+  <string name="myTopics">Мае тэмы</string>
+  <string name="popularTopics">Папулярныя тэмы</string>
+  <string name="manageTopics">Кіраваць тэмамі</string>
+  <string name="back">Назад</string>
+  <string name="playAgain">Гуляць зноў</string>
+  <string name="whatWouldYouPlay">Як бы вы пахадзілі ў гэтай пазіцыі?</string>
+  <string name="youCompletedThisLesson">Віншуем! Вы прайшлі гэты ўрок.</string>
 </resources>

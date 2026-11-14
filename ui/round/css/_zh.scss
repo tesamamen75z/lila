@@ -9,7 +9,7 @@
     margin-top: -0.5em;
   }
 
-  @include breakpoint($mq-col1) {
+  @include mq-is-col1 {
     &-top {
       grid-area: pocket-top;
     }
@@ -19,7 +19,7 @@
     }
   }
 
-  @include breakpoint($mq-col2-uniboard) {
+  @include mq-at-least-col2 {
     &-top {
       margin-bottom: $block-gap;
     }
@@ -30,14 +30,26 @@
   }
 }
 
-@include breakpoint($mq-col2) {
-  @include breakpoint($mq-short) {
+.round__app:has(#voice-bar) {
+  @include mq-at-least-col2 {
+    .pocket-top {
+      margin-bottom: 2px;
+    }
+
+    .pocket-bottom {
+      margin-top: 2px;
+    }
+  }
+}
+
+@include mq-at-least-col2 {
+  @media (min-height: at-least($short)) {
     #{$moves-tag} {
       display: none;
     }
   }
 
-  @include breakpoint($mq-tall) {
+  @media (min-height: at-least($tall)) {
     #{$moves-tag} {
       display: flex;
     }
@@ -45,7 +57,7 @@
 }
 
 .ricons {
-  @include breakpoint($mq-col1) {
+  @include mq-is-col1 {
     justify-content: flex-end;
   }
 }
@@ -73,7 +85,9 @@
 @each $color, $c in ('white': w, 'black': b) {
   @each $role, $r in (pawn: P, knight: N, bishop: B, rook: R, queen: Q) {
     body.cursor-#{$color}-#{$role} * {
-      cursor: url(../piece/cburnett/#{$c}#{$r}.svg) 22 22, auto !important;
+      cursor:
+        url(../piece/cburnett/#{$c}#{$r}.svg) 22 22,
+        auto !important;
     }
   }
 }

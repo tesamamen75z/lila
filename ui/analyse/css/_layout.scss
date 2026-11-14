@@ -1,13 +1,13 @@
-body {
-  /* prevents scroll bar flicker on page height changes */
-  overflow-y: scroll;
-}
+$analyse-block-gap: $block-gap;
+$analyse-gauge-gap: 4px;
+
+@include body-fixed-scroll;
 
 #main-wrap {
-  --main-max-width: calc(100vh - #{$site-header-outer-height} - #{$col1-uniboard-controls});
+  ---main-max-width: calc(100vh - #{$site-header-outer-height} - #{$col1-uniboard-controls});
 
-  @include breakpoint($mq-col2) {
-    --main-max-width: auto;
+  @include mq-at-least-col2 {
+    ---main-max-width: auto;
   }
 }
 
@@ -15,20 +15,24 @@ body {
   grid-area: main;
   display: grid;
 
+  ---analyse-gauge-col: #{$analyse-block-gap};
+  ---analyse-gauge-offset: calc(var(---analyse-gauge-col) - #{$analyse-gauge-gap});
+
+  &.gauge-on {
+    ---analyse-gauge-col: calc(#{$block-gap} + #{$analyse-gauge-gap} * 2);
+  }
+
   &__side {
     grid-area: side;
     justify-content: start;
-    margin: $block-gap;
   }
 
   &__board {
     grid-area: board;
-  }
 
-  .relay-tour {
-    grid-row-start: board;
-    grid-row-end: tools;
-    grid-column: board;
+    cg-container {
+      @include inline-end(0);
+    }
   }
 
   &__tools {
@@ -42,13 +46,17 @@ body {
   &__underboard {
     grid-area: under;
 
-    @include breakpoint($mq-col1-uniboard) {
+    @include mq-is-col1 {
       overflow: hidden; // helps truncating long study names
     }
   }
 
-  &__acpl {
-    grid-area: acpl;
+  &__round-training {
+    grid-area: round-training;
+  }
+
+  &__puzzle {
+    grid-area: puzzle;
   }
 
   .chat__members {
@@ -58,77 +66,118 @@ body {
   .eval-gauge {
     grid-area: gauge;
     display: none;
+    margin: 0 $analyse-gauge-gap;
   }
 
-  --meta-height: auto;
-
-  @include proper-grid {
-    --meta-height: max-content;
+  .keyboard-move {
+    display: none;
   }
 
-  grid-template-rows: auto auto minmax(20em, 30vh);
+  ---chat-height: fit-content(0);
+
+  &--wiki {
+    ---chat-height: 0;
+  }
+
+  .mchat {
+    margin: $analyse-block-gap 0 0 0;
+  }
+
+  grid-template-rows: auto auto auto minmax(20em, 40vh);
   grid-template-areas:
     'board'
     'controls'
+    'kb-move'
     'tools'
     'side'
-    'acpl'
+    'round-training'
     'under'
     'chat'
     'uchat';
 
-  @include breakpoint($mq-col2) {
-    grid-template-columns: $col2-uniboard-width var(--gauge-gap) $col2-uniboard-table;
+  @include mq-at-least-col2 {
+    grid-template-columns:
+      var(---col2-uniboard-width) var(---analyse-gauge-col)
+      minmax(
+        calc(#{$col3-uniboard-table-min} - var(---analyse-gauge-offset)),
+        calc(#{$col3-uniboard-table-max} - var(---analyse-gauge-offset))
+      );
     grid-template-rows: fit-content(0);
     grid-template-areas:
       'board      gauge tools'
+      'kb-move    .     controls'
       'under      .     controls'
-      'under      .     acpl'
+      'under      .     round-training'
       'under      .     side'
       'chat       .     side'
       'uchat      .     side';
-    grid-row-gap: 0;
+    row-gap: 0;
 
-    &__side,
-    .chat__members,
-    .mchat {
-      margin: $block-gap 0 0 0;
+    &__side {
+      margin: $analyse-block-gap 0 0 0;
+    }
+
+    &__tools {
+      height: var(---cg-height, 100%);
+    }
+
+    .chat__members {
+      margin: calc($analyse-block-gap / 2) 0 0 0;
     }
 
     &__underboard {
-      margin-top: $block-gap;
+      margin-top: $analyse-block-gap;
     }
 
     .eval-gauge {
       display: block;
     }
 
-    .relay-tour {
-      grid-row-end: under;
+    .keyboard-move {
+      display: block;
+      grid-area: kb-move;
+      margin: $block-gap 0;
     }
   }
 
-  @include breakpoint($mq-col2-uniboard-squeeze) {
-    grid-template-columns: $col2-uniboard-squeeze-width var(--gauge-gap) $col2-uniboard-squeeze-table;
+  @include mq-is-col2-squeeze {
+    grid-template-columns:
+      $col2-uniboard-squeeze-width var(---analyse-gauge-col)
+      minmax(
+        calc(#{$col2-uniboard-squeeze-table-min} - var(---analyse-gauge-offset)),
+        calc(#{$col2-uniboard-squeeze-table-max} - var(---analyse-gauge-offset))
+      );
   }
 
-  @include breakpoint($mq-col3) {
-    grid-template-columns: $col3-uniboard-side $block-gap $col3-uniboard-width var(--gauge-gap) $col3-uniboard-table;
-    grid-template-rows: $meta-height $chat-height 2.5em 1fr;
+  @include mq-at-least-col3 {
+    grid-template-columns:
+      $col3-uniboard-side $analyse-block-gap var(---col3-uniboard-width)
+      var(---analyse-gauge-col)
+      minmax(
+        calc(#{$col3-uniboard-table-min} - var(---analyse-gauge-offset)),
+        calc(#{$col3-uniboard-table-max} - var(---analyse-gauge-offset))
+      );
+    grid-template-rows: auto $chat-height auto 2.5em 1fr;
     grid-template-areas:
-      'side    . board gauge tools'
-      'chat    . board gauge tools'
-      'uchat   . under .     controls'
-      'uchat   . under .     acpl';
+      'side    . board   gauge tools'
+      'chat    . board   gauge tools'
+      'uchat   . kb-move .     controls'
+      'uchat   . under   .     controls'
+      'uchat   . under   .     round-training';
 
     &__side {
       margin-top: 0;
     }
 
     .mchat {
+      margin-top: 0;
       min-height: 10em;
     }
 
     @include crosstable-large;
   }
+}
+
+.blind-mode .analyse {
+  display: block;
 }

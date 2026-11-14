@@ -1,29 +1,14 @@
 {
   "name": "tournament",
-  "version": "2.0.0",
   "private": true,
-  "description": "lichess.org arena tournament",
-  "keywords": [
-    "chess",
-    "lichess",
-    "arena",
-    "tournament"
-  ],
-  "author": "Thibault Duplessis",
-  "license": "AGPL-3.0-or-later",
-  "devDependencies": {
-    "@build/rollupProject": "2.0.0",
-    "@types/lichess": "2.0.0"
-  },
+  "type": "module",
   "dependencies": {
-    "chat": "2.0.0",
-    "chessground": "^8.1.3",
-    "common": "2.0.0",
-    "game": "2.0.0",
-    "snabbdom": "^3.0.1"
+    "@types/dragscroll": "0.0.3",
+    "date-fns": "2.30.0",
+    "dragscroll": "^0.0.8",
+    "lib": "workspace:*"
   },
-  "scripts": {
-    "dev": "rollup --config",
-    "prod": "rollup --config --config-prod"
+  "build": {
+    "bundle": "src/tournament.*ts"
   }
 }

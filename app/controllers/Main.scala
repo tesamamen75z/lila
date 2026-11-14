@@ -1,248 +1,166 @@
 package controllers
+import play.api.libs.json.*
+import play.api.mvc.*
+import scalalib.model.Language
 
-import akka.pattern.ask
-import play.api.data._, Forms._
-import play.api.libs.json._
-import play.api.mvc._
-import scala.annotation.nowarn
+import lila.app.{ *, given }
+import lila.common.Json.given
+import lila.core.id.{ GameFullId, ImageId }
+import lila.ui.MarkdownRealm
 
-import lila.app._
-import lila.common.HTTPRequest
-import lila.hub.actorApi.captcha.ValidCaptcha
-import makeTimeout.large
-import views._
+final class Main(env: Env, assetsC: ExternalAssets) extends LilaController(env):
 
-final class Main(
-    env: Env,
-    prismicC: Prismic,
-    assetsC: ExternalAssets
-) extends LilaController(env) {
-
-  private lazy val blindForm = Form(
-    tuple(
-      "enable"   -> nonEmptyText,
-      "redirect" -> nonEmptyText
+  def toggleBlindMode = OpenBody:
+    bindForm(lila.web.CtrlUtils.blindForm)(
+      _ => BadRequest,
+      (enable, redirect) =>
+        Redirect(redirect).withCookies:
+          lila.web.WebConfig.blindCookie.make(env.security.lilaCookie)(enable != "0")
     )
-  )
 
-  def toggleBlindMode =
-    OpenBody { implicit ctx =>
-      implicit val req = ctx.body
-      fuccess {
-        blindForm
-          .bindFromRequest()
-          .fold(
-            _ => BadRequest,
-            { case (enable, redirect) =>
-              Redirect(redirect) withCookies env.lilaCookie.cookie(
-                env.api.config.accessibility.blindCookieName,
-                if (enable == "0") "" else env.api.config.accessibility.hash,
-                maxAge = env.api.config.accessibility.blindCookieMaxAge.toSeconds.toInt.some,
-                httpOnly = true.some
-              )
-            }
-          )
-      }
+  def handlerNotFound(msg: Option[String])(using Req) =
+    makeContext.flatMap:
+      keyPages.notFound(msg)(using _)
+
+  def captchaCheck(id: GameId) = Anon:
+    env.game.captcha.validate(id, ~get("solution")).map { valid =>
+      Ok(if valid then 1 else 0)
     }
 
-  def handlerNotFound(req: RequestHeader) = reqToCtx(req) map renderNotFound
+  def webmasters = Open:
+    Ok.page(views.site.page.webmasters)
 
-  def captchaCheck(id: String) =
-    Open { implicit ctx =>
-      env.hub.captcher.actor ? ValidCaptcha(id, ~get("solution")) map { case valid: Boolean =>
-        Ok(if (valid) 1 else 0)
-      }
-    }
+  def lag = Open:
+    Ok.page(views.site.ui.lag)
 
-  def webmasters =
-    Open { implicit ctx =>
-      pageHit
-      fuccess {
-        html.site.page.webmasters
-      }
-    }
+  def app = Open(serveApp)
+  def appLang = LangPage(routes.Main.app)(serveApp)
+  def mobile = Anon(MovedPermanently(routes.Main.app.url))
+  def mobileLang(lang: Language) = Anon(MovedPermanently(routes.Main.appLang(lang).url))
 
-  def lag =
-    Open { implicit ctx =>
-      pageHit
-      fuccess {
-        html.site.lag()
-      }
-    }
+  def redirectToAppStore = Anon:
+    pageHit
+    Redirect(env.web.static.appStoreUrl.value)
 
-  def mobile =
-    Open { implicit ctx =>
-      pageHit
-      OptionOk(prismicC getBookmark "mobile-apk") { case (doc, resolver) =>
-        html.mobile(doc, resolver)
-      }
-    }
+  def redirectToSwag = Anon:
+    env.web.static.swagUrl(lila.common.HTTPRequest.country).so(Redirect(_))
 
-  def dailyPuzzleSlackApp =
-    Open { implicit ctx =>
-      pageHit
-      fuccess {
-        html.site.dailyPuzzleSlackApp()
-      }
-    }
+  private def serveApp(using Context) =
+    pageHit
+    FoundPage(env.cms.renderKey("mobile"))(views.mobile)
 
-  def jslog(id: String) =
-    Open { ctx =>
-      env.round.selfReport(
-        userId = ctx.userId,
-        ip = HTTPRequest ipAddress ctx.req,
-        fullId = lila.game.Game.FullId(id),
-        name = get("n", ctx.req) | "?"
-      )
-      NoContent.fuccess
-    }
+  def playerCount = Open:
+    NoCrawlers(env.web.playerCounter.website.hit())
+    NoContent
 
-  /** Event monitoring endpoint
-    */
-  def jsmon(event: String) =
-    Action {
-      lila.mon.http.jsmon(event).increment()
-      NoContent
-    }
+  def jslog(id: GameFullId) = Open:
+    env.round.selfReport(
+      userId = ctx.userId,
+      ip = ctx.ip,
+      fullId = id,
+      name = get("n") | "?"
+    )
+    NoContent
 
-  def image(id: String, @nowarn("cat=unused") hash: String, @nowarn("cat=unused") name: String) =
-    Action.async {
-      env.imageRepo
-        .fetch(id)
-        .map {
-          case None => NotFound
-          case Some(image) =>
-            lila.mon.http.imageBytes.record(image.size.toLong)
-            Ok(image.data).withHeaders(
-              CACHE_CONTROL -> "max-age=1209600"
-            ) as image.contentType.getOrElse("image/jpeg")
-        }
-    }
-
-  val robots = Action { req =>
-    Ok {
-      if (env.net.crawlable && req.domain == env.net.domain.value) """User-agent: *
-Allow: /
-Disallow: /game/export/
-Disallow: /games/export/
-Allow: /game/export/gif/thumbnail/
-
-User-agent: Twitterbot
-Allow: /
-"""
+  val robots = Anon:
+    Ok:
+      if env.net.crawlable && req.domain == env.net.domain.value && env.mode.isProd
+      then env.web.static.robotsTxt
       else "User-agent: *\nDisallow: /"
-    }
+    .publicCache(1.hour)
+
+  val manifest = Anon:
+    Ok(env.web.static.manifest).publicCache(1.hour)
+
+  def getFishnet = Open:
+    pageHit
+    Ok.page(views.site.ui.getFishnet)
+
+  def costs = Anon:
+    pageHit
+    Redirect:
+      "https://docs.google.com/spreadsheets/d/1Si3PMUJGR9KrpE5lngSkHLJKJkb0ZuI4/preview"
+
+  def contact = Open:
+    pageHit
+    Ok.page(views.site.page.contact)
+
+  def faq = Open:
+    pageHit
+    Ok.page(views.site.page.faq)
+
+  def survey = Open:
+    pageHit
+    Ok.page(views.site.page.survey)
+
+  def temporarilyDisabled(@annotation.nowarn path: String) = Open:
+    NotImplemented.page(views.site.message.temporarilyDisabled)
+
+  def helpPath(path: String) = Open:
+    path match
+      case "keyboard-move" => Ok.snip(lila.web.ui.help.keyboardMove)
+      case "voice/move" => Ok.snip(lila.web.ui.help.voiceMove)
+      case "master" => Redirect(routes.TitleVerify.index.url)
+      case _ => notFound
+
+  def movedPermanently(to: String) = Anon:
+    MovedPermanently(to)
+
+  def instantChess = Open:
+    pageHit
+    if ctx.isAuth then Redirect(routes.Lobby.home)
+    else
+      Redirect(s"${routes.Lobby.home}#pool/10+0").withCookies:
+        env.security.lilaCookie.withSession(remember = true): s =>
+          s + ("theme" -> "ic") + ("pieceSet" -> "icpieces")
+
+  def prometheusMetrics(key: String) = Anon:
+    if key == env.web.config.prometheusKey
+    then Ok(lila.web.PrometheusReporter.latestScrapeData()).publicCache(59.seconds)
+    else NotFound("Invalid prometheus key")
+
+  def legacyQaQuestion(id: Int, @annotation.nowarn slug: String) = Anon:
+    MovedPermanently:
+      env.web.static.legacyQaQuestion(id)
+
+  def devAsset(@annotation.nowarn v: String, path: String, file: String) = assetsC.at(path, file)
+
+  def uploadImage(realm: MarkdownRealm) = AuthBody(lila.web.HashedMultiPart(parse)) { ctx ?=> me ?=>
+    lila.core.security
+      .canUploadImages(realm.key)
+      .so:
+        limit.imageUpload(rateLimited):
+          ctx.body.body.file("image") match
+            case None => JsonBadRequest("Image content only")
+            case Some(image) =>
+              val meta = lila.memo.PicfitApi.form.upload.bindFromRequest().value
+              (for
+                image <- env.memo.picfitApi.uploadFile(image, me, none, meta)
+                maxWidth = realm.imageDesignWidth
+                url = meta match
+                  case Some(info) if info.dim.width > maxWidth =>
+                    env.memo.picfitUrl.resize(image.id, Left(maxWidth)).some
+                  case _ => env.memo.picfitUrl.raw(image.id).some
+              yield Ok(Json.obj("imageUrl" -> url))).recover:
+                case lila.core.lilaism.LilaInvalid(msg) => UnprocessableEntity(jsonError(msg))
   }
 
-  def manifest =
-    Action {
-      JsonOk {
-        Json.obj(
-          "name"             -> env.net.domain.value,
-          "short_name"       -> "Lichess",
-          "start_url"        -> "/",
-          "display"          -> "standalone",
-          "background_color" -> "#161512",
-          "theme_color"      -> "#161512",
-          "description"      -> "The (really) free, no-ads, open source chess server.",
-          "icons" -> List(32, 64, 128, 192, 256, 512, 1024).map { size =>
-            Json.obj(
-              "src"   -> s"//${env.net.assetDomain.value}/assets/logo/lichess-favicon-$size.png",
-              "sizes" -> s"${size}x$size",
-              "type"  -> "image/png"
-            )
-          },
-          "related_applications" -> Json.arr(
-            Json.obj(
-              "platform" -> "play",
-              "url"      -> "https://play.google.com/store/apps/details?id=org.lichess.mobileapp"
-            ),
-            Json.obj(
-              "platform" -> "itunes",
-              "url"      -> "https://itunes.apple.com/us/app/lichess-free-online-chess/id968371784"
-            )
-          )
-        )
-      } withHeaders (CACHE_CONTROL -> "max-age=1209600")
-    }
+  def imageUrl(realm: MarkdownRealm, id: ImageId, width: Int) = Auth { _ ?=> me ?=>
+    if width < 1 then JsonBadRequest("Invalid width")
+    else
+      limit.preview(me.userId, rateLimited):
+        Ok(Json.obj("imageUrl" -> env.memo.picfitUrl.resize(id, Left(width.min(realm.imageDesignWidth)))))
+  }
 
-  def getFishnet =
-    Open { implicit ctx =>
-      pageHit
-      Ok(html.site.bits.getFishnet()).fuccess
-    }
+  def markdownPreview(realm: MarkdownRealm) = AuthBody(parse.tolerantText) { ctx ?=> me ?=>
+    val renderKey = s"${realm.key}:${me.userId}"
+    val options = realm match
+      case MarkdownRealm.blog => lila.ublog.markdownOptions
+      case MarkdownRealm.cms => lila.cms.markdownOptions
+      case _ => env.forum.textExpand.markdownOptions
 
-  def costs =
-    Action { req =>
-      pageHit(req)
-      Redirect("https://docs.google.com/spreadsheets/d/1Si3PMUJGR9KrpE5lngSkHLJKJkb0ZuI4/preview")
-    }
-
-  def verifyTitle =
-    Action { req =>
-      pageHit(req)
-      Redirect(
-        "https://docs.google.com/forms/d/e/1FAIpQLSelXSHdiFw_PmZetxY8AaIJSM-Ahb5QnJcfQMDaiPJSf24lDQ/viewform"
-      )
-    }
-
-  def contact =
-    Open { implicit ctx =>
-      pageHit
-      Ok(html.site.contact()).fuccess
-    }
-
-  def faq =
-    Open { implicit ctx =>
-      pageHit
-      Ok(html.site.faq()).fuccess
-    }
-
-  def movedPermanently(to: String) =
-    Action {
-      MovedPermanently(to)
-    }
-
-  def instantChess =
-    Open { implicit ctx =>
-      pageHit
-      if (ctx.isAuth) fuccess(Redirect(routes.Lobby.home))
-      else
-        fuccess {
-          Redirect(s"${routes.Lobby.home}#pool/10+0").withCookies(
-            env.lilaCookie.withSession { s =>
-              s + ("theme" -> "ic") + ("pieceSet" -> "icpieces")
-            }
-          )
-        }
-    }
-
-  def legacyQaQuestion(id: Int, @nowarn("cat=unused") slug: String) =
-    Open { _ =>
-      MovedPermanently {
-        val faq = routes.Main.faq.url
-        id match {
-          case 103  => s"$faq#acpl"
-          case 258  => s"$faq#marks"
-          case 13   => s"$faq#titles"
-          case 87   => routes.Stat.ratingDistribution("blitz").url
-          case 110  => s"$faq#name"
-          case 29   => s"$faq#titles"
-          case 4811 => s"$faq#lm"
-          case 216  => routes.Main.mobile.url
-          case 340  => s"$faq#trophies"
-          case 6    => s"$faq#ratings"
-          case 207  => s"$faq#hide-ratings"
-          case 547  => s"$faq#leaving"
-          case 259  => s"$faq#trophies"
-          case 342  => s"$faq#provisional"
-          case 50   => routes.Page.help.url
-          case 46   => s"$faq#name"
-          case 122  => s"$faq#marks"
-          case _    => faq
-        }
-      }.fuccess
-    }
-
-  def devAsset(@nowarn("cat=unused") v: String, path: String, file: String) = assetsC.at(path, file)
-}
+    env.memo.markdown
+      .toHtml(renderKey, Markdown(ctx.body.body), options)
+      .map(_.frag)
+      .map(Ok.snip(_))
+  }

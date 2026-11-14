@@ -1,89 +1,81 @@
 package lila.user
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
-import play.api.libs.ws.StandaloneWSClient
-import scala.concurrent.duration._
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
 
-import lila.common.config._
-import lila.common.LightUser
-import lila.db.dsl.Coll
-
-private class UserConfig(
-    @ConfigName("online.ttl") val onlineTtl: FiniteDuration,
-    @ConfigName("collection.user") val collectionUser: CollName,
-    @ConfigName("collection.note") val collectionNote: CollName,
-    @ConfigName("collection.trophy") val collectionTrophy: CollName,
-    @ConfigName("collection.trophyKind") val collectionTrophyKind: CollName,
-    @ConfigName("collection.ranking") val collectionRanking: CollName,
-    @ConfigName("password.bpass.secret") val passwordBPassSecret: Secret
-)
+import lila.common.Bus
+import lila.core.config.*
+import lila.core.user.RealName
+import lila.core.userId
 
 @Module
 final class Env(
-    appConfig: Configuration,
     db: lila.db.Db,
+    getFile: lila.common.config.GetRelativeFile,
+    yoloDb: lila.db.AsyncDb @@ lila.db.YoloDb,
     mongoCache: lila.memo.MongoCache.Api,
     cacheApi: lila.memo.CacheApi,
-    isOnline: lila.socket.IsOnline,
-    onlineIds: lila.socket.OnlineIds
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    ws: StandaloneWSClient
-) {
+    isOnline: lila.core.socket.IsOnline,
+    onlineIds: lila.core.socket.OnlineIds
+)(using Executor)(using scheduler: Scheduler):
 
-  private val config = appConfig.get[UserConfig]("user")(AutoConfig.loader)
+  val perfsRepo = UserPerfsRepo(db(CollName("user_perf")))
+  val repo = UserRepo(db(CollName("user4")))
 
-  val repo = new UserRepo(db(config.collectionUser))
+  val api = wire[UserApi]
 
-  val lightUserApi: LightUserApi = wire[LightUserApi]
-  val lightUser                  = lightUserApi.async
-  val lightUserSync              = lightUserApi.sync
-  val isBotSync                  = new LightUser.IsBotSync(id => lightUserApi.sync(id).exists(_.isBot))
+  given lightUserApi: LightUserApi = wire[LightUserApi]
 
-  lazy val botIds     = new GetBotIds(() => cached.botIds.get {})
-  lazy val rankingsOf = new RankingsOf(cached.rankingsOf)
+  export lightUserApi.{
+    async as lightUser,
+    asyncFallback as lightUserFallback,
+    sync as lightUserSync,
+    syncFallback as lightUserSyncFallback,
+    isBotSync
+  }
 
   lazy val jsonView = wire[JsonView]
 
-  lazy val noteApi = {
-    def mk = (coll: Coll) => wire[NoteApi]
-    mk(db(config.collectionNote))
-  }
+  lazy val noteApi = NoteApi(db(CollName("note")))
 
-  lazy val trophyApi = new TrophyApi(db(config.collectionTrophy), db(config.collectionTrophyKind), cacheApi)
+  lazy val trophyApi = TrophyApi(db(CollName("trophy")), db(CollName("trophyKind")), cacheApi)
 
-  lazy val rankingApi = {
-    def mk = (coll: Coll) => wire[RankingApi]
-    mk(db(config.collectionRanking))
-  }
+  private lazy val rankingColl = yoloDb(CollName("ranking")).failingSilently()
+
+  lazy val rankingApi = wire[RankingApi]
 
   lazy val cached: Cached = wire[Cached]
-
-  private lazy val passHasher = new PasswordHasher(
-    secret = config.passwordBPassSecret,
-    logRounds = 10,
-    hashTimer = res => lila.common.Chronometer.syncMon(_.user.auth.hashTime)(res)
-  )
-
-  lazy val authenticator = wire[Authenticator]
+  def rankingsOf: UserId => lila.core.rating.UserRankMap = cached.rankingsOf
 
   lazy val forms = wire[UserForm]
 
-  lila.common.Bus.subscribeFuns(
-    "adjustCheater" -> { case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
-      rankingApi remove userId
-      repo.setRoles(userId, Nil).unit
-    },
-    "adjustBooster" -> { case lila.hub.actorApi.mod.MarkBooster(userId) =>
-      rankingApi.remove(userId).unit
-      repo.setRoles(userId, Nil).unit
-    },
-    "kickFromRankings" -> { case lila.hub.actorApi.mod.KickFromRankings(userId) =>
-      rankingApi.remove(userId).unit
-    }
-  )
-}
+  val flairApi = wire[FlairApi]
+
+  val flagApi: lila.core.user.FlagApi = Flags
+
+  Bus.sub[lila.core.mod.MarkCheater]:
+    case lila.core.mod.MarkCheater(userId, true) =>
+      rankingApi.remove(userId)
+      repo.setRoles(userId, Nil)
+
+  Bus.sub[lila.core.mod.MarkBooster]: m =>
+    if m.value then
+      rankingApi.remove(m.userId)
+      repo.setRoles(m.userId, Nil)
+
+  Bus.sub[lila.core.mod.RankBan]: k =>
+    if k.value then rankingApi.remove(k.userId)
+
+  Bus.sub[lila.core.misc.puzzle.StreakRun]: r =>
+    api.addPuzRun("streak", r.userId, r.score)
+
+  lila.common.Cli.handle(_.SetTitle):
+    case "user" :: "real-name" :: id :: name =>
+      val realName = RealName(name.mkString(" "))
+      UserStr
+        .read(id)
+        .so: uid =>
+          repo.setRealName(uid.id, realName).inject(s"Set real name of $id to $realName")
+
+  scheduler.scheduleAtFixedRate(1.hour, 1.hour): () =>
+    repo.unsetFlairs(FlairApi.badFlairs.flush())

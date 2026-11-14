@@ -1,6 +1,4 @@
-package lila
+package lila.explorer
 
-package object explorer extends PackageObject {
-
-  val maxPlies = 50
-}
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

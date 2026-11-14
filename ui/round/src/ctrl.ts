@@ -1,319 +1,319 @@
 /// <reference types="../types/ab" />
 
-import * as ab from 'ab';
-import * as round from './round';
-import * as game from 'game';
-import * as status from 'game/status';
-import * as ground from './ground';
-import notify from 'common/notification';
-import { make as makeSocket, RoundSocket } from './socket';
-import * as title from './title';
-import * as blur from './blur';
-import * as speech from './speech';
-import * as cg from 'chessground/types';
-import { Config as CgConfig } from 'chessground/config';
-import { Api as CgApi } from 'chessground/api';
-import { ClockController } from './clock/clockCtrl';
-import { CorresClockController, ctrl as makeCorresClock } from './corresClock/corresClockCtrl';
-import MoveOn from './moveOn';
-import TransientMove from './transientMove';
-import * as atomic from './atomic';
-import * as sound from './sound';
-import * as util from './util';
-import * as xhr from './xhr';
-import { valid as crazyValid, init as crazyInit, onEnd as crazyEndHook } from './crazy/crazyCtrl';
-import { ctrl as makeKeyboardMove, KeyboardMove } from './keyboardMove';
-import * as renderUser from './view/user';
-import * as cevalSub from './cevalSub';
-import * as keyboard from './keyboard';
-import { PromotionCtrl, promote } from 'chess/promotion';
+import type { DrawShape } from '@lichess-org/chessground/draw';
+import { opposite, uciToMove } from '@lichess-org/chessground/util';
+import * as ab from 'ab/round';
+import { roleToChar } from 'chessops/util';
+import { ctrl as makeKeyboardMove, type KeyboardMove } from 'keyboard-move';
+import { makeVoiceMove, type VoiceMove } from 'voice';
 
-import {
+import { defined, type Toggle, type Prop, toggle, requestIdleCallbackSafe, memoize } from 'lib';
+import * as game from 'lib/game';
+import { plyOpponentColor } from 'lib/game';
+import { plyToTurn, plyColor } from 'lib/game/chess';
+import { ClockCtrl, type ClockOpts } from 'lib/game/clock/clockCtrl';
+import type { MoveRootCtrl } from 'lib/game/moveRootCtrl';
+import { PromotionCtrl, promote } from 'lib/game/promotion';
+import { game as gameRoute } from 'lib/game/router';
+import { readFen, almostSanOf, speakable } from 'lib/game/sanWriter';
+import { playing } from 'lib/game/status';
+import viewStatus from 'lib/game/view/status';
+import { licon } from 'lib/licon';
+import notify from 'lib/notification';
+import * as poolRangeStorage from 'lib/poolRangeStorage';
+import { Replay } from 'lib/prefs';
+import { pubsub } from 'lib/pubsub';
+import { type SocketSendOpts } from 'lib/socket';
+import { storage, once, storedBooleanProp, type LichessBooleanStorage } from 'lib/storage';
+import type { NodeCrazy } from 'lib/tree/types';
+import type { QuestionOpts } from 'lib/types';
+import { toggleZenMode } from 'lib/view/zen';
+import * as wakeLock from 'lib/wakeLock';
+
+import * as atomic from './atomic';
+import * as blur from './blur';
+import * as cevalSub from './cevalSub';
+import { CorresClockController } from './corresClock/corresClockCtrl';
+import { valid as crazyValid, init as crazyInit, onEnd as crazyEndHook } from './crazy/crazyCtrl';
+import * as ground from './ground';
+import type {
+  Step,
   RoundOpts,
   RoundData,
-  ApiMove,
-  ApiEnd,
-  Redraw,
   SocketMove,
   SocketDrop,
-  SocketOpts,
   MoveMetadata,
-  Position,
   NvuiPlugin,
+  RoundTour,
+  ApiMove,
+  ApiEnd,
+  EventsWithPayload,
 } from './interfaces';
+import { init as keyboardInit } from './keyboard';
+import MoveOn from './moveOn';
+import Server from './server';
+import { make as makeSocket, type RoundSocket } from './socket';
+import * as title from './title';
+import TransientMove from './transientMove';
+import * as util from './util';
+import { endGameView } from './view/main';
+import { userTxt } from './view/user';
+import * as xhr from './xhr';
 
-interface GoneBerserk {
-  white?: boolean;
-  black?: boolean;
-}
+type GoneBerserk = Partial<ByColor<boolean>>;
 
-type Timeout = number;
-
-export default class RoundController {
+export default class RoundController implements MoveRootCtrl {
   data: RoundData;
   socket: RoundSocket;
   chessground: CgApi;
-  clock?: ClockController;
+  clock?: ClockCtrl;
   corresClock?: CorresClockController;
-  trans: Trans;
-  noarg: TransNoArg;
   keyboardMove?: KeyboardMove;
+  voiceMove?: VoiceMove;
   moveOn: MoveOn;
   promotion: PromotionCtrl;
-
   ply: number;
   firstSeconds = true;
   flip = false;
+  menu: Toggle;
+  confirmMoveToggle: Toggle;
   loading = false;
   loadingTimeout: number;
   redirecting = false;
-  transientMove: TransientMove;
-  moveToSubmit?: SocketMove;
-  dropToSubmit?: SocketDrop;
+  transientMove?: TransientMove;
+  toSubmit?: SocketMove | SocketDrop;
   goneBerserk: GoneBerserk = {};
   resignConfirm?: Timeout = undefined;
   drawConfirm?: Timeout = undefined;
+  preventDrawOffer?: Timeout = undefined;
   // will be replaced by view layer
   autoScroll: () => void = () => {};
-  challengeRematched = false;
-  justDropped?: cg.Role;
-  justCaptured?: cg.Piece;
+  justDropped?: Role;
+  justCaptured?: Piece;
   shouldSendMoveTime = false;
-  preDrop?: cg.Role;
-  lastDrawOfferAtPly?: Ply;
-  nvui?: NvuiPlugin;
+  preDrop?: Role;
   sign: string = Math.random().toString(36);
-  private music?: any;
+  blindfoldStorage: LichessBooleanStorage;
+  server: Server;
+  nvui?: NvuiPlugin;
+  vibration: Prop<boolean> = storedBooleanProp('vibration', false);
+  streamer: Prop<boolean> = storedBooleanProp('streamermode', false);
 
-  constructor(readonly opts: RoundOpts, readonly redraw: Redraw) {
-    round.massage(opts.data);
+  constructor(
+    readonly opts: RoundOpts,
+    readonly redraw: Redraw,
+  ) {
+    util.upgradeServerData(opts.data);
 
     const d = (this.data = opts.data);
 
-    this.ply = round.lastPly(d);
+    this.ply = util.lastPly(d);
     this.goneBerserk[d.player.color] = d.player.berserk;
     this.goneBerserk[d.opponent.color] = d.opponent.berserk;
-
     setTimeout(() => {
       this.firstSeconds = false;
       this.redraw();
     }, 3000);
+    this.socket = (d.local as unknown as RoundSocket) ?? makeSocket(opts.socketSend!, this);
+    this.blindfoldStorage = storage.boolean(`blindfold.${this.data.player.user?.id ?? 'anon'}`);
 
-    this.socket = makeSocket(opts.socketSend, this);
-
-    if (lichess.RoundNVUI) this.nvui = lichess.RoundNVUI(redraw) as NvuiPlugin;
-
-    if (d.clock)
-      this.clock = new ClockController(d, {
-        onFlag: this.socket.outoftime,
-        soundColor: d.simul || d.player.spectator || !d.pref.clockSound ? undefined : d.player.color,
-        nvui: !!this.nvui,
-      });
-    else {
-      this.makeCorrespondenceClock();
-      setInterval(this.corresClockTick, 1000);
-    }
-
+    this.updateClockCtrl();
     this.promotion = new PromotionCtrl(
       f => f(this.chessground),
       () => {
         this.chessground.cancelPremove();
-        xhr.reload(this).then(this.reload, lichess.reload);
+        xhr.reload(this.data).then(this.reload, site.reload);
       },
       this.redraw,
-      d.pref.autoQueen
+      () => d.game.variant.key,
+      d.pref.autoQueen,
     );
 
     this.setQuietMode();
-
+    this.confirmMoveToggle = toggle(d.pref.submitMove);
     this.moveOn = new MoveOn(this, 'move-on');
-    this.transientMove = new TransientMove(this.socket);
+    if (!d.local) this.transientMove = new TransientMove(this.socket);
+    this.server = new Server(() => this.data);
 
-    this.trans = lichess.trans(opts.i18n);
-    this.noarg = this.trans.noarg;
-
-    setTimeout(this.delayedInit, 200);
+    this.menu = toggle(false, redraw);
+    const nvuiPromise = site.blindMode && site.asset.loadEsm<NvuiPlugin>('round.nvui', { init: this });
+    setTimeout(async () => {
+      if (nvuiPromise) this.nvui = await nvuiPromise;
+      this.delayedInit();
+    }, 200);
 
     setTimeout(this.showExpiration, 350);
+
+    if (this.streamer()) this.streamerMode(true);
 
     if (!document.referrer?.includes('/serviceWorker.')) setTimeout(this.showYourMoveNotification, 500);
 
     // at the end:
-    lichess.pubsub.on('jump', ply => {
+    pubsub.on('jump', ply => {
       this.jump(parseInt(ply));
       this.redraw();
     });
 
-    lichess.pubsub.on('sound_set', set => {
-      if (!this.music && set === 'music')
-        lichess.loadScript('javascripts/music/play.js').then(() => {
-          this.music = lichess.playMusic();
-        });
-      if (this.music && set !== 'music') this.music = undefined;
-    });
+    pubsub.on('zen', toggleZenMode);
 
-    lichess.pubsub.on('zen', () => {
-      if (!this.data.player.spectator) {
-        const zen = $('body').toggleClass('zen').hasClass('zen');
-        window.dispatchEvent(new Event('resize'));
-        xhr.setZen(zen);
-      }
-    });
-
-    if (this.isPlaying()) ab.init(this);
+    if (!this.opts.noab && this.isPlaying()) ab.init(this);
   }
 
-  private showExpiration = () => {
+  private readonly showExpiration = () => {
     if (!this.data.expiration) return;
     this.redraw();
     setTimeout(this.showExpiration, 250);
   };
 
-  private onUserMove = (orig: cg.Key, dest: cg.Key, meta: cg.MoveMetadata) => {
-    if (!this.keyboardMove || !this.keyboardMove.usedSan) ab.move(this, meta);
-    if (
-      !this.promotion.start(
-        orig,
-        dest,
-        (orig, dest, role) => this.sendMove(orig, dest, role, meta),
-        meta,
-        this.keyboardMove?.justSelected()
-      )
-    ) {
-      this.sendMove(orig, dest, undefined, meta);
-    }
+  private readonly onUserMove = (orig: Key, dest: Key, meta: MoveMetadata) => {
+    if (!this.keyboardMove?.usedSan && !this.opts.noab) ab.move(this, meta, pubsub.emit);
+    if (!this.startPromotion(orig, dest, meta)) this.sendMove(orig, dest, undefined, meta);
   };
 
-  private onUserNewPiece = (role: cg.Role, key: cg.Key, meta: cg.MoveMetadata) => {
+  private readonly onUserNewPiece = (role: Role, key: Key, meta: MoveMetadata) => {
     if (!this.replaying() && crazyValid(this.data, role, key)) {
       this.sendNewPiece(role, key, !!meta.predrop);
     } else this.jump(this.ply);
   };
 
-  private onMove = (orig: cg.Key, dest: cg.Key, captured?: cg.Piece) => {
+  private readonly onMove = (orig: Key, dest: Key, captured?: Piece) => {
     if (captured || this.enpassant(orig, dest)) {
       if (this.data.game.variant.key === 'atomic') {
-        sound.explode();
+        site.sound.play('explosion');
         atomic.capture(this, dest);
-      } else sound.capture();
-    } else sound.move();
+      } else site.sound.move({ name: 'capture', filter: 'game' });
+    } else site.sound.move({ name: 'move', filter: 'game' });
   };
 
-  private onPremove = (orig: cg.Key, dest: cg.Key, meta: cg.MoveMetadata) => {
+  private readonly startPromotion = (orig: Key, dest: Key, meta: MoveMetadata) =>
     this.promotion.start(
       orig,
       dest,
-      (orig, dest, role) => this.sendMove(orig, dest, role, meta),
+      {
+        submit: (orig, dest, role) => this.sendMove(orig, dest, role, meta),
+        show: this.voiceMove?.promotionHook(),
+      },
       meta,
-      this.keyboardMove?.justSelected()
+      this.keyboardMove?.justSelected(),
     );
-  };
 
-  private onCancelPremove = () => {
-    this.promotion.cancelPrePromotion();
-  };
+  private readonly onPremove = (orig: Key, dest: Key, meta: MoveMetadata) =>
+    this.startPromotion(orig, dest, meta);
 
-  private onNewPiece = (piece: cg.Piece, key: cg.Key): void => {
+  private readonly onCancelPremove = () => this.promotion.cancelPrePromotion();
+
+  private readonly onNewPiece = (piece: Piece, key: Key): void => {
     if (piece.role === 'pawn' && (key[1] === '1' || key[1] === '8')) return;
-    sound.move();
+    site.sound.move();
   };
 
-  private onPredrop = (role: cg.Role | undefined, _?: Key) => {
+  private readonly onPredrop = (role: Role | undefined) => {
     this.preDrop = role;
     this.redraw();
   };
 
-  private isSimulHost = () => {
-    return this.data.simul && this.data.simul.hostId === this.opts.userId;
-  };
+  private readonly isSimulHost = () => this.data.simul && this.data.simul.hostId === this.opts.userId;
 
-  private enpassant = (orig: cg.Key, dest: cg.Key): boolean => {
-    if (orig[0] === dest[0] || this.chessground.state.pieces.get(dest)?.role !== 'pawn') return false;
-    const pos = (dest[0] + orig[1]) as cg.Key;
+  private readonly enpassant = (orig: Key, dest: Key): boolean => {
+    if (dest.startsWith(orig[0]) || this.chessground.state.pieces.get(dest)?.role !== 'pawn') return false;
+    const pos = (dest[0] + orig[1]) as Key;
     this.chessground.setPieces(new Map([[pos, undefined]]));
     return true;
   };
 
-  lastPly = () => round.lastPly(this.data);
+  streamerMode = (v: boolean): void => {
+    $('main.round').toggleClass('round--streamer', this.streamer(v));
+  };
 
-  makeCgHooks = () => ({
+  lastPly = (): number => util.lastPly(this.data);
+
+  makeCgHooks = (): any => ({
     onUserMove: this.onUserMove,
     onUserNewPiece: this.onUserNewPiece,
-    onMove: this.onMove,
+    onMove: this.data.local ? undefined : this.onMove,
     onNewPiece: this.onNewPiece,
     onPremove: this.onPremove,
     onCancelPremove: this.onCancelPremove,
     onPredrop: this.onPredrop,
   });
 
-  replaying = (): boolean => this.ply !== this.lastPly();
+  replaying = (): boolean => this.ply !== this.lastPly() && !this.data.local;
 
   userJump = (ply: Ply): void => {
-    this.cancelMove();
+    this.toSubmit = undefined;
+    this.promotion.dismiss();
     this.chessground.selectSquare(null);
-    if (ply != this.ply && this.jump(ply)) speech.userJump(this, this.ply);
+    if (ply !== this.ply && this.jump(ply)) site.sound.saySan(this.stepAt(this.ply).san, true);
     else this.redraw();
   };
 
-  isPlaying = () => game.isPlayerPlaying(this.data);
+  userJumpPlyDelta = (plyDelta: Ply): void => this.userJump(this.ply + plyDelta);
+
+  isPlaying = (): boolean => game.isPlayerPlaying(this.data);
 
   jump = (ply: Ply): boolean => {
-    ply = Math.max(round.firstPly(this.data), Math.min(this.lastPly(), ply));
+    ply = Math.max(util.firstPly(this.data), Math.min(this.lastPly(), ply));
     const isForwardStep = ply === this.ply + 1;
     this.ply = ply;
     this.justDropped = undefined;
     this.preDrop = undefined;
-    const s = this.stepAt(ply),
-      config: CgConfig = {
-        fen: s.fen,
-        lastMove: util.uci2move(s.uci),
-        check: !!s.check,
-        turnColor: this.ply % 2 === 0 ? 'white' : 'black',
-      };
+    const s = this.stepAt(ply);
+    const config: CgConfig = {
+      fen: s.fen,
+      lastMove: uciToMove(s.uci),
+      check: !!s.check,
+      turnColor: plyColor(this.ply),
+      drawable: { autoShapes: ground.endgameShapesForStep(this, s) },
+    };
+    this.promotion.dismiss();
     if (this.replaying()) this.chessground.stop();
     else
       config.movable = {
         color: this.isPlaying() ? this.data.player.color : undefined,
         dests: util.parsePossibleMoves(this.data.possibleMoves),
       };
+    this.chessground.cancelMove();
     this.chessground.set(config);
-    if (s.san && isForwardStep) {
-      if (s.san.includes('x')) sound.capture();
-      else sound.move();
-      if (/[+#]/.test(s.san)) sound.check();
-    }
+    if (s.san && isForwardStep) site.sound.move(s);
     this.autoScroll();
-    if (this.keyboardMove) this.keyboardMove.update(s);
-    lichess.pubsub.emit('ply', ply);
+    pubsub.emit('ply', ply);
+    this.pluginUpdate(s.fen);
     return true;
   };
+
+  canMove = (): boolean => !this.replaying() && this.data.player.color === this.chessground.state.turnColor;
 
   replayEnabledByPref = (): boolean => {
     const d = this.data;
     return (
-      d.pref.replay === Prefs.Replay.Always ||
-      (d.pref.replay === Prefs.Replay.OnlySlowGames &&
-        (d.game.speed === 'classical' || d.game.speed === 'unlimited' || d.game.speed === 'correspondence'))
+      d.pref.replay === Replay.Always ||
+      (d.pref.replay === Replay.OnlySlowGames &&
+        (d.game.speed === 'classical' || d.game.speed === 'correspondence'))
     );
   };
 
-  isLate = () => this.replaying() && status.playing(this.data);
+  isLate = (): boolean => this.replaying() && playing(this.data);
 
-  playerAt = (position: Position) =>
-    (this.flip as any) ^ ((position === 'top') as any) ? this.data.opponent : this.data.player;
+  playerAt = (position: game.TopOrBottom): game.Player =>
+    this.flip !== (position === 'top') ? this.data.opponent : this.data.player;
 
-  flipNow = () => {
+  flipNow = (): void => {
     this.flip = !this.nvui && !this.flip;
     this.chessground.set({
       orientation: ground.boardOrientation(this.data, this.flip),
     });
+    pubsub.emit('flip', this.flip);
     this.redraw();
   };
 
-  setTitle = () => title.set(this);
+  setTitle = (): void => title.set(this);
 
-  actualSendMove = (tpe: string, data: any, meta: MoveMetadata = {}) => {
-    const socketOpts: SocketOpts = {
+  actualSendMove = <moveOrDrop extends 'move' | 'drop'>(
+    tpe: moveOrDrop,
+    data: EventsWithPayload[moveOrDrop],
+    meta: MoveMetadata = { premove: false },
+  ): void => {
+    const socketOpts: SocketSendOpts = {
       sign: this.sign,
       ackable: true,
     };
@@ -334,37 +334,50 @@ export default class RoundController {
     this.justDropped = meta.justDropped;
     this.justCaptured = meta.justCaptured;
     this.preDrop = undefined;
-    this.transientMove.register();
+    this.transientMove?.register();
     this.redraw();
   };
 
-  sendMove = (orig: cg.Key, dest: cg.Key, prom: cg.Role | undefined, meta: cg.MoveMetadata) => {
-    const move: SocketMove = {
-      u: orig + dest,
-    };
+  pluginMove = (orig: Key, dest: Key, role?: Role, preConfirmed?: boolean): void => {
+    if (!role) {
+      this.chessground.move(orig, dest);
+      this.chessground.state.movable.dests = undefined;
+      this.chessground.state.turnColor = opposite(this.chessground.state.turnColor);
+
+      if (this.startPromotion(orig, dest, { premove: false })) return;
+    }
+    this.sendMove(orig, dest, role, { premove: false, preConfirmed });
+  };
+
+  pluginUpdate = (fen: string): void => {
+    this.voiceMove?.update({ fen, canMove: this.canMove() });
+    this.keyboardMove?.update({ fen, canMove: this.canMove() });
+  };
+
+  sendMove = (orig: Key, dest: Key, prom: Role | undefined, meta: MoveMetadata): void => {
+    const move: SocketMove = { u: orig + dest };
     if (prom) move.u += prom === 'knight' ? 'n' : prom[0];
     if (blur.get()) move.b = 1;
     this.resign(false);
-    if (this.data.pref.submitMove && !meta.premove) {
-      this.moveToSubmit = move;
+
+    if (!meta.preConfirmed && this.confirmMoveToggle() && !meta.premove) {
+      if (site.sound.isSpeech()) {
+        const spoken = `${speakable(almostSanOf(readFen(this.stepAt(this.ply).fen), move.u))}. confirm?`;
+        site.sound.say(spoken, false, true);
+      }
+      this.toSubmit = move;
       this.redraw();
-    } else {
-      this.actualSendMove('move', move, {
-        justCaptured: meta.captured,
-        premove: meta.premove,
-      });
+      return;
     }
+    this.actualSendMove('move', move, { justCaptured: meta.captured, premove: meta.premove });
   };
 
-  sendNewPiece = (role: cg.Role, key: cg.Key, isPredrop: boolean): void => {
-    const drop: SocketDrop = {
-      role: role,
-      pos: key,
-    };
+  sendNewPiece = (role: Role, key: Key, isPredrop: boolean): void => {
+    const drop: SocketDrop = { role, pos: key };
     if (blur.get()) drop.b = 1;
     this.resign(false);
-    if (this.data.pref.submitMove && !isPredrop) {
-      this.dropToSubmit = drop;
+    if (this.confirmMoveToggle() && !isPredrop) {
+      this.toSubmit = drop;
       this.redraw();
     } else {
       this.actualSendMove('drop', drop, {
@@ -374,17 +387,18 @@ export default class RoundController {
     }
   };
 
-  showYourMoveNotification = () => {
+  showYourMoveNotification = (): void => {
+    if (this.data.local) return;
     const d = this.data;
-    const opponent = $('body').hasClass('zen') ? 'Your opponent' : renderUser.userTxt(this, d.opponent);
+    const opponent = $('body').hasClass('zen') ? 'Your opponent' : userTxt(d.opponent);
     const joined = `${opponent}\njoined the game.`;
     if (game.isPlayerTurn(d))
       notify(() => {
-        let txt = this.noarg('yourTurn');
+        let txt = i18n.site.yourTurn;
         if (this.ply < 1) txt = `${joined}\n${txt}`;
         else {
-          let move = d.steps[d.steps.length - 1].san;
-          const turn = Math.floor((this.ply - 1) / 2) + 1;
+          let move = util.lastStep(this.data).san;
+          const turn = plyToTurn(this.ply);
           move = `${turn}${this.ply % 2 === 1 ? '.' : '...'} ${move}`;
           txt = `${opponent}\nplayed ${move}.\n${txt}`;
         }
@@ -393,16 +407,15 @@ export default class RoundController {
     else if (this.isPlaying() && this.ply < 1) notify(joined);
   };
 
-  playerByColor = (c: Color) => this.data[c === this.data.player.color ? 'player' : 'opponent'];
+  playerByColor = (c: Color): game.Player => this.data[c === this.data.player.color ? 'player' : 'opponent'];
 
   apiMove = (o: ApiMove): true => {
-    const d = this.data,
-      playing = this.isPlaying();
-
+    const d = this.data;
+    const playing = this.isPlaying();
     d.game.turns = o.ply;
-    d.game.player = o.ply % 2 === 0 ? 'white' : 'black';
-    const playedColor = o.ply % 2 === 0 ? 'black' : 'white',
-      activeColor = d.player.color === d.game.player;
+    d.game.player = plyColor(o.ply);
+    const playedColor = plyOpponentColor(o.ply);
+    const activeColor = d.player.color === d.game.player;
     if (o.status) d.game.status = o.status;
     if (o.winner) d.game.winner = o.winner;
     this.playerByColor('white').offeringDraw = o.wDraw;
@@ -419,13 +432,13 @@ export default class RoundController {
             role: o.role,
             color: playedColor,
           },
-          o.uci.substr(2, 2) as cg.Key
+          o.uci.slice(2, 4) as Key,
         );
       else {
         // This block needs to be idempotent, even for castling moves in
         // Chess960.
-        const keys = util.uci2move(o.uci)!,
-          pieces = this.chessground.state.pieces;
+        const keys = uciToMove(o.uci)!;
+        const pieces = this.chessground.state.pieces;
         if (
           !o.castle ||
           (pieces.get(o.castle.king[0])?.role === 'king' && pieces.get(o.castle.rook[0])?.role === 'rook')
@@ -441,11 +454,17 @@ export default class RoundController {
         },
         check: !!o.check,
       });
-      if (o.check) sound.check();
+      if (this.googlyEyes) this.chessground.setAutoShapes(this.googlyEyes());
+      if (o.status?.name === 'mate') {
+        site.sound.play('checkmate', o.volume);
+      } else if (o.check) {
+        site.sound.play('check', o.volume);
+      }
       blur.onMove();
-      lichess.pubsub.emit('ply', this.ply);
+      pubsub.emit('ply', this.ply);
     }
     d.game.threefold = !!o.threefold;
+    d.game.fiftyMoves = !!o.fiftyMoves;
     const step = {
       ply: this.lastPly() + 1,
       fen: o.fen,
@@ -455,15 +474,22 @@ export default class RoundController {
       crazy: o.crazyhouse,
     };
     d.steps.push(step);
+    if (this.ply === step.ply && this.chessground.getFen() !== step.fen) ground.sync(this, step, playing);
     this.justDropped = undefined;
     this.justCaptured = undefined;
     game.setOnGame(d, playedColor, true);
     this.data.forecastCount = undefined;
     if (o.clock) {
       this.shouldSendMoveTime = true;
-      const oc = o.clock,
-        delay = playing && activeColor ? 0 : oc.lag || 1;
-      if (this.clock) this.clock.setClock(d, oc.white, oc.black, delay);
+      const oc = o.clock;
+      const delay = playing && activeColor ? 0 : oc.lag || 1;
+      if (this.clock)
+        this.clock.setClock({
+          white: oc.white,
+          black: oc.black,
+          ticking: this.tickingClockColor(),
+          delay,
+        });
       else if (this.corresClock) this.corresClock.update(oc.white, oc.black);
     }
     if (this.data.expiration) {
@@ -471,18 +497,22 @@ export default class RoundController {
       else this.data.expiration.movedAt = Date.now();
     }
     this.redraw();
-    if (playing && playedColor == d.player.color) {
-      this.transientMove.clear();
+    if (playing && playedColor === d.player.color) {
+      this.transientMove?.clear();
       this.moveOn.next();
       cevalSub.publish(d, o);
     }
-    if (!this.replaying() && playedColor != d.player.color) {
-      // atrocious hack to prevent race condition
-      // with explosions and premoves
-      // https://github.com/ornicar/lila/issues/343
+    if (!this.replaying() && playedColor !== d.player.color) {
+      if (this.vibration() && 'vibrate' in navigator) navigator.vibrate(100);
+      // prevent race conditions with explosions and premoves
+      // https://github.com/lichess-org/lila/issues/343
       const premoveDelay = d.game.variant.key === 'atomic' ? 100 : 1;
+      const premovePly = this.ply;
+      const premoveFen = step.fen;
       setTimeout(() => {
-        if (!this.chessground.playPremove() && !this.playPredrop()) {
+        if (this.ply !== premovePly || this.stepAt(this.ply).fen !== premoveFen) return;
+        if (this.nvui) this.nvui.playPremove();
+        else if (!this.chessground.playPremove() && !this.playPredrop()) {
           this.promotion.cancel();
           this.showYourMoveNotification();
         }
@@ -490,13 +520,18 @@ export default class RoundController {
     }
     this.autoScroll();
     this.onChange();
-    if (this.keyboardMove) this.keyboardMove.update(step, playedColor != d.player.color);
-    if (this.music) this.music.jump(o);
-    speech.step(step);
+    this.pluginUpdate(step.fen);
+    if (!this.data.local) site.sound.move({ ...o, filter: 'music' });
+    site.sound.saySan(step.san);
+    this.server.alive();
     return true; // prevents default socket pubsub
   };
 
-  private playPredrop = () => {
+  crazyValid = (role: Role, key: Key): boolean => crazyValid(this.data, role, key);
+
+  getCrazyhousePockets = (): NodeCrazy['pockets'] | undefined => this.data.crazyhouse?.pockets;
+
+  private readonly playPredrop = () => {
     return this.chessground.playPredrop(drop => {
       return crazyValid(this.data, drop.role, drop.key);
     });
@@ -509,14 +544,22 @@ export default class RoundController {
   }
 
   reload = (d: RoundData): void => {
-    if (d.steps.length !== this.data.steps.length) this.ply = d.steps[d.steps.length - 1].ply;
-    round.massage(d);
+    const posChanged = d.steps.length !== this.data.steps.length;
+    if (posChanged) this.ply = util.lastPly(d);
+    util.upgradeServerData(d);
     this.data = d;
     this.clearJust();
     this.shouldSendMoveTime = false;
-    if (this.clock) this.clock.setClock(d, d.clock!.white, d.clock!.black);
-    if (this.corresClock) this.corresClock.update(d.correspondence.white, d.correspondence.black);
-    if (!this.replaying()) ground.reload(this);
+    this.updateClockCtrl();
+    if (this.clock)
+      this.clock.setClock({
+        white: d.clock!.white,
+        black: d.clock!.black,
+        ticking: this.tickingClockColor(),
+      });
+    if (this.corresClock) this.corresClock.update(d.correspondence!.white, d.correspondence!.black);
+    if (posChanged || !this.replaying()) ground.reload(this);
+    if (posChanged) this.chessground.cancelPremove();
     this.setTitle();
     this.moveOn.next();
     this.setQuietMode();
@@ -524,94 +567,169 @@ export default class RoundController {
     this.autoScroll();
     this.onChange();
     this.setLoading(false);
-    if (this.keyboardMove) this.keyboardMove.update(d.steps[d.steps.length - 1]);
+    this.pluginUpdate(util.lastStep(this.data).fen);
   };
 
   endWithData = (o: ApiEnd): void => {
     const d = this.data;
+    const ply = this.lastPly();
+    const step = this.stepAt(ply);
     d.game.winner = o.winner;
     d.game.status = o.status;
+    d.game.abortedBy = o.abortedBy;
     d.game.boosted = o.boosted;
-    this.userJump(this.lastPly());
+    d.player.blindfold = false;
+    this.userJump(ply);
+    d.game.fen = util.lastStep(this.data).fen;
+    // If losing/drawing on time but locally it is the opponent's turn, move did not reach server before the end
+    if (
+      o.status.name === 'outoftime' &&
+      d.player.color !== o.winner &&
+      this.chessground.state.turnColor === d.opponent.color
+    ) {
+      this.reload(d);
+    }
+    this.promotion.cancel();
     this.chessground.stop();
     if (o.ratingDiff) {
       d.player.ratingDiff = o.ratingDiff[d.player.color];
       d.opponent.ratingDiff = o.ratingDiff[d.opponent.color];
     }
     if (!d.player.spectator && d.game.turns > 1) {
+      poolRangeStorage.shiftRangeAfter(d);
       const key = o.winner ? (d.player.color === o.winner ? 'victory' : 'defeat') : 'draw';
-      lichess.sound.play(key);
-      if (key != 'victory' && d.game.turns > 6 && !d.tournament && !d.swiss && lichess.storage.get('courtesy') == '1')
-        this.opts.chat?.instance?.then(c => c.post('Good game, well played'));
+      // Delay 'victory' & 'defeat' sounds to avoid overlapping with 'checkmate' sound
+      if (o.status.name === 'mate') site.sound.playAndDelayMateResultIfNecessary(key);
+      else site.sound.play(key);
     }
+    this.onTimeTrouble(false);
+    endGameView();
     if (d.crazyhouse) crazyEndHook();
     this.clearJust();
     this.setTitle();
     this.moveOn.next();
     this.setQuietMode();
     this.setLoading(false);
-    if (this.clock && o.clock) this.clock.setClock(d, o.clock.wc * 0.01, o.clock.bc * 0.01);
+    if (this.clock && o.clock)
+      this.clock.setClock({
+        white: o.clock.wc * 0.01,
+        black: o.clock.bc * 0.01,
+        ticking: undefined,
+      });
     this.redraw();
     this.autoScroll();
     this.onChange();
-    if (d.tv) setTimeout(lichess.reload, 10000);
-    speech.status(this);
+    if (d.tv) setTimeout(site.reload, 10000);
+    wakeLock.release();
+    if (this.data.game.status.name === 'started') site.sound.saySan(step.san, false);
+    else site.sound.say(viewStatus(this.data), false, false, true);
+    this.server.alive();
+    if (
+      !d.player.spectator &&
+      o.status.name === 'outoftime' &&
+      this.chessground.state.turnColor === d.opponent.color
+    ) {
+      notify(viewStatus(this.data));
+    }
+    ground.sync(this, step, false);
   };
 
-  challengeRematch = (): void => {
-    this.challengeRematched = true;
-    xhr.challengeRematch(this.data.game.id).then(
-      () => {
-        lichess.pubsub.emit('challenge-app.open');
-        if (lichess.once('rematch-challenge'))
-          setTimeout(() => {
-            lichess.hopscotch(function () {
-              window.hopscotch
-                .configure({
-                  i18n: { doneBtn: 'OK, got it' },
-                })
-                .startTour({
-                  id: 'rematch-challenge',
-                  showPrevButton: true,
-                  steps: [
-                    {
-                      title: 'Challenged to a rematch',
-                      content: 'Your opponent is offline, but they can accept this challenge later!',
-                      target: '#challenge-app',
-                      placement: 'bottom',
-                    },
-                  ],
-                });
-            });
-          }, 1000);
-      },
-      _ => {
-        this.challengeRematched = false;
-      }
-    );
-  };
-
-  private makeCorrespondenceClock = (): void => {
-    if (this.data.correspondence && !this.corresClock)
-      this.corresClock = makeCorresClock(this, this.data.correspondence, this.socket.outoftime);
-  };
-
-  private corresClockTick = (): void => {
-    if (this.corresClock && game.playable(this.data)) this.corresClock.tick(this.data.game.player);
-  };
-
-  private setQuietMode = () => {
-    const was = lichess.quietMode;
-    const is = this.isPlaying();
-    if (was !== is) {
-      lichess.quietMode = is;
-      $('body')
-        .toggleClass('playing', !this.data.player.spectator)
-        .toggleClass('no-select', is && this.clock && this.clock.millisOf(this.data.player.color) <= 3e5);
+  challengeRematch = async (): Promise<void> => {
+    if (this.data.game.id !== 'synthetic') await xhr.challengeRematch(this.data.game.id);
+    pubsub.emit('challenge-app.open');
+    if (once('rematch-challenge')) {
+      setTimeout(async () => {
+        const [tour] = await Promise.all([
+          site.asset.loadEsm<RoundTour>('round.tour'),
+          site.asset.loadCss({ key: 'bits.shepherd' }),
+        ]);
+        tour.corresRematchOffline();
+      }, 1000);
     }
   };
 
-  takebackYes = () => {
+  private updateClockCtrl() {
+    const d = this.data;
+    if (d.clock) {
+      this.corresClock = undefined;
+      this.clock ??= new ClockCtrl(d.clock, d.pref, this.tickingClockColor(), this.makeClockOpts());
+      this.clock.alarmAction = {
+        seconds: 60,
+        fire: () => this.onTimeTrouble(true),
+      };
+    } else {
+      this.clock = undefined;
+      if (d.correspondence)
+        this.corresClock ??= new CorresClockController(this, d.correspondence, this.socket.outoftime);
+    }
+  }
+
+  private readonly makeClockOpts: () => ClockOpts = () => ({
+    onFlag: this.socket.outoftime,
+    bothPlayersHavePlayed: () => game.bothPlayersHavePlayed(this.data),
+    hasGoneBerserk: this.hasGoneBerserk,
+    alarmColor:
+      this.data.simul || this.data.player.spectator || !this.data.pref.clockSound
+        ? undefined
+        : this.data.player.color,
+  });
+
+  private readonly tickingClockColor = (): Color | undefined =>
+    game.playable(this.data) && (game.playedTurns(this.data) > 1 || this.data.clock?.running)
+      ? this.data.game.player
+      : undefined;
+
+  private readonly setQuietMode = () => {
+    const was = site.quietMode;
+    const is = this.isPlaying();
+    if (was !== is) {
+      site.quietMode = is;
+      $('body').toggleClass(
+        'no-select',
+        is && this.clock && this.clock.millisOf(this.data.player.color) <= 3e5,
+      );
+    }
+  };
+
+  question = (): QuestionOpts | false => {
+    if (this.toSubmit) {
+      setTimeout(() => this.voiceMove?.listenForResponse('submitMove', this.submitMove));
+      return {
+        prompt: i18n.site.confirmMove,
+        yes: { action: () => this.submitMove(true) },
+        no: { action: () => this.submitMove(false), text: i18n.site.cancel },
+      };
+    } else if (this.data.player.proposingTakeback) {
+      this.voiceMove?.listenForResponse('cancelTakeback', this.cancelTakebackPreventDraws);
+      return {
+        prompt: i18n.site.takebackPropositionSent,
+        no: { action: this.cancelTakebackPreventDraws, text: i18n.site.cancel },
+      };
+    } else if (this.data.player.offeringDraw) return { prompt: i18n.site.drawOfferSent };
+    else if (this.data.opponent.offeringDraw)
+      return {
+        prompt: i18n.site.yourOpponentOffersADraw,
+        yes: { action: () => this.socket.send('draw-yes'), icon: licon.OneHalf },
+        no: { action: () => this.socket.send('draw-no') },
+      };
+    else if (this.data.opponent.proposingTakeback)
+      return {
+        prompt: i18n.site.yourOpponentProposesATakeback,
+        yes: { action: this.takebackYes, icon: licon.Back },
+        no: { action: () => this.socket.send('takeback-no') },
+      };
+    else if (this.voiceMove) return this.voiceMove.question();
+    else return false;
+  };
+
+  opponentRequest(req: 'takeback' | 'rematch' | 'draw', text: string): void {
+    this.voiceMove?.listenForResponse(req, (v: boolean) =>
+      this.socket.sendLoading(`${req}-${v ? 'yes' : 'no'}`),
+    );
+    notify(text);
+  }
+
+  takebackYes = (): void => {
     this.socket.sendLoading('takeback-yes');
     this.chessground.cancelPremove();
     this.promotion.cancel();
@@ -633,20 +751,24 @@ export default class RoundController {
     }
   };
 
-  goBerserk = () => {
-    this.socket.berserk();
-    lichess.sound.play('berserk');
+  hasGoneBerserk = (color: Color): boolean => !!this.goneBerserk[color];
+
+  goBerserk = (): void => {
+    if (game.berserkableBy(this.data) && !this.hasGoneBerserk(this.data.player.color)) {
+      this.socket.berserk();
+      site.sound.play('berserk');
+    }
   };
 
   setBerserk = (color: Color): void => {
     if (this.goneBerserk[color]) return;
     this.goneBerserk[color] = true;
-    if (color !== this.data.player.color) lichess.sound.play('berserk');
+    if (color !== this.data.player.color) site.sound.play('berserk');
     this.redraw();
-    $('<i data-icon="">').appendTo($(`.game__meta .player.${color} .user-link`));
+    $(`<icon data-icon="${licon.Berserk}">`).appendTo($(`.game__meta .player.${color} .user-link`));
   };
 
-  setLoading = (v: boolean, duration = 1500) => {
+  setLoading = (v: boolean, duration = 1500): void => {
     clearTimeout(this.loadingTimeout);
     if (v) {
       this.loading = true;
@@ -661,9 +783,9 @@ export default class RoundController {
     }
   };
 
-  setRedirecting = () => {
+  setRedirecting = (): void => {
     this.redirecting = true;
-    lichess.unload.expected = true;
+    site.unload.expected = true;
     setTimeout(() => {
       this.redirecting = false;
       this.redraw();
@@ -672,27 +794,24 @@ export default class RoundController {
   };
 
   submitMove = (v: boolean): void => {
-    const toSubmit = this.moveToSubmit || this.dropToSubmit;
-    if (v && toSubmit) {
-      if (this.moveToSubmit) this.actualSendMove('move', this.moveToSubmit);
-      else this.actualSendMove('drop', this.dropToSubmit);
-      lichess.sound.play('confirmation');
+    if (!this.toSubmit) return;
+
+    const submit = this.toSubmit;
+    this.toSubmit = undefined;
+    this.setLoading(true, 300);
+
+    if (v) {
+      this.actualSendMove('u' in submit ? 'move' : 'drop', submit);
+      site.sound.play('confirmation');
     } else this.jump(this.ply);
-    this.cancelMove();
-    if (toSubmit) this.setLoading(true, 300);
   };
 
-  cancelMove = (): void => {
-    this.moveToSubmit = undefined;
-    this.dropToSubmit = undefined;
-  };
-
-  private onChange = () => {
+  private readonly onChange = () => {
     if (this.opts.onChange) setTimeout(() => this.opts.onChange(this.data), 150);
   };
 
   private goneTick?: number;
-  setGone = (gone: number | boolean) => {
+  setGone = (gone: number | boolean): void => {
     game.setGone(this.data, this.data.opponent.color, gone);
     clearTimeout(this.goneTick);
     if (Number(gone) > 1)
@@ -705,19 +824,53 @@ export default class RoundController {
 
   opponentGone = (): number | boolean => {
     const d = this.data;
-    return d.opponent.gone !== false && !game.isPlayerTurn(d) && game.resignable(d) && d.opponent.gone;
+    return (
+      defined(d.opponent.isGone) &&
+      d.opponent.isGone !== false &&
+      !game.isPlayerTurn(d) &&
+      game.resignable(d) &&
+      d.opponent.isGone
+    );
   };
 
-  canOfferDraw = (): boolean => game.drawable(this.data) && (this.lastDrawOfferAtPly || -99) < this.ply - 20;
+  rematch(accept?: boolean): boolean {
+    if (accept === undefined)
+      return !!this.data.opponent.offeringRematch || !!this.data.player.offeringRematch;
+    else if (accept) {
+      if (this.data.game.rematch) location.href = gameRoute(this.data.game.rematch, this.data.opponent.color);
+      if (!game.rematchable(this.data)) return false;
+      if (!this.data.opponent.offeringRematch) this.data.player.offeringRematch = true;
+      this.socket.send('rematch-yes');
+    } else {
+      if (!this.data.opponent.offeringRematch) return false;
+      this.socket.send('rematch-no');
+    }
+    this.redraw();
+    return true;
+  }
 
-  offerDraw = (v: boolean): void => {
+  canOfferDraw = (): boolean =>
+    !this.preventDrawOffer &&
+    game.drawable(this.data) &&
+    (this.data.player.lastDrawOfferAtPly || -99) < this.lastPly() - 20;
+
+  cancelTakebackPreventDraws = (): void => {
+    this.socket.sendLoading('takeback-no');
+    clearTimeout(this.preventDrawOffer);
+    this.preventDrawOffer = setTimeout(() => {
+      this.preventDrawOffer = undefined;
+      this.redraw();
+    }, 4000);
+  };
+
+  offerDraw = (v: boolean, immediately?: boolean): void => {
     if (this.canOfferDraw()) {
       if (this.drawConfirm) {
         if (v) this.doOfferDraw();
         clearTimeout(this.drawConfirm);
         this.drawConfirm = undefined;
       } else if (v) {
-        if (this.data.pref.confirmResign)
+        if (this.data.pref.confirmResign && !immediately)
           this.drawConfirm = setTimeout(() => {
             this.offerDraw(false);
           }, 3000);
@@ -727,67 +880,121 @@ export default class RoundController {
     this.redraw();
   };
 
-  private doOfferDraw = () => {
-    this.lastDrawOfferAtPly = this.ply;
-    this.socket.sendLoading('draw-yes', null);
+  private readonly doOfferDraw = () => {
+    this.data.player.lastDrawOfferAtPly = this.lastPly();
+    this.socket.sendLoading('draw-yes');
   };
 
-  setChessground = (cg: CgApi) => {
+  setChessground = (cg: CgApi): void => {
     this.chessground = cg;
+    const up = { fen: this.stepAt(this.ply).fen, canMove: this.canMove(), cg };
+    pubsub.on('board.change', (is3d: boolean) => {
+      this.chessground.state.addPieceZIndex = is3d;
+      this.chessground.redrawAll();
+    });
+    if (!this.isPlaying()) return;
     if (this.data.pref.keyboardMove) {
-      this.keyboardMove = makeKeyboardMove(this, this.stepAt(this.ply), this.redraw);
-      requestAnimationFrame(() => this.redraw());
+      if (!this.keyboardMove) this.keyboardMove = makeKeyboardMove(this);
+      this.keyboardMove.update(up);
     }
+    if (this.data.pref.voiceMove) {
+      if (this.voiceMove) this.voiceMove.update(up);
+      else this.voiceMove = makeVoiceMove(this, up);
+    }
+    if (this.keyboardMove || this.voiceMove) requestAnimationFrame(() => this.redraw());
   };
 
-  stepAt = (ply: Ply) => round.plyStep(this.data, ply);
+  stepAt = (ply: Ply): Step => util.plyStep(this.data, ply);
 
-  private delayedInit = () => {
-    const d = this.data;
-    if (this.isPlaying() && game.nbMoves(d, d.player.color) === 0 && !this.isSimulHost()) {
-      lichess.sound.play('genericNotify');
-    }
-    lichess.requestIdleCallback(() => {
-      const d = this.data;
-      if (this.isPlaying()) {
-        if (!d.simul) blur.init(d.steps.length > 2);
+  pendingStep = (): Step | undefined => {
+    const submit = this.toSubmit;
+    if (!submit) return undefined;
+    const uci = 'u' in submit ? submit.u : `${roleToChar(submit.role).toUpperCase()}@${submit.pos}`;
+    return {
+      ply: this.ply + 1,
+      fen: this.chessground.getFen(),
+      san: almostSanOf(readFen(this.stepAt(this.ply).fen), uci),
+      uci,
+    };
+  };
 
-        title.init();
-        this.setTitle();
+  speakClock = (): void => {
+    this.clock?.speak();
+  };
 
-        if (d.crazyhouse) crazyInit(this);
+  blindfold = (v?: boolean): boolean => {
+    this.data.player.blindfold ??= false;
+    if (v === undefined || v === this.data.player.blindfold) return this.data.player.blindfold ?? false;
+    this.blindfoldStorage.set(v);
+    this.data.player.blindfold = v;
+    this.socket.send(`blindfold-${v ? 'yes' : 'no'}`);
+    this.redraw();
+    return v;
+  };
 
-        window.addEventListener('beforeunload', e => {
-          const d = this.data;
-          if (
-            lichess.unload.expected ||
-            this.nvui ||
-            !game.playable(d) ||
-            !d.clock ||
-            d.opponent.ai ||
-            this.isSimulHost()
-          )
-            return;
-          this.socket.send('bye2');
-          const msg = 'There is a game in progress!';
-          (e || window.event).returnValue = msg;
-          return msg;
-        });
+  onTimeTrouble = (t: boolean): void => {
+    if (this.data.player.spectator) return;
+    site.powertip.forcePlacementHook = t ? (el: HTMLElement) => el.closest('.crosstable') && 's' : undefined;
+    this.chessground.state.touchIgnoreRadius = t ? Math.SQRT2 : 1;
+  };
 
-        if (!this.nvui && d.pref.submitMove) {
-          window.Mousetrap.bind('esc', () => {
-            this.submitMove(false);
-            this.chessground.cancelMove();
-          }).bind('return', () => this.submitMove(true));
+  yeet = (): void => {
+    if (!this.data.player.spectator) this.doYeet();
+  };
+
+  private readonly doYeet = memoize(() => {
+    this.chessground.stop();
+    site.asset.loadEsm('round.yeet');
+  });
+
+  private googlyEyes?: () => DrawShape[];
+
+  googlyEyesStart: () => void = memoize(async () => {
+    const redraw = () => this.googlyEyes && this.chessground.setAutoShapes(this.googlyEyes());
+    const { makeGooglyShapes }: any = await site.asset.loadEsm('bits.googlyHorsey', {
+      init: { cg: this.chessground, redraw },
+    });
+    this.googlyEyes = makeGooglyShapes;
+    redraw();
+  });
+
+  private readonly delayedInit = () =>
+    requestIdleCallbackSafe(
+      () => {
+        const d = this.data;
+        if (this.isPlaying()) {
+          if (!d.simul) blur.init(d.steps.length > 2);
+
+          title.init();
+          this.setTitle();
+
+          if (d.crazyhouse) crazyInit(this);
+
+          if (!this.nvui && d.clock && !d.opponent.ai && !this.isSimulHost() && !d.local)
+            window.addEventListener('beforeunload', e => {
+              if (site.unload.expected || !this.isPlaying()) return;
+              this.socket.send('bye2');
+              e.preventDefault();
+            });
+
+          if (!this.nvui && d.pref.submitMove) {
+            site.mousetrap
+              .bind('esc', () => {
+                this.submitMove(false);
+                this.chessground.cancelMove();
+              })
+              .bind('return', () => this.submitMove(true));
+          }
+          cevalSub.subscribe(this);
         }
-        cevalSub.subscribe(this);
-      }
 
-      if (!this.nvui) keyboard.init(this);
+        if (!this.nvui) keyboardInit(this);
+        if (this.isPlaying() && d.steps.length === 1) {
+          this.blindfold(this.blindfoldStorage.get());
+        }
+        if (!d.local && d.game.speed !== 'correspondence') wakeLock.request();
+      },
 
-      speech.setup(this);
-
-      this.onChange();
-    }, 800);
-  };
+      800,
+    );
 }

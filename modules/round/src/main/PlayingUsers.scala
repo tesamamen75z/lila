@@ -1,22 +1,38 @@
 package lila.round
 
-import scala.concurrent.duration._
+import com.github.blemale.scaffeine.LoadingCache
 
-import lila.user.User
 import lila.common.Bus
+import lila.core.round.CurrentlyPlaying
+import lila.game.GameRepo
+import lila.memo.CacheApi
 
-final class PlayingUsers {
+final class PlayingUsers(gameRepo: GameRepo, proxyRepo: GameProxyRepo)(using Executor):
 
-  private val playing = new lila.memo.ExpireSetMemo(4 hours)
+  private val playingUserIds = scalalib.cache.ExpireSetMemo[UserId](3.hours)
 
-  def apply(userId: User.ID): Boolean = playing get userId
+  def apply(userId: UserId): Boolean = playingUserIds.get(userId)
 
-  Bus.subscribeFun("startGame", "finishGame") {
+  def nbPlayingRealtime(userId: UserId): Fu[Int] = apply(userId).so(nbPlayingAll(userId))
 
-    case lila.game.actorApi.FinishGame(game, _, _) if game.hasClock =>
-      game.userIds.some.filter(_.nonEmpty) foreach playing.removeAll
+  def nbPlayingAll(userId: UserId): Fu[Int] = gameRepo.countNowPlaying(userId)
 
-    case lila.game.actorApi.StartGame(game) if game.hasClock =>
-      game.userIds.some.filter(_.nonEmpty) foreach playing.putAll
-  }
-}
+  val currentlyPlaying = CurrentlyPlaying: userId =>
+    lastPlayedPlayingId(userId).flatMapz(proxyRepo.pov(_, userId))
+
+  def lastPlayedPlayingId(userId: UserId): Fu[Option[GameId]] = apply(userId).so:
+    lastPlayedPlayingIdCache.get(userId)
+
+  private val lastPlayedPlayingIdCache: LoadingCache[UserId, Fu[Option[GameId]]] =
+    CacheApi.scaffeineNoScheduler
+      .expireAfterWrite(11.seconds)
+      .build(gameRepo.lastPlayedPlayingId)
+
+  Bus.sub[lila.core.game.StartGame]:
+    case lila.core.game.StartGame(game, _) if game.hasClock =>
+      game.userIds.nonEmptyOption.foreach(playingUserIds.putAll)
+      game.userIds.foreach(lastPlayedPlayingIdCache.invalidate)
+
+  Bus.sub[lila.core.game.FinishGame]:
+    case lila.core.game.FinishGame(game, _) if game.hasClock =>
+      game.userIds.nonEmptyOption.foreach(playingUserIds.removeAll)

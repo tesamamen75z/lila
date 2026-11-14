@@ -1,50 +1,39 @@
 package lila.rating
 
-import lila.common.Maths.closestMultipleOf
+import chess.IntRating
 
-case class RatingRange(min: Int, max: Int) {
+import lila.core.rating as hub
 
-  def contains(rating: Int) =
-    (min <= RatingRange.min || rating >= min) &&
-      (max >= RatingRange.max || rating <= max)
+object RatingRange:
 
-  def notBroad: Option[RatingRange] = (this != RatingRange.broad) option this
+  extension (r: hub.RatingRange)
+    def notBroad: Option[hub.RatingRange] = Option.when(r != hub.RatingRange.broad)(r)
+    def withinLimits(rating: IntRating, delta: Int) =
+      r.copy(
+        min = r.min.atMost(rating.map(_ + delta)),
+        max = r.max.atLeast(rating.map(_ - delta))
+      )
 
-  def withinLimits(rating: Int, delta: Int, multipleOf: Int) =
-    copy(
-      min = closestMultipleOf(multipleOf, min.atMost(rating + delta)),
-      max = closestMultipleOf(multipleOf, max.atLeast(rating - delta))
-    )
+  export hub.RatingRange.*
 
-  override def toString = s"$min-$max"
-}
+  private val distribution = Gaussian(1500d, 350d)
 
-object RatingRange {
+  def defaultFor(rating: IntRating) =
+    val (rangeMinD, rangeMaxD) = distribution.range(rating.value.toDouble, 0.2)
+    val rangeMin: IntRating = IntRating(rangeMinD.toInt)
+    val rangeMax: IntRating = IntRating(rangeMaxD.toInt)
+    hub.RatingRange(rangeMin.atLeast(min), rangeMax.atMost(max))
 
-  val min = Glicko.minRating
-  val max = 2900
-
-  val broad   = RatingRange(min, max)
-  val default = broad
-
-  // ^\d{3,4}\-\d{3,4}$
-  def apply(from: String): Option[RatingRange] =
-    for {
-      min <- from.takeWhile('-' !=).toIntOption
+  def apply(rating: IntRating, deltaMin: Option[String], deltaMax: Option[String]): Option[hub.RatingRange] =
+    for
+      dmin <- IntRating.from(deltaMin.flatMap(_.toIntOption))
+      min = rating + dmin
       if acceptable(min)
-      max <- from.dropWhile('-' !=).tail.toIntOption
+      dmax <- IntRating.from(deltaMax.flatMap(_.toIntOption))
+      max = rating + dmax
       if acceptable(max)
       if min < max
-    } yield RatingRange(min, max)
+    yield hub.RatingRange(min, max)
 
-  def orDefault(from: String)         = apply(from) | default
-  def orDefault(from: Option[String]) = from.flatMap(apply) | default
-
-  def noneIfDefault(from: String) =
-    if (from == default.toString) none
-    else apply(from).filter(_ != default)
-
-  def valid(from: String) = apply(from).isDefined
-
-  private def acceptable(rating: Int) = broad contains rating
-}
+  def orDefault(rating: Option[IntRating], deltaMin: Option[String], deltaMax: Option[String]) =
+    rating.flatMap(r => apply(r, deltaMin, deltaMax)) | default

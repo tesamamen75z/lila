@@ -1,182 +1,187 @@
-import * as control from '../control';
-import * as side from './side';
-import theme from './theme';
-import changeColorHandle from 'common/coordsColor';
+import { render as renderKeyboardMove } from 'keyboard-move';
+import { type VNode, h } from 'snabbdom';
+import { renderVoiceBar } from 'voice';
+
+import { view as cevalView } from 'lib/ceval';
+import { dispatchChessgroundResize } from 'lib/chessgroundResize';
+import { licon, type LiconValue } from 'lib/licon';
+import { addPointerListeners } from 'lib/pointer';
+import { Coords } from 'lib/prefs';
+import { storage } from 'lib/storage';
+import {
+  toggleButton as boardMenuToggleButton,
+  onInsert,
+  bindNonPassive,
+  hl,
+  type MaybeVNode,
+} from 'lib/view';
+import { renderBlindfoldToggle } from 'lib/view/blindfold';
+import stepwiseScroll from 'lib/view/stepwiseScroll';
+
+import * as control from '@/control';
+import type PuzzleCtrl from '@/ctrl';
+
+import boardMenu from './boardMenu';
 import chessground from './chessground';
 import feedbackView from './feedback';
-import { Controller } from '../interfaces';
-import { h, VNode } from 'snabbdom';
-import { onInsert, bind, bindMobileMousedown } from '../util';
+import { replay, puzzleBox, userBox, streakBox, config } from './side';
+import theme from './theme';
 import { render as treeView } from './tree';
-import { view as cevalView } from 'ceval';
 
-function renderAnalyse(ctrl: Controller): VNode {
-  return h('div.puzzle__moves.areplay', [treeView(ctrl)]);
-}
-
-function wheel(ctrl: Controller, e: WheelEvent): false | undefined {
-  const target = e.target as HTMLElement;
-  if (target.tagName !== 'PIECE' && target.tagName !== 'SQUARE' && target.tagName !== 'CG-BOARD') return;
-  e.preventDefault();
-  if (e.deltaY > 0) control.next(ctrl);
-  else if (e.deltaY < 0) control.prev(ctrl);
-  ctrl.redraw();
-  return false;
-}
+const renderAnalyse = (ctrl: PuzzleCtrl): VNode => hl('div.puzzle__moves.areplay', [treeView(ctrl)]);
 
 function dataAct(e: Event): string | null {
   const target = e.target as HTMLElement;
   return target.getAttribute('data-act') || (target.parentNode as HTMLElement).getAttribute('data-act');
 }
 
-function jumpButton(icon: string, effect: string, disabled: boolean, glowing = false): VNode {
-  return h('button.fbt', {
-    class: { disabled, glowing },
-    attrs: {
-      'data-act': effect,
-      'data-icon': icon,
-    },
-  });
+function jumpButton(icon: LiconValue, effect: string, disabled: boolean, glowing = false): VNode {
+  return hl('button.fbt', { class: { glowing }, attrs: { disabled, 'data-act': effect, 'data-icon': icon } });
 }
 
-function controls(ctrl: Controller): VNode {
-  const node = ctrl.vm.node;
+function controls(ctrl: PuzzleCtrl): VNode {
+  const node = ctrl.node;
   const nextNode = node.children[0];
-  const goNext = ctrl.vm.mode == 'play' && nextNode && nextNode.puzzle != 'fail';
-  return h(
-    'div.puzzle__controls.analyse-controls',
-    {
-      hook: onInsert(el => {
-        bindMobileMousedown(
-          el,
-          e => {
-            const action = dataAct(e);
-            if (action === 'prev') control.prev(ctrl);
-            else if (action === 'next') control.next(ctrl);
-            else if (action === 'first') control.first(ctrl);
-            else if (action === 'last') control.last(ctrl);
-          },
-          ctrl.redraw
-        );
-      }),
-    },
-    [
-      h('div.jumps', [
-        jumpButton('', 'first', !node.ply),
-        jumpButton('', 'prev', !node.ply),
-        jumpButton('', 'next', !nextNode, goNext),
-        jumpButton('', 'last', !nextNode, goNext),
-      ]),
-    ]
-  );
+  const notOnLastMove = ctrl.mode === 'play' && nextNode && nextNode.puzzle !== 'fail';
+  return hl('div.puzzle__controls.analyse-controls', [
+    hl(
+      'div.jumps',
+      {
+        hook: onInsert(el =>
+          addPointerListeners(el, {
+            click: e => {
+              const action = dataAct(e);
+              if (action === 'prev') control.prev(ctrl);
+              else if (action === 'next') control.next(ctrl);
+              else if (action === 'first') control.first(ctrl);
+              else if (action === 'last') control.last(ctrl);
+              ctrl.redraw();
+            },
+          }),
+        ),
+      },
+      [
+        jumpButton(licon.JumpFirst, 'first', !node.ply),
+        jumpButton(licon.JumpPrev, 'prev', !node.ply),
+        jumpButton(licon.JumpNext, 'next', !nextNode),
+        jumpButton(licon.JumpLast, 'last', !nextNode, notOnLastMove),
+        boardMenuToggleButton(ctrl.menu, i18n.site.menu),
+      ],
+    ),
+    boardMenu(ctrl),
+  ]);
 }
 
 let cevalShown = false;
 
-export default function (ctrl: Controller): VNode {
-  if (ctrl.nvui) return ctrl.nvui.render(ctrl);
-  const showCeval = ctrl.vm.showComputer(),
-    gaugeOn = ctrl.showEvalGauge();
-  if (cevalShown !== showCeval) {
-    if (!cevalShown) ctrl.vm.autoScrollNow = true;
-    cevalShown = showCeval;
+export default function (ctrl: PuzzleCtrl): VNode {
+  const gaugeOn = ctrl.showEvalGauge();
+
+  if (cevalShown !== ctrl.showEvaluation()) {
+    if (!cevalShown) ctrl.autoScrollNow = true;
+    cevalShown = ctrl.showEvaluation();
   }
-  return h(
-    `main.puzzle.puzzle-${ctrl.getData().replay ? 'replay' : 'play'}${ctrl.streak ? '.puzzle--streak' : ''}`,
+
+  return hl(
+    `main.puzzle.puzzle-${ctrl.data.replay ? 'replay' : 'play'}${ctrl.streak ? '.puzzle--streak' : ''}`,
     {
       class: { 'gauge-on': gaugeOn },
       hook: {
         postpatch(old, vnode) {
           if (old.data!.gaugeOn !== gaugeOn) {
-            if (ctrl.pref.coords === Prefs.Coords.Outside) {
+            if (ctrl.pref.coords === Coords.Outside) {
               $('body').toggleClass('coords-in', gaugeOn).toggleClass('coords-out', !gaugeOn);
-              changeColorHandle();
             }
-            document.body.dispatchEvent(new Event('chessground.resize'));
+            dispatchChessgroundResize();
           }
           vnode.data!.gaugeOn = gaugeOn;
         },
       },
     },
     [
-      h('aside.puzzle__side', [
-        side.replay(ctrl),
-        side.puzzleBox(ctrl),
-        ctrl.streak ? side.streakBox(ctrl) : side.userBox(ctrl),
-        side.config(ctrl),
+      renderBlindfoldToggle(ctrl.blindfold),
+      hl('aside.puzzle__side', [
+        replay(ctrl),
+        puzzleBox(ctrl),
+        ctrl.streak ? streakBox(ctrl) : userBox(ctrl),
         theme(ctrl),
+        config(ctrl),
       ]),
-      h(
-        'div.puzzle__board.main-board' + (ctrl.pref.blindfold ? '.blindfold' : ''),
+      hl(
+        'div.puzzle__board.main-board' + (ctrl.blindfold() ? '.blindfold' : ''),
         {
           hook:
-            'ontouchstart' in window || lichess.storage.get('scrollMoves') == '0'
+            'ontouchstart' in window || !storage.boolean('scrollMoves').getOrDefault(true)
               ? undefined
-              : bind('wheel', e => wheel(ctrl, e as WheelEvent)),
+              : bindNonPassive(
+                  'wheel',
+                  stepwiseScroll(
+                    e => {
+                      if (e.deltaY > 0) control.next(ctrl);
+                      else if (e.deltaY < 0) control.prev(ctrl);
+                      ctrl.redraw();
+                    },
+                    e => !['PIECE', 'SQUARE', 'CG-BOARD'].includes((e.target as HTMLElement).tagName),
+                  ),
+                ),
         },
-        [chessground(ctrl), ctrl.promotion.view()]
+        [chessground(ctrl), ctrl.promotion.view()],
       ),
       cevalView.renderGauge(ctrl),
-      h('div.puzzle__tools', [
+      hl('div.puzzle__tools', [
+        ctrl.voiceMove ? renderVoiceBar(ctrl.voiceMove.ctrl, ctrl.redraw, 'puz') : null,
         // we need the wrapping div here
         // so the siblings are only updated when ceval is added
-        h(
+        hl(
           'div.ceval-wrap',
-          {
-            class: { none: !showCeval },
-          },
-          showCeval ? [cevalView.renderCeval(ctrl), cevalView.renderPvs(ctrl)] : []
+          { class: { none: !ctrl.showEvaluation() } },
+          ctrl.showEvaluation() ? [cevalView.renderCeval(ctrl), cevalView.renderPvs(ctrl)] : [],
         ),
         renderAnalyse(ctrl),
         feedbackView(ctrl),
       ]),
       controls(ctrl),
+      ctrl.keyboardMove && renderKeyboardMove(ctrl.keyboardMove),
       session(ctrl),
-    ]
+    ],
   );
 }
 
-function session(ctrl: Controller) {
-  const rounds = ctrl.session.get().rounds,
-    current = ctrl.getData().puzzle.id;
-  return h('div.puzzle__session', [
-    ...rounds.map(round => {
-      const rd = round.ratingDiff ? (round.ratingDiff > 0 ? '+' + round.ratingDiff : round.ratingDiff) : null;
+function session(ctrl: PuzzleCtrl): MaybeVNode {
+  const rounds = ctrl.session.get().rounds;
+
+  if (!rounds.length) return undefined;
+
+  const { id: currentId } = ctrl.data.puzzle;
+  const { theme } = ctrl.session;
+
+  return hl('div.puzzle__session', [
+    rounds.map(({ id, result, ratingDiff }) => {
+      const rd =
+        ratingDiff && ctrl.opts.showRatings ? (ratingDiff > 0 ? '+' + ratingDiff : ratingDiff) : null;
+
       return h(
-        `a.result-${round.result}${rd ? '' : '.result-empty'}`,
+        `a.result-${result}`,
         {
-          key: round.id,
-          class: {
-            current: current == round.id,
-          },
+          key: id,
+          class: { current: currentId === id, 'result-empty': !rd },
           attrs: {
-            href: `/training/${ctrl.session.theme}/${round.id}`,
-            ...(ctrl.streak ? { target: '_blank', rel: 'noopener' } : {}),
+            href: `/training/${theme}/${id}`,
+            ...(ctrl.streak ? { target: '_blank' } : {}),
           },
         },
-        rd
+        rd,
       );
     }),
-    rounds.find(r => r.id == current)
-      ? ctrl.streak
-        ? null
-        : h('a.session-new', {
-            key: 'new',
-            attrs: {
-              href: `/training/${ctrl.session.theme}`,
-            },
-          })
-      : h(
+    rounds.some(r => r.id === currentId)
+      ? !ctrl.streak && hl('a.session-new', { key: 'new', attrs: { href: `/training/${theme}` } })
+      : hl(
           'a.result-cursor.current',
           {
-            key: current,
-            attrs: ctrl.streak
-              ? {}
-              : {
-                  href: `/training/${ctrl.session.theme}/${current}`,
-                },
+            key: currentId,
+            attrs: ctrl.streak ? {} : { href: `/training/${theme}/${currentId}` },
           },
-          ctrl.streak?.data.index
+          ctrl.streak && (ctrl.streak.data.index + 1).toString(),
         ),
   ]);
 }

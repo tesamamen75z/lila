@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Izazovi</string>
+  <string name="challengesX">Izazova: %1$s</string>
   <string name="challengeToPlay">Poziv na partiju</string>
   <string name="challengeDeclined">Izazov odbijen</string>
   <string name="challengeAccepted">Izazov prihvaćen!</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">Trenutačno ne želim igrati ovu varijantu.</string>
   <string name="declineNoBot">Ne prihvaćam izazove od botova.</string>
   <string name="declineOnlyBot">Prihvaćam izazove isključivo od botova.</string>
+  <string name="inviteLichessUser">Ili pozovite Lichess korisnika:</string>
 </resources>

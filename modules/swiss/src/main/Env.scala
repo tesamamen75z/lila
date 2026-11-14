@@ -1,38 +1,47 @@
 package lila.swiss
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import scala.concurrent.duration._
 
-import lila.common.config._
-import lila.common.{ AtMost, Every, ResilientScheduler }
-import lila.socket.Socket.{ GetVersion, SocketVersion }
+import lila.common.{ Bus, LilaScheduler }
+import lila.core.config.*
+import lila.core.socket.{ GetVersion, SocketVersion }
+import lila.db.dsl.Coll
 
 @Module
 final class Env(
     appConfig: Configuration,
     db: lila.db.Db,
-    gameRepo: lila.game.GameRepo,
-    userRepo: lila.user.UserRepo,
-    onStart: lila.round.OnStart,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    chatApi: lila.chat.ChatApi,
+    gameRepo: lila.core.game.GameRepo,
+    newPlayer: lila.core.game.NewPlayer,
+    userApi: lila.core.user.UserApi,
+    onStart: lila.core.game.OnStart,
+    socketKit: lila.core.socket.SocketKit,
+    chat: lila.core.chat.ChatApi,
     cacheApi: lila.memo.CacheApi,
-    lightUserApi: lila.user.LightUserApi,
-    historyApi: lila.history.HistoryApi,
-    gameProxyRepo: lila.round.GameProxyRepo,
-    roundSocket: lila.round.RoundSocket,
+    lightUserApi: lila.core.user.LightUserApi,
+    historyApi: lila.core.history.HistoryApi,
+    gameProxy: lila.core.game.GameProxy,
+    roundApi: lila.core.round.RoundApi,
     mongoCache: lila.memo.MongoCache.Api,
-    baseUrl: lila.common.config.BaseUrl
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mat: akka.stream.Materializer,
-    idGenerator: lila.game.IdGenerator,
-    mode: play.api.Mode
-) {
+    baseUrl: BaseUrl
+)(using
+    Executor,
+    org.apache.pekko.actor.ActorSystem,
+    Scheduler,
+    org.apache.pekko.stream.Materializer,
+    lila.core.game.IdGenerator,
+    play.api.Mode,
+    lila.core.i18n.Translator,
+    lila.core.config.RateLimit
+):
 
-  private val colls = wire[SwissColls]
+  private val mongo = new SwissMongo(
+    swiss = db(CollName("swiss")),
+    player = db(CollName("swiss_player")),
+    pairing = db(CollName("swiss_pairing")),
+    ban = db(CollName("swiss_ban"))
+  )
 
   private val sheetApi = wire[SwissSheetApi]
 
@@ -40,7 +49,9 @@ final class Env(
 
   val trf: SwissTrf = wire[SwissTrf]
 
-  private val pairingSystem = new PairingSystem(trf, rankingApi, appConfig.get[String]("swiss.bbpairing"))
+  private val pairingSystem = PairingSystem(trf, appConfig.get[String]("swiss.bbpairing"))
+
+  private val manualPairing = wire[SwissManualPairing]
 
   private val scoring = wire[SwissScoring]
 
@@ -50,18 +61,20 @@ final class Env(
 
   private val statsApi = wire[SwissStatsApi]
 
+  private val banApi = wire[SwissBanApi]
+
   lazy val verify = wire[SwissCondition.Verify]
 
   val api: SwissApi = wire[SwissApi]
 
   lazy val roundPager = wire[SwissRoundPager]
 
-  private def teamOf = api.teamOf _
+  private def teamOf = api.teamOf
 
   private lazy val socket = wire[SwissSocket]
 
-  def version(swissId: Swiss.Id): Fu[SocketVersion] =
-    socket.rooms.ask[SocketVersion](swissId.value)(GetVersion)
+  def version(swissId: SwissId): Fu[SocketVersion] =
+    socket.rooms.ask[SocketVersion](swissId.into(RoomId))(GetVersion.apply)
 
   lazy val standingApi = wire[SwissStandingApi]
 
@@ -71,37 +84,44 @@ final class Env(
 
   lazy val feature = wire[SwissFeature]
 
-  private lazy val cache: SwissCache = wire[SwissCache]
+  lazy val cache: SwissCache = wire[SwissCache]
 
-  lazy val getName = new GetSwissName(cache.name.sync)
+  lazy val getName = GetSwissName(cache.name)
 
-  lila.common.Bus.subscribeFun(
-    "finishGame",
-    "adjustCheater",
-    "adjustBooster",
-    "teamKick"
-  ) {
-    case lila.game.actorApi.FinishGame(game, _, _)           => api.finishGame(game).unit
-    case lila.hub.actorApi.team.KickFromTeam(teamId, userId) => api.kickFromTeam(teamId, userId).unit
-    case lila.hub.actorApi.mod.MarkCheater(userId, true)     => api.kickLame(userId).unit
-    case lila.hub.actorApi.mod.MarkBooster(userId)           => api.kickLame(userId).unit
-  }
+  private lazy val officialSchedule = wire[SwissOfficialSchedule]
 
-  ResilientScheduler(
-    every = Every(1 seconds),
-    atMost = AtMost(20 seconds),
-    initialDelay = 20 seconds
-  ) { api.startPendingRounds }
+  wire[SwissNotify]
 
-  ResilientScheduler(
-    every = Every(10 seconds),
-    atMost = AtMost(15 seconds),
-    initialDelay = 20 seconds
-  ) { api.checkOngoingGames }
-}
+  Bus.sub[lila.core.game.FinishGame]:
+    case lila.core.game.FinishGame(game, _) => api.finishGame(game)
+  Bus.sub[lila.core.team.LeaveTeam]:
+    case lila.core.team.LeaveTeam(teamId, userId) => api.leaveTeam(teamId, userId)
+  Bus.sub[lila.core.team.KickFromTeam]:
+    case lila.core.team.KickFromTeam(teamId, teamName, userId) => api.leaveTeam(teamId, userId)
+  Bus.sub[lila.core.mod.MarkCheater]:
+    case lila.core.mod.MarkCheater(userId, true) => api.kickLame(userId)
+  Bus.sub[lila.core.mod.MarkBooster]:
+    case lila.core.mod.MarkBooster(userId, true) => api.kickLame(userId)
 
-private class SwissColls(db: lila.db.Db) {
-  val swiss   = db(CollName("swiss"))
-  val player  = db(CollName("swiss_player"))
-  val pairing = db(CollName("swiss_pairing"))
-}
+  LilaScheduler("Swiss.startPendingRounds", _.Every(1.seconds), _.AtMost(20.seconds), _.Delay(20.seconds)):
+    api.startPendingRounds.logFailure(logger)
+
+  LilaScheduler("Swiss.checkOngoingGames", _.Every(10.seconds), _.AtMost(15.seconds), _.Delay(20.seconds)):
+    api.checkOngoingGames.logFailure(logger)
+
+  LilaScheduler("Swiss.generate", _.Every(3.hours), _.AtMost(15.seconds), _.Delay(15.minutes)):
+    officialSchedule.generate.logFailure(logger)
+
+  private val payoutsDmUrl = "/swiss/(\\w{8})".r.unanchored
+
+  lila.common.Cli.handle(_.ManageTournament):
+    case "payouts-dm" :: payoutsDmUrl(id) :: users if users.nonEmpty =>
+      api
+        .fetchByIdNoCache(SwissId(id))
+        .map(_.filter(_.isFinished))
+        .orFail(s"No such finished tournament: $id")
+        .flatMap: s =>
+          lila.gathering.payoutDms(userApi, users):
+            lila.core.msg.PayoutMessages(_, s.name, Swiss.swissUrl(s.id), s.finishedAt | s.startsAt)
+
+final private class SwissMongo(val swiss: Coll, val player: Coll, val pairing: Coll, val ban: Coll)

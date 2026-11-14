@@ -1,75 +1,58 @@
 package lila.setup
 
 import lila.common.Bus
-import lila.common.config.Max
-import lila.game.Pov
-import lila.lobby.actorApi.{ AddHook, AddSeek }
-import lila.lobby.Seek
-import lila.user.{ User, UserContext }
+import lila.core.id.SessionId
+import lila.core.perf.UserWithPerfs
+import lila.lobby.{ Seek, SetupBus }
 
 final private[setup] class Processor(
-    gameCache: lila.game.Cached,
-    gameRepo: lila.game.GameRepo,
-    maxPlaying: Max,
-    fishnetPlayer: lila.fishnet.FishnetPlayer,
-    onStart: lila.round.OnStart
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    gameApi: lila.core.game.GameApi,
+    gameRepo: lila.core.game.GameRepo,
+    userApi: lila.core.user.UserApi,
+    onStart: lila.core.game.OnStart
+)(using Executor, lila.core.game.IdGenerator, lila.core.game.NewPlayer):
 
-  def ai(config: AiConfig)(implicit ctx: UserContext): Fu[Pov] = {
-    val pov = config pov ctx.me
-    (gameRepo insertDenormalized pov.game) >>-
-      onStart(pov.gameId) >> {
-        pov.game.player.isAi ?? fishnetPlayer(pov.game)
-      } inject pov
-  }
+  def ai(config: AiConfig)(using me: Option[Me]): Fu[Pov] = for
+    me <- me.map(_.value).traverse(userApi.withPerf(_, config.perfType))
+    pov <- config.pov(me)
+    _ <- gameRepo.insertDenormalized(pov.game)
+    _ = onStart.exec(pov.gameId)
+  yield pov
 
-  def apiAi(config: ApiAiConfig, me: User): Fu[Pov] = {
-    val pov = config pov me.some
-    (gameRepo insertDenormalized pov.game) >>-
-      onStart(pov.gameId) >> {
-        pov.game.player.isAi ?? fishnetPlayer(pov.game)
-      } inject pov
-  }
+  def apiAi(config: ApiAiConfig)(using me: Me): Fu[Pov] = for
+    me <- userApi.withPerf(me, config.perfType)
+    pov <- config.pov(me.some)
+    _ <- gameRepo.insertDenormalized(pov.game)
+    _ = onStart.exec(pov.gameId)
+  yield pov
 
   def hook(
-      configBase: HookConfig,
-      sri: lila.socket.Socket.Sri,
-      sid: Option[String],
-      blocking: Set[String]
-  )(implicit ctx: UserContext): Fu[Processor.HookResult] = {
-    import Processor.HookResult._
-    val config = configBase.fixColor
-    config.hook(sri, ctx.me, sid, blocking) match {
+      config: HookConfig,
+      sri: lila.core.socket.Sri,
+      sid: Option[SessionId],
+      blocking: lila.core.pool.Blocking
+  )(using me: Option[UserWithPerfs]): Fu[Processor.HookResult] =
+    import Processor.HookResult.*
+    config.hook(sri, me, sid, blocking) match
       case Left(hook) =>
-        fuccess {
-          Bus.publish(AddHook(hook), "lobbyTrouper")
+        fuccess:
+          Bus.pub(SetupBus.AddHook(hook))
           Created(hook.id)
-        }
-      case Right(Some(seek)) =>
-        ctx.userId match {
-          case None         => fuccess(Refused)
-          case Some(userId) => createSeekIfAllowed(seek, userId)
-        }
+      case Right(Some(seek)) => me.fold(fuccess(Refused))(u => createSeekIfAllowed(seek, u.id))
       case _ => fuccess(Refused)
-    }
-  }
 
-  def createSeekIfAllowed(seek: Seek, userId: User.ID): Fu[Processor.HookResult] =
-    gameCache.nbPlaying(userId) map { nbPlaying =>
-      import Processor.HookResult._
-      if (maxPlaying <= nbPlaying) Refused
-      else {
-        Bus.publish(AddSeek(seek), "lobbyTrouper")
+  def createSeekIfAllowed(seek: Seek, owner: UserId): Fu[Processor.HookResult] =
+    gameApi.countNowPlaying(owner).map { nbPlaying =>
+      import Processor.HookResult.*
+      if lila.core.game.maxPlaying <= nbPlaying
+      then Refused
+      else
+        Bus.pub(SetupBus.AddSeek(seek))
         Created(seek.id)
-      }
     }
-}
 
-object Processor {
+object Processor:
 
-  sealed trait HookResult
-  object HookResult {
-    case class Created(id: String) extends HookResult
-    case object Refused            extends HookResult
-  }
-}
+  enum HookResult:
+    case Created(id: String)
+    case Refused

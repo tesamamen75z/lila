@@ -1,24 +1,29 @@
-import { h } from 'snabbdom';
-import { Player } from 'game';
-import { Position } from '../interfaces';
-import RoundController from '../ctrl';
+import { defined } from 'lib';
+import type { Player, TopOrBottom } from 'lib/game';
+import { licon } from 'lib/licon';
+import { wsAverageLag } from 'lib/socket';
+import { dataIcon, hl, type VNode } from 'lib/view';
+import { ratingDiff, userLink } from 'lib/view/userLink';
 
-export function aiName(ctrl: RoundController, level: number) {
-  return ctrl.trans('aiNameLevelAiLevel', 'Stockfish', level);
-}
+import type RoundController from '../ctrl';
 
-export function userHtml(ctrl: RoundController, player: Player, position: Position) {
-  const d = ctrl.data,
-    user = player.user,
-    perf = user ? user.perfs[d.game.perf] : null,
-    rating = player.rating ? player.rating : perf && perf.rating,
-    rd = player.ratingDiff,
-    ratingDiff =
-      rd === 0 ? h('span', '±0') : rd && rd > 0 ? h('good', '+' + rd) : rd && rd < 0 ? h('bad', '−' + -rd) : undefined;
+export function userHtml(ctrl: RoundController, player: Player, position: TopOrBottom): VNode {
+  const d = ctrl.data;
+  const user = player.user;
+  const perf = user?.perfs?.[d.game.perf];
+  const rating = player.rating || perf?.rating;
+  const showSignals = defined(d.opponentSignal) && defined(user?.id) && ctrl.isPlaying();
+  const signal = showSignals
+    ? user.id === d.opponent.user?.id
+      ? d.opponentSignal
+      : user.id === d.player.user?.id
+        ? myWsLagAsSignal()
+        : undefined
+    : undefined;
 
   if (user) {
     const connecting = !player.onGame && ctrl.firstSeconds && user.online;
-    return h(
+    return hl(
       `div.ruser-${position}.ruser.user-link`,
       {
         class: {
@@ -29,65 +34,67 @@ export function userHtml(ctrl: RoundController, player: Player, position: Positi
         },
       },
       [
-        h('i.line' + (user.patron ? '.patron' : ''), {
+        hl('icon.line', {
+          class: user.patron
+            ? {
+                patron: true,
+                ...(user.patronColor ? { [`paco${user.patronColor}`]: true } : {}),
+              }
+            : {},
           attrs: {
-            title: connecting ? 'Connecting to the game' : player.onGame ? 'Joined the game' : 'Left the game',
+            title: connecting
+              ? 'Connecting to the game'
+              : player.onGame
+                ? 'Joined the game'
+                : 'Left the game',
           },
         }),
-        h(
-          'a.text.ulpt',
-          {
-            attrs: {
-              'data-pt-pos': 's',
-              href: '/@/' + user.username,
-              ...(ctrl.isPlaying() ? { target: '_blank', rel: 'noopener' } : {}),
-            },
-          },
-          user.title
-            ? [
-                h('span.utitle', user.title == 'BOT' ? { attrs: { 'data-bot': true } } : {}, user.title),
-                ' ',
-                user.username,
-              ]
-            : [user.username]
-        ),
-        rating ? h('rating', rating + (player.provisional ? '?' : '')) : null,
-        ratingDiff,
-        player.engine
-          ? h('span', {
-              attrs: {
-                'data-icon': '',
-                title: ctrl.noarg('thisAccountViolatedTos'),
-              },
-            })
-          : null,
-      ]
+        userLink({
+          name: user.username,
+          ...user,
+          attrs: { 'data-pt-pos': 's', ...(ctrl.isPlaying() ? { target: '_blank' } : {}) },
+          online: false,
+          line: false,
+        }),
+        !!signal && signalBars(signal),
+        !!rating && hl('rating', rating + (player.provisional ? '?' : '')),
+        !!rating && ratingDiff(player),
+        player.engine &&
+          hl('span', {
+            attrs: { ...dataIcon(licon.CautionCircle), title: i18n.site.thisAccountViolatedTos },
+          }),
+      ],
     );
   }
   const connecting = !player.onGame && ctrl.firstSeconds;
-  return h(
+  return hl(
     `div.ruser-${position}.ruser.user-link`,
-    {
-      class: {
-        online: player.onGame,
-        offline: !player.onGame,
-        connecting,
-      },
-    },
+    { class: { online: player.onGame, offline: !player.onGame, connecting } },
     [
-      h('i.line', {
+      hl('icon.line', {
         attrs: {
           title: connecting ? 'Connecting to the game' : player.onGame ? 'Joined the game' : 'Left the game',
         },
       }),
-      h('name', player.name || ctrl.noarg('anonymous')),
-    ]
+      hl('name', player.name || i18n.site.anonymous),
+    ],
   );
 }
 
-export function userTxt(ctrl: RoundController, player: Player) {
-  if (player.user) {
-    return (player.user.title ? player.user.title + ' ' : '') + player.user.username;
-  } else if (player.ai) return aiName(ctrl, player.ai);
-  else return ctrl.noarg('anonymous');
-}
+const signalBars = (signal: number) => {
+  const bars: VNode[] = [];
+  for (let i = 1; i <= 4; i++) bars.push(hl(i <= signal ? 'icon' : 'icon.off'));
+  return hl('signal.q' + signal, bars);
+};
+
+const myWsLagAsSignal = () => {
+  const ping = wsAverageLag();
+  return !ping ? 0 : ping < 150 ? 4 : ping < 300 ? 3 : ping < 500 ? 2 : 1;
+};
+
+export const userTxt = (player: Player): string =>
+  player.user
+    ? (player.user.title ? player.user.title + ' ' : '') + player.user.username
+    : player.ai
+      ? i18n.site.aiNameLevelAiLevel('Stockfish', player.ai)
+      : i18n.site.anonymous;

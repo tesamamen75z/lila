@@ -18,7 +18,7 @@
     <item quantity="one">Вирішено %s тактичну задачу</item>
     <item quantity="few">Вирішено %s тактичні задачі</item>
     <item quantity="many">Вирішено %s тактичних задач</item>
-    <item quantity="other">Вирішені %s тактичні задачі</item>
+    <item quantity="other">Вирішено %s тактичних задач</item>
   </plurals>
   <plurals name="playedNbGames">
     <item quantity="one">Зіграно %1$s гру в %2$s</item>
@@ -50,17 +50,23 @@
     <item quantity="many">Зіграно %s заочних ігор</item>
     <item quantity="other">Зіграно %s заочних ігор</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Зіграно %1$s %2$s заочну гру</item>
+    <item quantity="few">Зіграно %1$s %2$s заочні гри</item>
+    <item quantity="many">Зіграно %1$s %2$s заочних ігор</item>
+    <item quantity="other">Зіграно %1$s %2$s заочних ігор</item>
+  </plurals>
   <plurals name="followedNbPlayers">
     <item quantity="one">Підписався на %s гравця</item>
-    <item quantity="few">Підписався на %s гравців</item>
-    <item quantity="many">Підписався на %s гравців</item>
-    <item quantity="other">Підписався на %s гравців</item>
+    <item quantity="few">Почав спостерігати за %s гравцями</item>
+    <item quantity="many">Почав спостерігати за %s гравцями</item>
+    <item quantity="other">Почав спостерігати за %s гравцями</item>
   </plurals>
   <plurals name="gainedNbFollowers">
-    <item quantity="one">Додано %s нового підписника</item>
-    <item quantity="few">Додано %s нових підписників</item>
-    <item quantity="many">Додано %s нових підписників</item>
-    <item quantity="other">Додано %s нових підписників</item>
+    <item quantity="one">Отримав %s нового підписника</item>
+    <item quantity="few">Отримав %s нових підписників</item>
+    <item quantity="many">Отримав %s нових підписників</item>
+    <item quantity="other">Отримав %s нових підписників</item>
   </plurals>
   <plurals name="hostedNbSimuls">
     <item quantity="one">Провів %s сеанс одночасної гри</item>
@@ -88,8 +94,8 @@
   </plurals>
   <plurals name="rankedInTournament">
     <item quantity="one">Досяг #%1$s місця (кращі %2$s%%), зіграна %3$s гра, в турнірі: %4$s</item>
-    <item quantity="few">Досяг #%1$s місця (кращі %2$s%%), зіграно %3$s ігор, турнір: %4$s</item>
-    <item quantity="many">Досяг #%1$s місця (кращі %2$s%%), зіграна %3$s ігор, турнір: %4$s</item>
+    <item quantity="few">Досяг #%1$s місця (кращі %2$s%%), зіграно %3$s гри, турнір: %4$s</item>
+    <item quantity="many">Досяг #%1$s місця (кращі %2$s%%), зіграно %3$s ігор, турнір: %4$s</item>
     <item quantity="other">Досяг #%1$s місця (кращі %2$s%%), зіграно %3$s ігор, турнір: %4$s</item>
   </plurals>
   <plurals name="competedInNbSwissTournaments">

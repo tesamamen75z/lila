@@ -103,6 +103,7 @@ Y no pierdas las tuyas.</string>
   <string name="pawnsFormTheFrontLine">Los peones forman la línea delantera. Mueve cualquier pieza para continuar.</string>
   <string name="boardSetupComplete">¡Felicidades! Ya sabes cómo colocar las piezas en el tablero.</string>
   <string name="castling">Enroque</string>
+  <string name="enPassant">Captura al paso</string>
   <string name="theSpecialKingMove">El movimiento especial del rey</string>
   <string name="castlingIntro">¡Pon a tu rey a salvo y despliega tu torre para atacar!</string>
   <string name="castleKingSide">Mueve tu rey dos casillas para hacer un enroque corto.</string>
@@ -115,7 +116,6 @@ Y no pierdas las tuyas.</string>
   <string name="findAWayToCastleKingSide">¡Encuentra la forma de enrocar en corto!</string>
   <string name="findAWayToCastleQueenSide">¡Encuentra la forma de enrocar en largo!</string>
   <string name="castlingComplete">¡Enhorabuena! Conviene enrocar en casi todas las partidas.</string>
-  <string name="enPassant">Captura al paso</string>
   <string name="theSpecialPawnMove">El movimiento especial del peón</string>
   <string name="enPassantIntro">Cuándo el peón oponente mueve dos casillas, puedes capturarlo como si hubiese movido sólo una.</string>
   <string name="blackJustMovedThePawnByTwoSquares">¡El negro ha movido su peón dos casillas! Captúralo al paso.</string>
@@ -142,12 +142,12 @@ Peón = 1
 ¡El rey es precioso! Perderlo significa perder la partida.</string>
   <string name="queenOverBishop">¡Captura la pieza más valiosa!
 Dama &gt; Alfil</string>
-  <string name="pieceValueExchange">¡Captura la pieza de más valor!
- No cambies
- una pieza valiosa por una de menor valor.</string>
+  <string name="pieceValueExchange">¡Captura la pieza más valiosa!
+No cambies
+una pieza por otra que valga menos.</string>
   <string name="pieceValueLegal">¡Captura la pieza
-de mayor valor!
-Pero asegúrate de que el movimiento sea válido!</string>
+más valiosa!
+¡Con un movimiento legal!</string>
   <string name="takeThePieceWithTheHighestValue">¡Captura la pieza más valiosa!</string>
   <string name="pieceValueComplete">¡Felicidades! ¡Conoces el valor de las piezas!
 Dama = 9
@@ -187,8 +187,8 @@ Peón = 1</string>
   <string name="nailedIt">¡Lo has clavado!</string>
   <string name="rightOn">¡Exacto!</string>
   <string name="stageXComplete">Nivel %s completo</string>
-  <string name="yourScore">Tu puntuación</string>
   <string name="next">Siguiente</string>
+  <string name="nextX">Siguiente: %s</string>
   <string name="backToMenu">Volver al menú</string>
   <string name="puzzleFailed">¡Ejercicio fallido!</string>
   <string name="retry">Reintentar</string>

@@ -1,70 +1,82 @@
 package lila.forum
 
-import scala.concurrent.ExecutionContext
+import scalalib.paginator.*
 
-import lila.common.paginator._
-import lila.db.dsl._
-import lila.db.paginator._
-import lila.user.User
-import reactivemongo.api.ReadPreference
+import lila.core.config.NetDomain
+import lila.db.dsl.*
+import lila.db.paginator.Adapter
 
 final class ForumPaginator(
-    topicRepo: TopicRepo,
-    postRepo: PostRepo,
-    config: ForumConfig
-)(implicit ec: ExecutionContext) {
+    topicRepo: ForumTopicRepo,
+    postRepo: ForumPostRepo,
+    config: ForumConfig,
+    textExpand: ForumTextExpand
+)(using Executor):
 
-  import BSONHandlers._
+  import BSONHandlers.given
 
-  def topicPosts(topic: Topic, page: Int, me: Option[User]): Fu[Paginator[Post]] =
+  def recent(categ: ForumCateg, page: Int): Fu[Paginator[ForumPost]] =
     Paginator(
-      new Adapter(
+      Adapter[ForumPost](
         collection = postRepo.coll,
-        selector = postRepo.forUser(me) selectTopic topic.id,
+        selector = postRepo.selectCateg(categ.id),
         projection = none,
-        sort = postRepo.sortQuery
-      ),
+        sort = sort.createdDesc
+      ).withLotsOfResults,
+      currentPage = page,
+      maxPerPage = MaxPerPage(30)
+    )
+
+  def topicPosts(topic: ForumTopic, page: Int)(using
+      me: Option[Me],
+      netDomain: NetDomain
+  ): Fu[Paginator[ForumPost.WithFrag]] =
+    Paginator(
+      Adapter[ForumPost](
+        collection = postRepo.coll,
+        selector = postRepo.forUser(me).selectTopic(topic.id),
+        projection = none,
+        sort = sort.createdAsc
+      ).mapFutureList(textExpand.manyPosts),
       currentPage = page,
       maxPerPage = config.postMaxPerPage
     )
 
-  def categTopics(categ: Categ, page: Int, forUser: Option[User]): Fu[Paginator[TopicView]] =
+  def categTopics(
+      categ: ForumCateg,
+      page: Int
+  )(using me: Option[Me]): Fu[Paginator[TopicView]] =
     Paginator(
       currentPage = page,
-      maxPerPage = config.postMaxPerPage,
-      adapter = new AdapterLike[TopicView] {
+      maxPerPage = config.topicMaxPerPage,
+      adapter = new AdapterLike[TopicView]:
 
         def nbResults: Fu[Int] =
-          if (categ.isTeam) topicRepo.coll countSel selector
+          if categ.isTeam then topicRepo.coll.countSel(selector)
           else fuccess(1000)
 
         def slice(offset: Int, length: Int): Fu[Seq[TopicView]] =
           topicRepo.coll
-            .aggregateList(length, readPreference = ReadPreference.secondaryPreferred) { framework =>
-              import framework._
+            .aggregateList(length, _.sec): framework =>
+              import framework.*
               Match(selector) -> List(
                 Sort(Descending("updatedAt")),
                 Skip(offset),
                 Limit(length),
-                PipelineOperator(
-                  $lookup.simple(
+                PipelineOperator:
+                  lookup.simple(
                     from = postRepo.coll,
                     as = "post",
-                    local = "lastPostId",
+                    local = if me.exists(_.marks.troll) then "lastPostIdTroll" else "lastPostId",
                     foreign = "_id"
                   )
-                )
               )
-            }
-            .map { docs =>
-              for {
-                doc   <- docs
-                topic <- doc.asOpt[Topic]
-                post = doc.getAsOpt[List[Post]]("post").flatMap(_.headOption)
-              } yield TopicView(categ, topic, post, topic lastPage config.postMaxPerPage, forUser)
-            }
+            .map: docs =>
+              for
+                doc <- docs
+                topic <- doc.asOpt[ForumTopic]
+                post = doc.getAsOpt[List[ForumPost]]("post").flatMap(_.headOption)
+              yield TopicView(categ, topic, post, topic.lastPage(config.postMaxPerPage), me)
 
-        private def selector = topicRepo.forUser(forUser) byCategNotStickyQuery categ
-      }
+        private def selector = topicRepo.forUser(me).byCategNotStickyQuery(categ.id)
     )
-}

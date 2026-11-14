@@ -1,38 +1,25 @@
 package lila.storm
 
-import play.api.libs.json._
+import play.api.libs.json.*
 
-import lila.user.User
-import org.joda.time.format.DateTimeFormat
+import lila.core.pref.Pref
 
-final class StormJson(sign: StormSign) {
+final class StormJson(sign: StormSign):
 
-  import StormJson._
+  import StormJson.given
 
-  def apply(puzzles: List[StormPuzzle], user: Option[User]): JsObject = Json
-    .obj(
-      "puzzles"      -> puzzles,
-      "notAnExploit" -> StormForm.notAnExploit
-    )
-    .add("key" -> user.map(sign.getPrev))
-
-  def pref(p: lila.pref.Pref) =
-    Json.obj(
-      "coords"      -> p.coords,
-      "rookCastle"  -> p.rookCastle,
-      "destination" -> p.destination,
-      "moveEvent"   -> p.moveEvent,
-      "highlight"   -> p.highlight,
-      "is3d"        -> p.is3d,
-      "animation"   -> p.animationMillisForSpeedPuzzles
-    )
+  def apply(puzzles: List[StormPuzzle], user: Option[User], pref: Option[Pref]): JsObject =
+    Json
+      .obj("puzzles" -> puzzles)
+      .add("pref" -> pref)
+      .add("key" -> user.map(sign.getPrev))
 
   def newHigh(n: Option[StormHigh.NewHigh]) =
     Json
       .obj()
       .add("newHigh" -> n.map { nh =>
         Json.obj(
-          "key"  -> nh.key,
+          "key" -> nh.key,
           "prev" -> nh.previous
         )
       })
@@ -42,27 +29,37 @@ final class StormJson(sign: StormSign) {
     "days" -> days
   )
 
-}
+object StormJson:
 
-object StormJson {
+  import lila.common.Json.given
 
-  import lila.puzzle.JsonView.puzzleIdWrites
+  given OWrites[StormHigh] = Json.writes
 
-  implicit val highWrites: OWrites[StormHigh] = Json.writes[StormHigh]
+  private val dateFormatter = java.time.format.DateTimeFormatter.ofPattern("Y/M/d")
 
-  private val dateFormat = DateTimeFormat forPattern "Y/M/d"
-
-  implicit val dayIdWrites: Writes[StormDay.Id] = Writes { id =>
-    JsString(dateFormat print id.day.toDate)
+  given Writes[StormDay.Id] = Writes { id =>
+    JsString(dateFormatter.print(id.day.toInstant))
   }
-  implicit val dayWrites: OWrites[StormDay] = Json.writes[StormDay]
+  given OWrites[StormDay] = Json.writes
 
-  implicit val puzzleWrites: OWrites[StormPuzzle] = OWrites { p =>
+  given OWrites[StormPuzzle] = OWrites { p =>
     Json.obj(
-      "id"     -> p.id,
-      "fen"    -> p.fen.value,
-      "line"   -> p.line.toList.map(_.uci).mkString(" "),
+      "id" -> p.id,
+      "fen" -> p.fen.value,
+      "line" -> p.line.toList.map(_.uci).mkString(" "),
       "rating" -> p.rating
     )
   }
-}
+
+  given Writes[lila.core.pref.Pref] = Writes { p =>
+    Json.obj(
+      "coords" -> p.coords,
+      "rookCastle" -> p.rookCastle,
+      "destination" -> p.destination,
+      "moveEvent" -> p.moveEvent,
+      "highlight" -> p.highlight,
+      "is3d" -> p.is3d,
+      "animation" -> p.animationMillisForSpeedPuzzles,
+      "ratings" -> p.showRatings
+    )
+  }

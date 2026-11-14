@@ -1,29 +1,27 @@
 package lila.socket
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.lettuce.core._
+import com.softwaremill.macwire.*
+import io.lettuce.core.*
+import org.apache.pekko.actor.{ CoordinatedShutdown, Scheduler }
 import play.api.Configuration
 
+import lila.core.socket.{ SocketRequester as _, * }
+
 @Module
-final class Env(
-    appConfig: Configuration,
-    shutdown: CoordinatedShutdown,
-    notification: lila.hub.actors.Notification
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    akka: ActorSystem
-) {
+final class Env(appConfig: Configuration, shutdown: CoordinatedShutdown)(using Executor, Scheduler):
 
-  private val RedisUri = appConfig.get[String]("socket.redis.uri")
+  private val redisClient = RedisClient.create(RedisURI.create(appConfig.get[String]("socket.redis.uri")))
 
-  private val redisClient = RedisClient create RedisURI.create(RedisUri)
+  val userLag = new UserLagCache
+  export userLag.{ getLagRating, put as putLag }
+
+  val requester = new SocketRequester
 
   val remoteSocket: RemoteSocket = wire[RemoteSocket]
+  export remoteSocket.{ kit, parallelKit }
 
   remoteSocket.subscribe("site-in", RemoteSocket.Protocol.In.baseReader)(remoteSocket.baseHandler)
 
-  val onlineIds = new OnlineIds(() => remoteSocket.onlineUserIds.get)
+  val onlineIds = OnlineIds(() => remoteSocket.onlineUserIds.get)
 
-  val isOnline = new IsOnline(userId => remoteSocket.onlineUserIds.get contains userId)
-}
+  val isOnline = IsOnline(userId => remoteSocket.onlineUserIds.get.contains(userId))

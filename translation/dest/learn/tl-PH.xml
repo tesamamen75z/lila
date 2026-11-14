@@ -123,6 +123,7 @@ Sunod ng kanyang reyna.</string>
 Gumawa ng kahit anong galaw para magpatuloy.</string>
   <string name="boardSetupComplete">Binabati kita! Marunong ka ng mag-ayos ng chess board.</string>
   <string name="castling">Pag-enrock</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Ang espesyal na galaw ng hari</string>
   <string name="castlingIntro">Iligtas ang hari, at ilabas ang rook upang umatake!</string>
   <string name="castleKingSide">Galawin ang iyong hari ng upang depensahan ang panig ng hari!</string>
@@ -138,7 +139,6 @@ Kailangan mo muna maglabas ng mga piraso.</string>
   <string name="findAWayToCastleKingSide">Humanap ng paraan para maka-enrook sa panig ng hari!</string>
   <string name="findAWayToCastleQueenSide">Humanap ng paraan para maka-enrook sa panig ng reyna!</string>
   <string name="castlingComplete">Binabati kita! Ikaw ay palaging nag-enrook sa isang laro.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Ang espesyal na galaw ng pawn</string>
   <string name="enPassantIntro">Kapag ang pawn nga iyong kalaban ay gumalaw ng dalawang kwadrado, pwede mo itong kunin gaya ng ito ay gumalaw ng isang kwadrado.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Ang itim na pawn ay gumalaw paibaba na dalawang kwadrado!
@@ -166,6 +166,12 @@ Pawn = 1
 Ang hari ay napakahalaga! Kapag nawal to ay ibig sabihin talo kana sa laro.</string>
   <string name="queenOverBishop">Kunin ang piraso na may pinakamataas na halaga!
 Reyna &gt; Bishop</string>
+  <string name="pieceValueExchange">Kuhanin ang pyesa na may pinakamataas na halaga!
+Huwag magpalit
+pyesang mas mataas ang halaga para sa mas maunti ang halaga.</string>
+  <string name="pieceValueLegal">Kuhanin ang pyesa
+na may pinakamataas na halaga!
+Siguraduhing legal ang iyong galaw!</string>
   <string name="takeThePieceWithTheHighestValue">Kainin ang piece na
 may pinakamataas na halaga!</string>
   <string name="pieceValueComplete">Binabati kita! Alam mo na ang halaga ng mga materyal!
@@ -175,5 +181,40 @@ Bishop = 3
 Kabayo = 3
 Pawn = 1</string>
   <string name="checkInTwo">Nacheck sa dalawa</string>
+  <string name="twoMovesToGiveCheck">Dalawang galaw para magkaroon ng check</string>
+  <string name="checkInTwoIntro">Hanapin ang tamang kombinasyon ng dalawang galaw na magche-check sa hari ng kalaban!</string>
+  <string name="checkInTwoGoal">Hangarin ang hari ng kalaban sa isang galaw!</string>
+  <string name="checkInTwoComplete">Binabati Kita! Nacheck mo ang iyong kalaban, pinipilit sila na depensahan ang kanilang hari!</string>
+  <string name="whatNext">Anong sunod?</string>
+  <string name="youKnowHowToPlayChess">Marunong kang maglaro ng chess, binabati kita! Gusto mo bang maging isang mas malakas na manlalaro?</string>
+  <string name="register">Magrehistro</string>
+  <string name="getAFreeLichessAccount">Kumuha ng libreng Lichess account</string>
+  <string name="practice">Mag-ensayo</string>
+  <string name="learnCommonChessPositions">Pag-aralan ang karaniwang posisyon sa chess</string>
+  <string name="puzzles">Mga Palaisipan</string>
+  <string name="exerciseYourTacticalSkills">I-exercise ang iyong tactical skills</string>
+  <string name="videos">Mga Videos</string>
+  <string name="watchInstructiveChessVideos">Manood ng mga nakapagtuturong video sa chess</string>
+  <string name="playPeople">Maglaro ng tao</string>
+  <string name="opponentsFromAroundTheWorld">Mga kalaban sa buong mundo</string>
+  <string name="playMachine">Maglaro ng makina</string>
+  <string name="testYourSkillsWithTheComputer">Subukan ang iyong mga kasanayan sa computer</string>
+  <string name="letsGo">Tayo na!</string>
+  <string name="stageX">Stage %s</string>
+  <string name="awesome">Kahanga-hanga!</string>
+  <string name="excellent">Napakahusay!</string>
+  <string name="greatJob">Maayos!</string>
+  <string name="perfect">Perpekto!</string>
+  <string name="outstanding">Bukod tangi!</string>
+  <string name="wayToGo">Magaling!</string>
+  <string name="yesYesYes">Oo, oo, oo!</string>
+  <string name="youreGoodAtThis">Magaling ka dito!</string>
+  <string name="nailedIt">Nakuwa mo.</string>
+  <string name="rightOn">Tama!</string>
+  <string name="stageXComplete">Kumpleto ang stage %s</string>
+  <string name="next">Sunod</string>
+  <string name="nextX">Susunod %s</string>
+  <string name="backToMenu">Bumalik sa menu</string>
+  <string name="puzzleFailed">Nabigo ang palaisipan!</string>
   <string name="retry">Subukang muli</string>
 </resources>

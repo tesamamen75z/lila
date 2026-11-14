@@ -1,7 +1,5 @@
 package lila.video
 
-import org.joda.time.DateTime
-
 case class Video(
     _id: Video.ID, // youtube ID
     title: String,
@@ -12,43 +10,37 @@ case class Video(
     ads: Boolean,
     startTime: Int, // in seconds
     metadata: Youtube.Metadata,
-    createdAt: DateTime
-) {
+    createdAt: Instant
+):
 
-  def id = _id
+  inline def id = _id
 
   def thumbnail = s"https://img.youtube.com/vi/$id/0.jpg"
 
   def similarity(other: Video) =
-    (tags intersect other.tags).size +
-      (targets intersect other.targets).size +
-      (if (author == other.author) 1 else 0)
+    tags.intersect(other.tags).size +
+      targets.intersect(other.targets).size +
+      (author == other.author).so(1)
 
   def durationString =
-    metadata.duration.map { seconds =>
-      "%02d:%02d".format(seconds / 60, seconds % 60)
-    }
+    metadata.duration.map: seconds =>
+      f"${seconds / 60}%02d:${seconds % 60}%02d"
 
   override def toString = s"[$id] $title ($author)"
-}
 
-object Target {
-  val BEGINNER     = 1
+object Target:
+  val BEGINNER = 1
   val INTERMEDIATE = 2
-  val ADVANCED     = 3
-  val EXPERT       = 4
+  val ADVANCED = 3
+  val EXPERT = 4
 
-  def name(target: Int) =
-    target match {
-      case BEGINNER     => "beginner"
-      case INTERMEDIATE => "intermediate"
-      case ADVANCED     => "advanced"
-      case EXPERT       => "expert"
-      case _            => ""
-    }
-}
+  def name(target: Int) = target match
+    case BEGINNER => "beginner"
+    case INTERMEDIATE => "intermediate"
+    case ADVANCED => "advanced"
+    case EXPERT => "expert"
+    case _ => ""
 
-object Video {
+object Video:
 
   type ID = String
-}

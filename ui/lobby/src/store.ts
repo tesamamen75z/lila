@@ -1,4 +1,6 @@
-import { Tab, Mode, Sort } from './interfaces';
+import { storage } from 'lib/storage';
+
+import type { Tab, Mode, Sort } from './interfaces';
 
 interface Store<A> {
   set(v: string): A;
@@ -16,24 +18,36 @@ interface Config<A> {
   fix(v: string | null): A;
 }
 
+function isTab(value: string | null): value is Tab {
+  return value === 'pools' || value === 'real_time' || value === 'seeks' || value === 'now_playing';
+}
+
+function isMode(value: string | null): value is Mode {
+  return value === 'list' || value === 'chart';
+}
+
+function isSort(value: string | null): value is Sort {
+  return value === 'rating' || value === 'time';
+}
+
 const tab: Config<Tab> = {
   key: 'lobby.tab',
   fix(t: string | null): Tab {
-    if (<Tab>t) return t as Tab;
+    if (isTab(t)) return t;
     return 'pools';
   },
 };
 const mode: Config<Mode> = {
   key: 'lobby.mode',
   fix(m: string | null): Mode {
-    if (<Mode>m) return m as Mode;
+    if (isMode(m)) return m;
     return 'list';
   },
 };
 const sort: Config<Sort> = {
   key: 'lobby.sort',
   fix(s: string | null): Sort {
-    if (<Sort>s) return s as Sort;
+    if (isSort(s)) return s;
     return 'rating';
   },
 };
@@ -43,11 +57,11 @@ function makeStore<A>(conf: Config<A>, userId?: string): Store<A> {
   return {
     set(v: string): A {
       const t: A = conf.fix(v);
-      lichess.storage.set(fullKey, ('' + t) as string);
+      storage.set(fullKey, String(t));
       return t;
     },
     get(): A {
-      return conf.fix(lichess.storage.get(fullKey));
+      return conf.fix(storage.get(fullKey));
     },
   };
 }

@@ -1,6 +1,6 @@
 .lobby__about {
   display: flex;
-  align-content: flex-start;
+  place-content: start center;
   flex-flow: row wrap;
   font-size: 0.85em;
   font-weight: bold;
@@ -8,8 +8,12 @@
   a {
     @extend %page-text;
 
-    margin-right: 1.2em;
+    margin-inline-end: 1.2em;
     white-space: nowrap;
+
+    @media (any-pointer: coarse) {
+      padding: 0.5em;
+    }
 
     @include transition(color);
 
@@ -20,7 +24,9 @@
 }
 
 .connect-links {
-  flex: 0 0 100%;
+  @extend %flex-center-center;
+
+  flex: 1 0 100%;
   margin-top: 0.5em;
 
   a {

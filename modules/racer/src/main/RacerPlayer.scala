@@ -1,35 +1,31 @@
 package lila.racer
 
-import org.joda.time.DateTime
-import lila.common.CuteNameGenerator
-import lila.user.User
+import scalalib.cuteName.CuteNameGenerator
 
-case class RacerPlayer(id: RacerPlayer.Id, createdAt: DateTime, score: Int) {
+import lila.core.LightUser
+import lila.core.id.SessionId
+
+case class RacerPlayer(id: RacerPlayer.Id, user: Option[LightUser], createdAt: Instant, score: Int):
 
   import RacerPlayer.Id
 
-  lazy val userId: Option[User.ID] = id match {
-    case Id.User(name) => User.normalize(name).some
-    case _             => none
-  }
+  lazy val name: UserName = id match
+    case Id.User(id) => user.fold(id.into(UserName))(_.name)
+    case Id.Anon(id) => UserName(CuteNameGenerator.fromSeed(id.hashCode))
 
-  lazy val name: String = id match {
-    case Id.User(n)  => n
-    case Id.Anon(id) => CuteNameGenerator fromSeed id.hashCode
-  }
-}
-
-object RacerPlayer {
-  sealed trait Id
-  object Id {
-    case class User(name: String)      extends Id
-    case class Anon(sessionId: String) extends Id
+object RacerPlayer:
+  enum Id:
+    case User(id: UserId)
+    case Anon(sessionId: SessionId)
+  object Id:
     def apply(str: String) =
-      if (str startsWith "@") Anon(str drop 1)
-      else User(str)
-  }
+      if str.startsWith("@") then Anon(SessionId(str.drop(1)))
+      else User(UserId(str))
+    def userIdOf(id: Id) = id match
+      case User(uid) => uid.some
+      case _ => none
 
-  val lichess = Id.User("Lichess")
+  val lichess = Id.User(UserId.lichess)
 
-  def make(id: Id) = RacerPlayer(id = id, score = 0, createdAt = DateTime.now)
-}
+  def make(id: Id, user: Option[LightUser]) =
+    RacerPlayer(id = id, user = user, score = 0, createdAt = nowInstant)

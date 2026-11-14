@@ -1,25 +1,27 @@
-import { h } from 'snabbdom';
-import { Millis } from '../clock/clockCtrl';
-import { Position } from '../interfaces';
-import { CorresClockController } from './corresClockCtrl';
-import { moretime } from '../view/button';
+import type { TopOrBottom } from 'lib/game';
+import { formatClockTimeVerbal } from 'lib/game/clock/clockView';
+import { hl, onInsert, type VNode } from 'lib/view';
 
-const prefixInteger = (num: number, length: number): string => (num / Math.pow(10, length)).toFixed(length).substr(2);
+import { moretime } from '../view/button';
+import type { CorresClockController } from './corresClockCtrl';
+
+const prefixInteger = (num: number, length: number): string =>
+  (num / Math.pow(10, length)).toFixed(length).slice(2);
 
 const bold = (x: string) => `<b>${x}</b>`;
 
-function formatClockTime(trans: Trans, time: Millis) {
-  const date = new Date(time),
-    minutes = prefixInteger(date.getUTCMinutes(), 2),
-    seconds = prefixInteger(date.getSeconds(), 2);
-  let hours: number,
-    str = '';
+function formatClockTime(time: Millis) {
+  const date = new Date(time);
+  const minutes = prefixInteger(date.getUTCMinutes(), 2);
+  const seconds = prefixInteger(date.getSeconds(), 2);
+  let hours: number;
+  let str = '';
   if (time >= 86400 * 1000) {
     // days : hours
     const days = date.getUTCDate() - 1;
     hours = date.getUTCHours();
-    str += (days === 1 ? trans('oneDay') : trans.plural('nbDays', days)) + ' ';
-    if (hours !== 0) str += trans.plural('nbHours', hours);
+    str += (days === 1 ? i18n.site.oneDay : i18n.site.nbDays(days)) + ' ';
+    if (hours !== 0) str += i18n.site.nbHours(hours);
   } else if (time >= 3600 * 1000) {
     // hours : minutes
     hours = date.getUTCHours();
@@ -33,39 +35,30 @@ function formatClockTime(trans: Trans, time: Millis) {
 
 export default function (
   ctrl: CorresClockController,
-  trans: Trans,
   color: Color,
-  position: Position,
-  runningColor: Color
-) {
-  const millis = ctrl.millisOf(color),
-    update = (el: HTMLElement) => {
-      el.innerHTML = formatClockTime(trans, millis);
-    },
-    isPlayer = ctrl.root.data.player.color === color;
-  return h(
+  position: TopOrBottom,
+  runningColor: Color,
+): VNode {
+  const millis = ctrl.millisOf(color);
+  const update = (el: HTMLElement) => {
+    el.innerHTML = site.blindMode ? formatClockTimeVerbal(millis) : formatClockTime(millis);
+  };
+  const isPlayer = ctrl.root.data.player.color === color;
+  const direction = document.dir === 'rtl' && millis < 86400 * 1000 ? 'ltr' : undefined;
+  return hl(
     'div.rclock.rclock-correspondence.rclock-' + position,
-    {
-      class: {
-        outoftime: millis <= 0,
-        running: runningColor === color,
-      },
-    },
+    { class: { outoftime: millis <= 0, running: runningColor === color } },
     [
-      ctrl.data.showBar
-        ? h('div.bar', [
-            h('span', {
-              attrs: { style: `width: ${ctrl.timePercent(color)}%` },
-            }),
-          ])
-        : null,
-      h('div.time', {
+      ctrl.data.showBar &&
+        hl('div.bar', [hl('span', { attrs: { style: `width: ${ctrl.timePercent(color)}%` } })]),
+      hl('div.time', {
+        attrs: direction && { style: `direction: ${direction}` },
         hook: {
-          insert: vnode => update(vnode.elm as HTMLElement),
+          ...onInsert(update),
           postpatch: (_, vnode) => update(vnode.elm as HTMLElement),
         },
       }),
-      isPlayer ? null : moretime(ctrl.root),
-    ]
+      !isPlayer && moretime(ctrl.root),
+    ],
   );
 }

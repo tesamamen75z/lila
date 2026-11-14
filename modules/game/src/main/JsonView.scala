@@ -1,154 +1,169 @@
 package lila.game
 
-import play.api.libs.json._
-
-import chess.format.{ FEN, Forsyth }
-import chess.variant.Crazyhouse
+import chess.format.Fen
 import chess.{ Clock, Color }
-import lila.common.Json.jodaWrites
+import play.api.libs.json.*
 
-final class JsonView(rematches: Rematches) {
+import lila.common.Json.{ *, given }
+import lila.core.LightUser
+import lila.core.game.{ Blurs, Game, Player, Pov, Source }
+import lila.game.GameExt.{ expirable, timeForFirstMove }
 
-  import JsonView._
+final class JsonView(rematches: Rematches):
 
-  def apply(game: Game, initialFen: Option[FEN]) =
+  import JsonView.given
+
+  def immutable(game: Game, initialFen: Option[Fen.Full]) =
     Json
       .obj(
-        "id"            -> game.id,
-        "variant"       -> game.variant,
-        "speed"         -> game.speed.key,
-        "perf"          -> PerfPicker.key(game),
-        "rated"         -> game.rated,
-        "initialFen"    -> (initialFen | chess.format.Forsyth.initial),
-        "fen"           -> (Forsyth >> game.chess),
-        "player"        -> game.turnColor,
-        "turns"         -> game.turns,
-        "startedAtTurn" -> game.chess.startedAtTurn,
-        "source"        -> game.source,
-        "status"        -> game.status,
-        "createdAt"     -> game.createdAt
+        "id" -> game.id,
+        "variant" -> game.variant,
+        "speed" -> game.speed.key,
+        "perf" -> game.perfKey,
+        "rated" -> game.rated,
+        "source" -> game.source,
+        "createdAt" -> game.createdAt
       )
-      .add("threefold" -> game.history.threefoldRepetition)
-      .add("boosted" -> game.boosted)
+      .add("startedAtTurn" -> game.chess.startedAtPly.some.filter(_ > 0))
+      .add("initialFen" -> initialFen)
       .add("tournamentId" -> game.tournamentId)
       .add("swissId" -> game.swissId)
+      .add("rules" -> game.metadata.nonEmptyRules)
+
+  def base(game: Game, initialFen: Option[Fen.Full]) =
+    immutable(game, initialFen) ++ Json
+      .obj(
+        "fen" -> Fen.write(game.chess).some,
+        "turns" -> game.ply,
+        "status" -> game.status
+      )
+      .add("threefold" -> game.history.threefoldRepetition)
       .add("winner" -> game.winnerColor)
-      .add("lastMove" -> game.lastMoveKeys)
-      .add("check" -> game.situation.checkSquare.map(_.key))
-      .add("rematch" -> rematches.of(game.id))
+      .add("abortedBy" -> game.abortedBy)
+      .add("rematch" -> rematches.getAcceptedId(game.id))
       .add("drawOffers" -> (!game.drawOffers.isEmpty).option(game.drawOffers.normalizedPlies))
-}
 
-object JsonView {
+  // adds fields that should be computed by the client instead
+  def baseWithChessDenorm(game: Game, initialFen: Option[Fen.Full]) =
+    base(game, initialFen) ++ Json
+      .obj("player" -> game.turnColor)
+      .add("check" -> game.position.checkSquare.map(_.key))
+      .add("lastMove" -> game.lastMoveKeys)
 
-  implicit val statusWrites: OWrites[chess.Status] = OWrites { s =>
+  def apiAiNewGame(pov: Pov, initialFen: Option[Fen.Full]): JsObject =
+    baseWithChessDenorm(pov.game, initialFen) ++ Json.obj("fullId" -> pov.fullId)
+
+  def ownerPreview(pov: Pov)(using LightUser.GetterSync) =
+    Json
+      .obj(
+        "fullId" -> pov.fullId,
+        "gameId" -> pov.gameId,
+        "fen" -> maybeFen(pov),
+        "color" -> pov.color,
+        "lastMove" -> (pov.game.lastMoveKeys | ""),
+        "source" -> pov.game.source,
+        "status" -> pov.game.status,
+        "variant" -> Json.obj(
+          "key" -> pov.game.variant.key,
+          "name" -> pov.game.variant.name
+        ),
+        "speed" -> pov.game.speed.key,
+        "perf" -> pov.game.perfKey,
+        "rated" -> pov.game.rated,
+        "hasMoved" -> pov.hasMoved,
+        "opponent" -> Json
+          .obj(
+            "id" -> pov.opponent.userId,
+            "username" -> lila.game.Namer
+              .playerTextBlocking(pov.opponent, withRating = false)
+          )
+          .add("rating" -> pov.opponent.rating)
+          .add("ratingDiff" -> pov.opponent.ratingDiff)
+          .add("ai" -> pov.opponent.aiLevel),
+        "isMyTurn" -> pov.isMyTurn
+      )
+      .add("secondsLeft" -> pov.remainingSeconds)
+      .add("tournamentId" -> pov.game.tournamentId)
+      .add("swissId" -> pov.game.swissId)
+      // .add("orientation" -> pov.game.variant.racingKings.option(chess.White))
+      .add("winner" -> pov.game.winnerColor)
+      .add("rating" -> pov.player.rating)
+      .add("ratingDiff" -> pov.player.ratingDiff)
+
+  def maybeFen(pov: Pov): Fen.Full =
+    if pov.player.blindfold then Fen.Full("8/8/8/8/8/8/8/8") else Fen.write(pov.game.chess)
+
+  def player(p: Player, user: Option[LightUser]) =
+    Json
+      .obj()
+      .add("user", user)
+      .add("rating", p.rating)
+      .add("ratingDiff", p.ratingDiff)
+      .add("name", p.name)
+      .add("provisional" -> p.provisional)
+      .add("aiLevel" -> p.aiLevel)
+      .add("blindfold" -> p.blindfold)
+
+object JsonView:
+
+  def expiration(game: Game) =
+    game.expirable.option:
+      Json.obj(
+        "idleMillis" -> (nowMillis - game.movedAt.toMillis),
+        "millisToMove" -> game.timeForFirstMove.millis
+      )
+
+  given OWrites[chess.Status] = OWrites: s =>
     Json.obj(
-      "id"   -> s.id,
+      "id" -> s.id,
       "name" -> s.name
     )
-  }
 
-  implicit val crosstableResultWrites = Json.writes[Crosstable.Result]
+  given OWrites[Crosstable.Result] = Json.writes
 
-  implicit val crosstableUsersWrites = OWrites[Crosstable.Users] { users =>
-    JsObject(users.toList.map { u =>
-      u.id -> JsNumber(u.score / 10d)
-    })
-  }
+  given OWrites[Crosstable.Users] = OWrites: users =>
+    JsObject(users.toList.map: u =>
+      u.id.value -> JsNumber(u.score / 10d))
 
-  implicit val crosstableWrites = OWrites[Crosstable] { c =>
+  given OWrites[Crosstable] = OWrites: c =>
     Json.obj(
-      "users"   -> c.users,
+      "users" -> c.users,
       "nbGames" -> c.nbGames
       // "results" -> c.results
     )
-  }
 
-  implicit val matchupWrites = OWrites[Crosstable.Matchup] { m =>
+  given OWrites[Crosstable.Matchup] = OWrites: m =>
     Json.obj(
-      "users"   -> m.users,
+      "users" -> m.users,
       "nbGames" -> m.users.nbGames
     )
-  }
 
-  def crosstable(ct: Crosstable, matchup: Option[Crosstable.Matchup]) =
-    crosstableWrites
-      .writes(ct)
-      .add("matchup" -> matchup)
+  given OWrites[Crosstable.WithMatchup] = OWrites: c =>
+    Json.toJsObject(c.crosstable).add("matchup" -> c.matchup)
 
-  implicit val crazyhousePocketWriter: OWrites[Crazyhouse.Pocket] = OWrites { v =>
-    JsObject(
-      Crazyhouse.storableRoles.flatMap { role =>
-        Some(v.roles.count(role ==)).filter(0 <).map { count =>
-          role.name -> JsNumber(count)
-        }
-      }
-    )
-  }
-
-  implicit val crazyhouseDataWriter: OWrites[chess.variant.Crazyhouse.Data] = OWrites { v =>
-    Json.obj("pockets" -> List(v.pockets.white, v.pockets.black))
-  }
-
-  implicit val blursWriter: OWrites[Blurs] = OWrites { blurs =>
+  given OWrites[Blurs] = OWrites: blurs =>
+    import lila.game.Blurs.binaryString
     Json.obj(
-      "nb"   -> blurs.nb,
+      "nb" -> blurs.nb,
       "bits" -> blurs.binaryString
     )
-  }
 
-  implicit val variantWriter: OWrites[chess.variant.Variant] = OWrites { v =>
+  given OWrites[chess.variant.Variant] = OWrites: v =>
     Json.obj(
-      "key"   -> v.key,
-      "name"  -> v.name,
+      "key" -> v.key,
+      "name" -> v.name,
       "short" -> v.shortName
     )
-  }
 
-  implicit val clockWriter: OWrites[Clock] = OWrites { c =>
+  given OWrites[Clock] = OWrites: c =>
     Json.obj(
-      "running"   -> c.isRunning,
-      "initial"   -> c.limitSeconds,
+      "running" -> c.isRunning,
+      "initial" -> c.limitSeconds,
       "increment" -> c.incrementSeconds,
-      "white"     -> c.remainingTime(Color.White).toSeconds,
-      "black"     -> c.remainingTime(Color.Black).toSeconds,
-      "emerg"     -> c.config.emergSeconds
+      "white" -> c.remainingTime(Color.White).toSeconds,
+      "black" -> c.remainingTime(Color.Black).toSeconds,
+      "emerg" -> c.config.emergSeconds
     )
-  }
 
-  implicit val correspondenceWriter: OWrites[CorrespondenceClock] = OWrites { c =>
-    Json.obj(
-      "daysPerTurn" -> c.daysPerTurn,
-      "increment"   -> c.increment,
-      "white"       -> c.whiteTime,
-      "black"       -> c.blackTime
-    )
-  }
-
-  implicit val openingWriter: OWrites[chess.opening.FullOpening.AtPly] = OWrites { o =>
-    Json.obj(
-      "eco"  -> o.opening.eco,
-      "name" -> o.opening.name,
-      "ply"  -> o.ply
-    )
-  }
-
-  implicit val divisionWriter: OWrites[chess.Division] = OWrites { o =>
-    Json.obj(
-      "middle" -> o.middle,
-      "end"    -> o.end
-    )
-  }
-
-  implicit val sourceWriter: Writes[Source] = Writes { s =>
-    JsString(s.name)
-  }
-
-  implicit val colorWrites: Writes[Color] = Writes { c =>
-    JsString(c.name)
-  }
-
-  implicit val fenWrites: Writes[FEN] = Writes { f =>
-    JsString(f.value)
-  }
-}
+  given Writes[Source] = writeAs(_.name)
+  given Writes[lila.core.game.GameRule] = writeAs(_.toString)

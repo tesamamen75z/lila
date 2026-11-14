@@ -1,156 +1,168 @@
 package controllers
 
-import play.api.mvc._
 import play.api.i18n.Lang
-import scala.util.chaining._
+import play.api.mvc.*
 
-import lila.app._
-import lila.game.Pov
-import lila.user.{ User => UserModel }
+import lila.app.{ *, given }
+import lila.core.id.GameAnyId
 
 // both bot & board APIs
-final class PlayApi(
-    env: Env,
-    apiC: => Api
-) extends LilaController(env) {
-
-  implicit private def autoReqLang(implicit req: RequestHeader) = reqLang(req)
+final class PlayApi(env: Env) extends LilaController(env):
 
   // bot endpoints
 
-  def botGameStream(id: String) =
-    Scoped(_.Bot.Play) { implicit req => me =>
-      WithPovAsBot(id, me) { impl.gameStream(me, _) }
-    }
+  def botGameStream(id: GameId) = Scoped(_.Bot.Play) { ctx ?=> me ?=>
+    WithPovAsBot(id)(impl.gameStream)
+  }
 
-  def botMove(id: String, uci: String, offeringDraw: Option[Boolean]) =
-    Scoped(_.Bot.Play) { _ => me =>
-      WithPovAsBot(id, me) { impl.move(me, _, uci, offeringDraw) }
-    }
+  def botMove(id: GameId, uci: String, offeringDraw: Option[Boolean]) = Scoped(_.Bot.Play) { _ ?=> me ?=>
+    WithPovAsBot(id)(impl.move(_, uci, offeringDraw))
+  }
 
-  def botCommand(cmd: String) =
-    ScopedBody(_.Bot.Play) { implicit req => me =>
-      cmd.split('/') match {
-        case Array("account", "upgrade") =>
-          env.user.repo.isManaged(me.id) flatMap {
-            case true => notFoundJson()
-            case _ =>
-              env.tournament.api.withdrawAll(me) >>
-                env.team.cached.teamIdsList(me.id).flatMap { env.swiss.api.withdrawAll(me, _) } >>
-                env.user.repo.setBot(me) >>
-                env.pref.api.setBot(me) >>
-                env.streamer.api.delete(me) >>-
-                env.user.lightUserApi.invalidate(me.id) pipe
-                toResult recover { case lila.base.LilaInvalid(msg) =>
-                  BadRequest(jsonError(msg))
-                }
-          }
-        case _ => impl.command(me, cmd)(WithPovAsBot)
-      }
-    }
+  def botCommand(cmd: String) = ScopedBody(_.Bot.Play) { ctx ?=> me ?=>
+    if cmd == "account/upgrade" then
+      env.user.repo
+        .isManaged(me)
+        .flatMap:
+          if _ then notFoundJson("Managed accounts cannot be bots.")
+          else
+            {
+              for
+                _ <- env.tournament.api.withdrawAll(me, forceDelete = true)
+                teamIds <- env.team.cached.teamIdsList(me)
+                _ <- env.swiss.api.withdrawAll(me, teamIds)
+                _ <- env.user.api.setBot(me)
+                _ <- env.pref.api.setBot(me)
+                _ <- env.streamer.repo.delete(me)
+              yield env.user.lightUserApi.invalidate(me)
+            }.pipe(toResult).recover { case lila.core.lilaism.LilaInvalid(msg) =>
+              BadRequest(jsonError(msg))
+            }
+    else impl.command(cmd)(WithPovAsBot)
+  }
 
   // board endpoints
 
-  def boardGameStream(id: String) =
-    Scoped(_.Board.Play) { implicit req => me =>
-      WithPovAsBoard(id, me) { impl.gameStream(me, _) }
+  def boardGameStream(id: GameId) = Scoped(_.Board.Play) { ctx ?=> me ?=>
+    WithPovAsBoard(id)(impl.gameStream)
+  }
+
+  def boardMove(id: GameId, uci: String, offeringDraw: Option[Boolean]) =
+    Scoped(_.Board.Play) { _ ?=> me ?=>
+      WithPovAsBoard(id): pov =>
+        env.bot.boardReport.move(pov.game)
+        impl.move(pov, uci, offeringDraw)
     }
 
-  def boardMove(id: String, uci: String, offeringDraw: Option[Boolean]) =
-    Scoped(_.Board.Play) { _ => me =>
-      WithPovAsBoard(id, me) {
-        impl.move(me, _, uci, offeringDraw)
-      }
-    }
-
-  def boardCommand(cmd: String) =
-    ScopedBody(_.Board.Play) { implicit req => me =>
-      impl.command(me, cmd)(WithPovAsBoard)
-    }
+  def boardCommandPost(cmd: String) = ScopedBody(_.Board.Play) { ctx ?=> me ?=>
+    impl.command(cmd)(WithPovAsBoard)
+  }
 
   // common code for bot & board APIs
-  private object impl {
+  private object impl:
 
-    def gameStream(me: UserModel, pov: Pov)(implicit lang: Lang) =
-      env.game.gameRepo.withInitialFen(pov.game) map { wf =>
-        apiC.sourceToNdJsonOption(env.bot.gameStateStream(wf, pov.color, me))
-      }
+    def gameStream(pov: Pov)(using Context, Me) =
+      env.game.gameRepo
+        .withInitialFen(pov.game)
+        .map: wf =>
+          jsOptToNdJson(env.bot.gameStateStream(wf, pov.color))
 
-    def move(me: UserModel, pov: Pov, uci: String, offeringDraw: Option[Boolean]) =
-      env.bot.player(pov, me, uci, offeringDraw) pipe toResult
+    def move(pov: Pov, uci: String, offeringDraw: Option[Boolean])(using Me) =
+      env.bot.player(pov, uci, offeringDraw).pipe(toResult)
 
-    def command(me: UserModel, cmd: String)(
-        as: (String, UserModel) => (Pov => Fu[Result]) => Fu[Result]
-    )(implicit req: Request[_]): Fu[Result] =
-      cmd.split('/') match {
+    def command(cmd: String)(
+        as: Me ?=> GameId => (Pov => Fu[Result]) => Fu[Result]
+    )(using Request[?], Lang)(using me: Me): Fu[Result] =
+      cmd.split('/') match
         case Array("game", id, "chat") =>
-          as(id, me) { pov =>
-            env.bot.form.chat
-              .bindFromRequest()
-              .fold(
-                jsonFormErrorDefaultLang,
-                res => env.bot.player.chat(pov.gameId, me, res) inject jsonOkResult
-              ) pipe catchClientError
-          }
+          as(GameAnyId(id).gameId): pov =>
+            bindForm[lila.bot.BotForm.ChatData, Fu[Result]](env.bot.form.chat)(
+              doubleJsonFormError,
+              res => env.bot.player.chat(pov.gameId, res).inject(jsonOkResult)
+            ).pipe(catchClientError)
         case Array("game", id, "abort") =>
-          as(id, me) { pov =>
-            env.bot.player.abort(pov) pipe toResult
-          }
+          as(GameAnyId(id).gameId): pov =>
+            env.bot.player.abort(pov).pipe(toResult)
         case Array("game", id, "resign") =>
-          as(id, me) { pov =>
-            env.bot.player.resign(pov) pipe toResult
-          }
+          as(GameAnyId(id).gameId): pov =>
+            env.bot.player.resign(pov).pipe(toResult)
         case Array("game", id, "draw", bool) =>
-          as(id, me) { pov =>
-            fuccess(env.bot.player.setDraw(pov, lila.common.Form.trueish(bool))) pipe toResult
-          }
+          as(GameAnyId(id).gameId): pov =>
+            fuccess(env.bot.player.setDraw(pov, lila.common.Form.trueish(bool))).pipe(toResult)
+        case Array("game", id, "takeback", bool) =>
+          as(GameAnyId(id).gameId): pov =>
+            fuccess(env.bot.player.setTakeback(pov, lila.common.Form.trueish(bool))).pipe(toResult)
+        case Array("game", id, "claim-victory") =>
+          as(GameAnyId(id).gameId): pov =>
+            env.bot.player.claimVictory(pov).pipe(toResult)
+        case Array("game", id, "claim-draw") =>
+          as(GameAnyId(id).gameId): pov =>
+            env.bot.player.claimDraw(pov).pipe(toResult)
+        case Array("game", id, "berserk") =>
+          as(GameAnyId(id).gameId): pov =>
+            if !me.isBot && env.bot.player.berserk(pov.game) then jsonOkResult
+            else JsonBadRequest(jsonError("Cannot berserk"))
         case _ => notFoundJson("No such command")
-      }
+
+  def boardCommandGet(cmd: String) = ScopedBody(_.Board.Play) { _ ?=> me ?=>
+    cmd.split('/') match
+      case Array("game", id, "chat") => WithPovAsBoard(GameAnyId(id).gameId)(getChat)
+      case _ => notFoundJson("No such command")
   }
+
+  def botCommandGet(cmd: String) = ScopedBody(_.Bot.Play) { _ ?=> me ?=>
+    cmd.split('/') match
+      case Array("game", id, "chat") => WithPovAsBot(GameAnyId(id).gameId)(getChat)
+      case _ => notFoundJson("No such command")
+  }
+
+  private def getChat(pov: Pov) =
+    JsonOk(env.chat.api.userChat.find(pov.game.id.into(ChatId)).map(env.chat.json.boardApi(_)))
 
   // utils
 
-  private def toResult(f: Funit): Fu[Result] = catchClientError(f inject jsonOkResult)
+  private def toResult(f: Funit): Fu[Result] = catchClientError(f.inject(jsonOkResult))
   private def catchClientError(f: Fu[Result]): Fu[Result] =
-    f recover { case e: lila.round.BenignError =>
+    f.recover { case e: lila.core.round.BenignError =>
       BadRequest(jsonError(e.getMessage))
     }
 
-  private def WithPovAsBot(anyId: String, me: lila.user.User)(f: Pov => Fu[Result]) =
-    WithPov(anyId, me) { pov =>
-      if (me.noBot)
-        BadRequest(
-          jsonError(
-            "This endpoint can only be used with a Bot account. See https://lichess.org/api#operation/botAccountUpgrade"
-          )
-        ).fuccess
-      else if (!lila.game.Game.isBotCompatible(pov.game))
-        BadRequest(jsonError("This game cannot be played with the Bot API.")).fuccess
-      else f(pov)
-    }
+  private def WithPovAsBot(id: GameId)(f: Pov => Fu[Result])(using me: Me) =
+    WithPov(id): pov =>
+      if me.noBot then
+        BadRequest:
+          jsonError:
+            "This endpoint can only be used with a Bot account. See https://lichess.org/api#tag/bot/POST/api/bot/account/upgrade"
+      else
+        isReallyBotCompatible(pov.game).flatMap:
+          if _ then f(pov)
+          else BadRequest(jsonError("This game cannot be played with the Bot API."))
 
-  private def WithPovAsBoard(anyId: String, me: lila.user.User)(f: Pov => Fu[Result]) =
-    WithPov(anyId, me) { pov =>
-      if (me.isBot) notForBotAccounts.fuccess
-      else if (!lila.game.Game.isBoardCompatible(pov.game))
-        BadRequest(jsonError("This game cannot be played with the Board API.")).fuccess
-      else f(pov)
-    }
+  private def isReallyBotCompatible(game: lila.core.game.Game): Fu[Boolean] =
+    lila.game.Game.isBotCompatible(game) match
+      case Some(known) => fuccess(known)
+      case None => game.tournamentId.so(env.tournament.api.isForBots)
 
-  private def WithPov(anyId: String, me: lila.user.User)(f: Pov => Fu[Result]) =
-    env.round.proxyRepo.game(lila.game.Game takeGameId anyId) flatMap {
-      case None => NotFound(jsonError("No such game")).fuccess
-      case Some(game) =>
-        Pov(game, me) match {
-          case None      => NotFound(jsonError("Not your game")).fuccess
-          case Some(pov) => f(pov)
-        }
-    }
+  private def WithPovAsBoard(id: GameId)(f: Pov => Fu[Result])(using ctx: Context)(using Me) =
+    WithPov(id): pov =>
+      NoBot:
+        if !lila.game.Game.isBoardCompatible(pov.game) then
+          BadRequest(jsonError("This game cannot be played with the Board API."))
+        else f(pov)
 
-  def botOnline =
-    Open { implicit ctx =>
-      env.user.repo.botsByIds(env.bot.onlineApiUsers.get) map { users =>
-        Ok(views.html.user.bots(users))
-      }
-    }
-}
+  private def WithPov(id: GameId)(f: Pov => Fu[Result])(using me: Me) =
+    env.round.proxyRepo
+      .game(id)
+      .flatMap:
+        case None => notFoundJson("No such game")
+        case Some(game) => Pov(game, me).fold(notFoundJson("Not your game").toFuccess)(f)
+
+  def botOnline = Open:
+    for
+      users <- env.bot.onlineApiUsers.getUsers
+      page <- renderPage(views.user.list.bots(users))
+    yield Ok(page)
+
+  def botOnlineApi = Anon:
+    for lines <- env.bot.onlineApiUsers.getNdJson(getInt("nb") | 100)
+    yield Ok(lines).as(NDJSON).publicCache(env.bot.onlineApiUsers.cacheTtl)

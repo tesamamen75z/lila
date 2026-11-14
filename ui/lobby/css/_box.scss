@@ -33,7 +33,6 @@
     }
 
     .user-link {
-      padding-left: -1em;
       font-weight: bold;
       color: $c-font-dim;
     }
@@ -47,12 +46,11 @@
       @extend %nowrap-ellipsis;
 
       padding: 0.5em 0.4em;
-      border-top: $border;
+      border-bottom: $border;
       max-width: 21ch;
 
-      /* prevent leaderboard overflow due to long usernames */
-      &:first-child {
-        padding-left: 0.7em;
+      @media (max-width: at-most($x-small)) {
+        max-width: 18ch;
       }
 
       &.name a {
@@ -67,25 +65,66 @@
       }
     }
 
+    tr:last-child td {
+      border-bottom: none;
+    }
+
     tr:nth-child(even) {
       background: $c-bg-zebra;
     }
   }
 
-  &__leaderboard,
-  &__winners {
-    td:first-child {
-      @extend %ellipsis;
+  &__blog .lobby__box__top {
+    border-bottom: $border;
+  }
+
+  .progress-td {
+    padding: 0.3em 0.4em;
+  }
+
+  .progress {
+    border-radius: 2em;
+    display: block;
+    position: relative;
+    width: 30ch;
+    height: 1.25em;
+    background: rgb(from $c-bg-page r g b / calc(alpha * 0.6));
+
+    @include if-light {
+      background: rgb(from $c-shade r g b / calc(alpha * 0.6));
     }
 
-    td:last-child {
-      text-align: right;
-      padding-right: 0.7em;
+    @include if-transp {
+      background: rgb(from $c-bg r g b / calc(alpha * 0.6));
+    }
+
+    overflow: hidden;
+
+    @media (max-width: at-most($x-small)) {
+      max-width: 23ch;
+      margin: auto;
+    }
+
+    @media (max-width: at-most($xx-small)) {
+      max-width: 16ch;
     }
   }
 
-  &__forum .lobby__box__top,
-  &__blog .lobby__box__top {
-    border-bottom: $border;
+  .progress__bar {
+    border-radius: 2em;
+    display: block;
+    height: 100%;
+    background: rgb(from $c-primary r g b / calc(alpha * 0.22));
+  }
+
+  .progress__text {
+    @include inline-start(1.5ch);
+
+    position: absolute;
+    color: $c-font;
+    font-size: 0.9em;
+    top: 0;
+    width: 100%;
+    z-index: 3;
   }
 }

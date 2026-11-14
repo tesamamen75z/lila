@@ -1,40 +1,40 @@
+import type { MouchEvent } from '@lichess-org/chessground/types';
 import { h } from 'snabbdom';
-import * as round from '../round';
-import { drag, crazyKeys, pieceRoles } from './crazyCtrl';
-import * as cg from 'chessground/types';
-import RoundController from '../ctrl';
-import { onInsert } from '../util';
-import { Position } from '../interfaces';
+
+import type { TopOrBottom } from 'lib/game';
+import { onInsert, type LooseVNode } from 'lib/view';
+
+import type RoundController from '../ctrl';
+import { plyStep } from '../util';
+import { crazyKeys, drag, pieceRoles } from './crazyCtrl';
 
 const eventNames = ['mousedown', 'touchstart'];
 
-export default function pocket(ctrl: RoundController, color: Color, position: Position) {
-  const step = round.plyStep(ctrl.data, ctrl.ply);
-  if (!step.crazy) return;
-  const droppedRole = ctrl.justDropped,
-    preDropRole = ctrl.preDrop,
-    pocket = step.crazy.pockets[color === 'white' ? 0 : 1],
-    usablePos = position === (ctrl.flip ? 'top' : 'bottom'),
-    usable = usablePos && !ctrl.replaying() && ctrl.isPlaying(),
-    activeColor = color === ctrl.data.player.color;
+export default function pocket(ctrl: RoundController, color: Color, position: TopOrBottom): LooseVNode {
+  const step = plyStep(ctrl.data, ctrl.ply);
+  if (!step.crazy) return undefined;
+  const pocket = step.crazy.pockets[color === 'white' ? 0 : 1];
+  const usablePos = position === (ctrl.flip ? 'top' : 'bottom');
+  const usable = usablePos && !ctrl.replaying() && ctrl.isPlaying();
+  const activeColor = color === ctrl.data.player.color;
   const capturedPiece = ctrl.justCaptured;
-  const captured = capturedPiece && (capturedPiece['promoted'] ? 'pawn' : capturedPiece.role);
+  const captured = capturedPiece && (capturedPiece.promoted ? 'pawn' : capturedPiece.role);
   return h(
     'div.pocket.is2d.pocket-' + position,
     {
       class: { usable },
       hook: onInsert(el =>
         eventNames.forEach(name =>
-          el.addEventListener(name, (e: cg.MouchEvent) => {
-            if (position === (ctrl.flip ? 'top' : 'bottom') && crazyKeys.length == 0) drag(ctrl, e);
-          })
-        )
+          el.addEventListener(name, (e: MouchEvent) => {
+            if (position === (ctrl.flip ? 'top' : 'bottom') && crazyKeys.length === 0) drag(ctrl, e);
+          }),
+        ),
       ),
     },
     pieceRoles.map(role => {
       let nb = pocket[role] || 0;
       if (activeColor) {
-        if (droppedRole === role) nb--;
+        if (ctrl.justDropped === role) nb--;
         if (captured === role) nb++;
       }
       return h(
@@ -42,15 +42,11 @@ export default function pocket(ctrl: RoundController, color: Color, position: Po
         h(
           'div.pocket-c2',
           h('piece.' + role + '.' + color, {
-            class: { premove: activeColor && preDropRole === role },
-            attrs: {
-              'data-role': role,
-              'data-color': color,
-              'data-nb': nb,
-            },
-          })
-        )
+            class: { premove: activeColor && ctrl.preDrop === role },
+            attrs: { 'data-role': role, 'data-color': color, 'data-nb': nb },
+          }),
+        ),
       );
-    })
+    }),
   );
 }

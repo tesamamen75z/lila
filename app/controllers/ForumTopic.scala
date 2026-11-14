@@ -1,115 +1,123 @@
 package controllers
 
-import cats.implicits._
-import play.api.libs.json._
-import scala.concurrent.duration._
-import views._
+import play.api.libs.json.*
 
-import lila.app._
-import lila.common.{ HTTPRequest, IpAddress }
-import lila.user.Holder
+import lila.app.{ *, given }
+import lila.common.Json.given
+import lila.core.id.{ ForumCategId, ForumTopicId, ForumTopicSlug }
+import lila.forum.ForumCateg.diagnosticId
+import lila.forum.ForumTopic.problemReportSlug
 
-final class ForumTopic(env: Env) extends LilaController(env) with ForumController {
+final class ForumTopic(env: Env) extends LilaController(env) with ForumController:
 
-  private val CreateRateLimit =
-    new lila.memo.RateLimit[IpAddress](2, 5.minutes, key = "forum.topic")
-
-  def form(categSlug: String) =
-    Auth { implicit ctx => me =>
-      NoBot {
-        NotForKids {
-          OptionFuOk(env.forum.categRepo bySlug categSlug) { categ =>
-            categ.team.?? { env.team.cached.isLeader(_, me.id) } flatMap { inOwnTeam =>
-              forms.anyCaptcha map { html.forum.topic.form(categ, forms.topic(me, inOwnTeam), _) }
-            }
+  def form(categId: ForumCategId) = Auth { _ ?=> me ?=>
+    NoBot:
+      NotForKids:
+        FoundPage(env.forum.categRepo.byId(categId)): categ =>
+          categ.team.so(env.team.api.isLeader).map { inOwnTeam =>
+            views.forum.topic.form(categ, forms.topic(inOwnTeam), anyCaptcha)
           }
-        }
-      }
-    }
+  }
 
-  def create(categSlug: String) =
-    AuthBody { implicit ctx => me =>
-      NoBot {
-        CategGrantWrite(categSlug) {
-          implicit val req = ctx.body
-          OptionFuResult(env.forum.categRepo bySlug categSlug) { categ =>
-            categ.team.?? { env.team.cached.isLeader(_, me.id) } flatMap { inOwnTeam =>
-              forms
-                .topic(me, inOwnTeam)
-                .bindFromRequest()
-                .fold(
-                  err =>
-                    forms.anyCaptcha map { captcha =>
-                      BadRequest(html.forum.topic.form(categ, err, captcha))
-                    },
-                  data =>
-                    CreateRateLimit(HTTPRequest ipAddress ctx.req) {
-                      topicApi.makeTopic(categ, data, me) map { topic =>
-                        Redirect(routes.ForumTopic.show(categ.slug, topic.slug, 1))
-                      }
-                    }(rateLimitedFu)
-                )
-            }
+  def create(categId: ForumCategId) = AuthBody { ctx ?=> me ?=>
+    NoBot:
+      CategGrantWrite(categId):
+        Found(env.forum.categRepo.byId(categId)): categ =>
+          categ.team.so(env.team.api.isLeader).flatMap { inOwnTeam =>
+            bindForm(forms.topic(inOwnTeam))(
+              err => BadRequest.page(views.forum.topic.form(categ, err, anyCaptcha)),
+              data =>
+                limit.forumTopic(ctx.ip, rateLimited):
+                  for
+                    topic <- topicApi.makeTopic(categ, data)
+                    url = routes.ForumTopic.show(categ.id, topic.slug, 1).url
+                    ref = lila.forum.picRef(topic.lastPostId)
+                    _ <- env.memo.picfitApi.addRef(Markdown(data.post.text), ref, url.some)
+                    _ = discard(env.report.api.automodComms(data.automodText, url))
+                  yield Redirect(url)
+            )
           }
-        }
-      }
-    }
+  }
 
-  def show(categSlug: String, slug: String, page: Int) =
-    Open { implicit ctx =>
-      NotForKids {
-        OptionFuOk(topicApi.show(categSlug, slug, page, ctx.me)) { case (categ, topic, posts) =>
-          for {
-            unsub    <- ctx.userId ?? env.timeline.status(s"forum:${topic.id}")
-            canWrite <- isGrantedWrite(categSlug)
-            inOwnTeam <- ~(categ.team, ctx.me).mapN { case (teamId, me) =>
-              env.team.cached.isLeader(teamId, me.id)
-            }
-            form <- ctx.me.ifTrue(
-              !posts.hasNextPage && canWrite && topic.open && !topic.isOld
-            ) ?? { me => forms.postWithCaptcha(me, inOwnTeam) map some }
-            canModCateg <- isGrantedMod(categ.slug)
-            _           <- env.user.lightUserApi preloadMany posts.currentPageResults.flatMap(_.userId)
-          } yield html.forum.topic.show(categ, topic, posts, form, unsub, canModCateg = canModCateg)
-        }
-      }
-    }
+  def show(categId: ForumCategId, slug: ForumTopicSlug, page: Int) = Open:
+    NotForKids:
+      Found(topicApi.show(categId, slug, page)): (categ, topic, posts) =>
+        if categId == diagnosticId &&
+          !ctx.userId.exists(me => slug.value.startsWith(me.value)) &&
+          !isGrantedOpt(_.ModerateForum) &&
+          !isGrantedOpt(_.Diagnostics)
+        then notFound
+        else
+          for
+            unsub <- ctx.useMe(env.timeline.status(s"forum:${topic.id}"))
+            canRead <- access.isGrantedRead(categ.id)
+            canWrite <- access.isGrantedWrite(categ.id, tryingToPostAsMod = true)
+            canModCateg <- access.isGrantedMod(categ.id)
+            replyBlocked <- ctx.useMe(access.isReplyBlockedOnUBlog(topic, canModCateg))
+            inOwnTeam <- ctx.useMe(categ.team.so(env.team.api.isLeader))
+            form = ctx.me
+              .filter(_ => canWrite && topic.open && !topic.isOld && !replyBlocked)
+              .soUse: _ ?=>
+                forms.postWithCaptcha(inOwnTeam).some
+            _ <- env.user.lightUserApi.preloadMany(posts.currentPageResults.flatMap(_.post.userId))
+            res <-
+              if canRead then
+                Ok.page(
+                  views.forum.topic.show(categ, topic, posts, form, unsub, canModCateg, None, replyBlocked)
+                ).map(_.withCanonical(routes.ForumTopic.show(categ.id, topic.slug, page)))
+              else notFound
+          yield res
 
-  def close(categSlug: String, slug: String) =
-    Auth { implicit ctx => me =>
-      CategGrantMod(categSlug) {
-        OptionFuRedirect(topicApi.show(categSlug, slug, 1, ctx.me)) { case (categ, topic, pag) =>
-          topicApi.toggleClose(categ, topic, Holder(me)) inject
-            routes.ForumTopic.show(categSlug, slug, pag.nbPages)
-        }
-      }
-    }
+  def close(categId: ForumCategId, slug: ForumTopicSlug) = Auth { _ ?=> me ?=>
+    TopicGrantModBySlug(categId, slug):
+      Found(topicApi.show(categId, slug, 1)): (categ, topic, pag) =>
+        for _ <- topicApi.toggleClose(categ, topic)
+        yield Redirect(routes.ForumTopic.show(categId, slug, pag.nbPages))
+  }
 
-  def hide(categSlug: String, slug: String) =
-    Secure(_.ModerateForum) { implicit ctx => me =>
-      OptionFuRedirect(topicApi.show(categSlug, slug, 1, ctx.me)) { case (categ, topic, pag) =>
-        topicApi.toggleHide(categ, topic, me) inject
-          routes.ForumTopic.show(categSlug, slug, pag.nbPages)
-      }
+  def sticky(categId: ForumCategId, slug: ForumTopicSlug) = Auth { _ ?=> me ?=>
+    access.isGrantedMod(categId).flatMap { granted =>
+      if granted || isGranted(_.ModerateForum) || isGrantedOpt(_.StickyPosts) then
+        Found(topicApi.show(categId, slug, 1)): (categ, topic, pag) =>
+          topicApi
+            .toggleSticky(categ, topic)
+            .inject(Redirect(routes.ForumTopic.show(categId, slug, pag.nbPages)))
+      else Forbidden("You cannot sticky this post")
     }
-
-  def sticky(categSlug: String, slug: String) =
-    Auth { implicit ctx => me =>
-      CategGrantMod(categSlug) {
-        OptionFuRedirect(topicApi.show(categSlug, slug, 1, ctx.me)) { case (categ, topic, pag) =>
-          topicApi.toggleSticky(categ, topic, Holder(me)) inject
-            routes.ForumTopic.show(categSlug, slug, pag.nbPages)
-        }
-      }
-    }
+  }
 
   /** Returns a list of the usernames of people participating in a forum topic conversation
     */
-  def participants(topicId: String) =
-    Auth { _ => _ =>
-      for {
-        userIds   <- postApi allUserIds topicId
-        usernames <- env.user.repo usernamesByIds userIds
-      } yield Ok(Json.toJson(usernames.sortBy(_.toLowerCase)))
-    }
-}
+  def participants(topicId: ForumTopicId) = Auth { _ ?=> _ ?=>
+    for
+      userIds <- postApi.allUserIds(topicId)
+      usernames <- env.user.repo.usernamesByIds(userIds)
+    yield Ok(Json.toJson(usernames.sortBy(_.value.toLowerCase)))
+  }
+
+  def diagnostic = AuthBody { ctx ?=> me ?=>
+    NoBot:
+      val slug = problemReportSlug(me.userId)
+      bindForm(env.forum.forms.diagnostic)(
+        err => jsonFormError(err),
+        data =>
+          env.forum.topicRepo
+            .existsByTree(diagnosticId, slug)
+            .flatMap:
+              if _ then showDiagnostic(slug, data.text, ~data.plaintext)
+              else
+                FoundPage(env.forum.categRepo.byId(diagnosticId)): categ =>
+                  views.forum.topic
+                    .makeDiagnostic(categ, forms.topic(false), anyCaptcha, data.text, ~data.plaintext)
+      )
+  }
+
+  def clearDiagnostic(slug: ForumTopicSlug) = Auth { _ ?=> me ?=>
+    if slug != problemReportSlug(me.userId) && !isGranted(_.ModerateForum) then notFound
+    else env.forum.topicApi.removeTopic(diagnosticId, slug).inject(Redirect(routes.ForumCateg.index))
+  }
+
+  private def showDiagnostic(slug: ForumTopicSlug, formText: String, plaintext: Boolean)(using Context, Me) =
+    FoundPage(topicApi.showLastPage(diagnosticId, slug)): (categ, topic, posts) =>
+      val form = forms.postWithCaptcha(false).some
+      views.forum.topic.show(categ, topic, posts, form, None, true, formText.some, plaintext = plaintext)

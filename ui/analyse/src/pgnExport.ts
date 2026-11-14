@@ -1,56 +1,39 @@
-import AnalyseCtrl from './ctrl';
+import { INITIAL_FEN } from 'chessops/fen';
 import { h } from 'snabbdom';
-import { initialFen, fixCrazySan } from 'chess';
-import { MaybeVNodes } from './interfaces';
+
+import { fixCrazySan, plyToTurn } from 'lib/game/chess';
+import { plyPrefix, renderNodesTxt } from 'lib/game/nodePGN';
+import type { TreeNodeLite } from 'lib/tree/types';
+import { type MaybeVNodes } from 'lib/view';
+
+import type AnalyseCtrl from './ctrl';
+import type { Game } from './interfaces';
 
 interface PgnNode {
   ply: Ply;
   san?: San;
 }
 
-function plyPrefix(node: Tree.Node): string {
-  return `${Math.floor((node.ply + 1) / 2)}${node.ply % 2 === 1 ? '. ' : '... '}`;
-}
-
-function renderNodesTxt(node: Tree.Node, forcePly: boolean): string {
-  if (node.children.length === 0) return '';
-
-  let s = '';
-  const first = node.children[0];
-  if (forcePly || first.ply % 2 === 1) s += plyPrefix(first);
-  s += fixCrazySan(first.san!);
-
-  for (let i = 1; i < node.children.length; i++) {
-    const child = node.children[i];
-    s += ` (${plyPrefix(child)}${fixCrazySan(child.san!)}`;
-    const variation = renderNodesTxt(child, false);
-    if (variation) s += ' ' + variation;
-    s += ')';
-  }
-
-  const mainline = renderNodesTxt(first, node.children.length > 1);
-  if (mainline) s += ' ' + mainline;
-
-  return s;
-}
-
-export function renderFullTxt(ctrl: AnalyseCtrl): string {
-  const g = ctrl.data.game;
-  let txt = renderNodesTxt(ctrl.tree.root, true);
+function renderPgnTags(game: Game, headers?: Map<string, string>): string {
+  if (headers)
+    return [...headers].map(([name, value]) => `[${name} ${JSON.stringify(value)}]`).join('\n') + '\n\n';
+  let txt = '';
   const tags: Array<[string, string]> = [];
-  if (g.variant.key !== 'standard') tags.push(['Variant', g.variant.name]);
-  if (g.initialFen && g.initialFen !== initialFen) tags.push(['FEN', g.initialFen]);
-  if (tags.length)
-    txt =
-      tags
-        .map(function (t) {
-          return '[' + t[0] + ' "' + t[1] + '"]';
-        })
-        .join('\n') +
-      '\n\n' +
-      txt;
+  if (game.variant.key !== 'standard') tags.push(['Variant', game.variant.name]);
+  if (game.initialFen && game.initialFen !== INITIAL_FEN) tags.push(['FEN', game.initialFen]);
+  if (tags.length) txt = tags.map(t => '[' + t[0] + ' "' + t[1] + '"]').join('\n') + '\n\n';
   return txt;
 }
+
+export const renderFullTxt = (
+  ctrl: AnalyseCtrl,
+  root: TreeNodeLite = ctrl.tree.root,
+  includeAnnotations = false,
+  headers?: Map<string, string>,
+): string =>
+  renderPgnTags(ctrl.data.game, headers) +
+  renderNodesTxt(root, true, true, includeAnnotations) +
+  (headers ? ` ${headers.get('Result') ?? '*'}` : '');
 
 export function renderNodesHtml(nodes: PgnNode[]): MaybeVNodes {
   if (!nodes[0]) return [];
@@ -64,4 +47,27 @@ export function renderNodesHtml(nodes: PgnNode[]): MaybeVNodes {
     tags.push(h('san', fixCrazySan(node.san!)));
   });
   return tags;
+}
+
+export function renderNodesPgn(game: Game, nodeList: TreeNodeLite[], includeSubVariations: boolean): string {
+  const nonRootNodes = nodeList.filter(node => node.san);
+  let pgn = '';
+
+  if (nonRootNodes.length) {
+    const first = nonRootNodes[0];
+    pgn += `${plyPrefix(first)}${first.san} `;
+
+    for (let i = 1; i < nonRootNodes.length; i++) {
+      const node = nonRootNodes[i];
+      if (node.ply % 2 === 1) {
+        pgn += plyToTurn(node.ply) + '. ';
+      }
+
+      pgn += fixCrazySan(node.san!) + ' ';
+    }
+  }
+
+  pgn += renderNodesTxt(nodeList[nodeList.length - 1], nonRootNodes.length === 0, includeSubVariations);
+
+  return pgn ? renderPgnTags(game) + pgn : '';
 }

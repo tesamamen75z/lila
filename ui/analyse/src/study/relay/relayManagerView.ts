@@ -1,120 +1,112 @@
-import { h, VNode } from 'snabbdom';
-import RelayCtrl from './relayCtrl';
-import { dataIcon, bind, onInsert } from '../../util';
-import { LogEvent } from './interfaces';
+import { memoize } from 'lib';
+import { licon } from 'lib/licon';
+import { hl, bind, onInsert, dataIcon, type MaybeVNode } from 'lib/view';
 
-export default function (ctrl: RelayCtrl): VNode | undefined {
-  return ctrl.members.canContribute()
-    ? h(
-        'div.relay-admin',
-        {
-          hook: onInsert(_ => lichess.loadCssPath('analyse.relay-admin')),
-        },
-        [
-          h('h2', [
-            h('span.text', { attrs: dataIcon('') }, 'Broadcast manager'),
-            h('a', {
-              attrs: {
-                href: `/broadcast/round/${ctrl.id}/edit`,
-                'data-icon': '',
-              },
-            }),
+import type StudyCtrl from '../studyCtrl';
+import { studySideNodes } from '../studyView';
+import { broadcasterDeepLink } from './deepLink';
+import type { LogEvent } from './interfaces';
+import type RelayCtrl from './relayCtrl';
+
+export default function (ctrl: RelayCtrl, study: StudyCtrl): MaybeVNode {
+  const contributor = study.members.canContribute();
+  const sync = ctrl.data.sync;
+  return contributor || study.data.admin
+    ? hl('div.relay-admin__container', [
+        contributor &&
+          hl('div.relay-admin', { hook: onInsert(_ => site.asset.loadCss({ key: 'analyse.relay-admin' })) }, [
+            hl('h2', [
+              hl('span.text', { attrs: dataIcon(licon.RadioTower) }, 'Broadcast manager'),
+              hl('a', {
+                attrs: { href: `/broadcast/round/${study.data.id}/edit`, 'data-icon': licon.Gear },
+              }),
+            ]),
+            sync?.url || sync?.ids || sync?.urls || sync?.users
+              ? (sync.ongoing ? stateOn : stateOff)(ctrl)
+              : statePush(ctrl),
+            renderLog(ctrl),
           ]),
-          ctrl.data.sync?.url || ctrl.data.sync?.ids ? (ctrl.data.sync.ongoing ? stateOn : stateOff)(ctrl) : null,
-          renderLog(ctrl),
-        ]
-      )
+        (contributor || study.data.admin) && studySideNodes(study, false),
+      ])
     : undefined;
 }
 
-function logSuccess(e: LogEvent) {
-  return [e.moves ? h('strong', '' + e.moves) : e.moves, ` new move${e.moves > 1 ? 's' : ''}`];
-}
+const logSuccess = (e: LogEvent) =>
+  e.moves ? [hl('strong', e.moves), ` new move${e.moves > 1 ? 's' : ''}`] : ['Nothing new'];
 
 function renderLog(ctrl: RelayCtrl) {
-  const dateFormatter = getDateFormatter();
   const url = ctrl.data.sync?.url;
   const logLines = (ctrl.data.sync?.log || [])
     .slice(0)
     .reverse()
     .map(e => {
       const err =
-        e.error &&
-        h(
-          'a',
-          url
-            ? {
-                attrs: {
-                  href: url,
-                  target: '_blank',
-                  rel: 'noopener nofollow',
-                },
-              }
-            : {},
-          e.error
-        );
-      return h(
+        e.error && hl('a', url ? { attrs: { href: url, target: '_blank', rel: 'nofollow' } } : {}, e.error);
+      return hl(
         'div' + (err ? '.err' : ''),
-        {
-          key: e.at,
-          attrs: dataIcon(err ? '' : ''),
-        },
-        [h('div', [...(err ? [err] : logSuccess(e)), h('time', dateFormatter(new Date(e.at)))])]
+        { key: e.at, attrs: dataIcon(err ? licon.CautionCircle : licon.Checkmark) },
+        [hl('div', [err ? [err] : logSuccess(e), hl('time', dateFormatter()(new Date(e.at)))])],
       );
     });
-  if (ctrl.loading()) logLines.unshift(h('div.load', [h('i.ddloader'), 'Polling source...']));
-  return h('div.log', logLines);
+  if (ctrl.loading()) logLines.unshift(hl('div.load', [hl('icon.ddloader'), 'Polling source...']));
+  return hl('div.log', logLines);
 }
 
 function stateOn(ctrl: RelayCtrl) {
-  const url = ctrl.data.sync?.url;
-  const ids = ctrl.data.sync?.ids;
-  return h(
-    'div.state.on.clickable',
-    {
-      hook: bind('click', _ => ctrl.setSync(false)),
-      attrs: dataIcon(''),
-    },
+  const sync = ctrl.data.sync;
+  return hl(
+    'button.state.on.clickable',
+    { hook: bind('click', _ => ctrl.setSync(false)), attrs: dataIcon(licon.ChasingArrows) },
     [
-      h(
-        'div',
-        url
-          ? ['Connected to source', h('br'), url.replace(/https?:\/\//, '')]
-          : ids
-          ? ['Connected to', h('br'), ids.length, ' game(s)']
-          : []
-      ),
-    ]
+      hl('span', [
+        'Connected ',
+        sync && [
+          !!sync.delay && `with ${sync.delay}s delay `,
+          sync.url
+            ? ['to', hl('br'), 'single URL source']
+            : sync.ids
+              ? ['to', hl('br'), sync.ids.length, ' game(s)']
+              : sync.users
+                ? [
+                    'to',
+                    hl('br'),
+                    sync.users.length > 4 ? `${sync.users.length} users` : sync.users.join(' '),
+                  ]
+                : sync.urls && ['to', hl('br'), sync.urls.length, ' sources'],
+          !!sync.filter && ` (round ${sync.filter})`,
+          !!sync.slices && ` (slice ${sync.slices})`,
+        ],
+      ]),
+    ],
   );
 }
 
-function stateOff(ctrl: RelayCtrl) {
-  return h(
-    'div.state.off.clickable',
-    {
-      hook: bind('click', _ => ctrl.setSync(true)),
-      attrs: dataIcon(''),
-    },
-    [h('div.fat', 'Click to connect')]
+const stateOff = (ctrl: RelayCtrl) =>
+  hl(
+    'button.state.off.clickable',
+    { hook: bind('click', _ => ctrl.setSync(true)), attrs: dataIcon(licon.PlayTriangle) },
+    [hl('span.fat', 'Connect to source')],
   );
-}
 
-let cachedDateFormatter: (date: Date) => string;
+const statePush = (ctrl: RelayCtrl) =>
+  hl('div.state.push', { attrs: dataIcon(licon.UploadCloud) }, [
+    hl('span', [
+      'Listening to ',
+      hl('a', { attrs: { href: '/broadcast/app' } }, 'Broadcaster App'),
+      hl('br'),
+      hl('small', [
+        hl('a', { attrs: { href: broadcasterDeepLink(ctrl.round.url) } }, 'Open this round in the app'),
+      ]),
+    ]),
+  ]);
 
-function getDateFormatter(): (date: Date) => string {
-  if (!cachedDateFormatter)
-    cachedDateFormatter =
-      window.Intl && Intl.DateTimeFormat
-        ? new Intl.DateTimeFormat(document.documentElement!.lang, {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: 'numeric',
-            second: 'numeric',
-          }).format
-        : function (d) {
-            return d.toLocaleString();
-          };
-
-  return cachedDateFormatter;
-}
+const dateFormatter = memoize(
+  () =>
+    new Intl.DateTimeFormat(site.displayLocale, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    }).format,
+);

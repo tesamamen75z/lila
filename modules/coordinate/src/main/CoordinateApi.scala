@@ -1,30 +1,28 @@
 package lila.coordinate
 
-import reactivemongo.api.bson._
-import reactivemongo.api.ReadPreference
+import chess.{ ByColor, Color }
+import reactivemongo.api.bson.*
 
-import lila.user.User
-import lila.db.dsl._
+import lila.db.dsl.{ *, given }
 
-final class CoordinateApi(scoreColl: Coll)(implicit ec: scala.concurrent.ExecutionContext) {
+final class CoordinateApi(scoreColl: Coll)(using Executor):
 
-  implicit private val scoreBSONHandler = Macros.handler[Score]
+  private given BSONDocumentHandler[Score] = Macros.handler[Score]
 
-  def getScore(userId: User.ID): Fu[Score] =
-    scoreColl.byId[Score](userId) map (_ | Score(userId))
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    scoreColl.delete.one(bid(del.id)).void
 
-  def addScore(userId: User.ID, white: Boolean, hits: Int): Funit =
+  def getScore(userId: UserId): Fu[Score] =
+    scoreColl.byId[Score](userId).dmap(_ | Score(userId))
+
+  def addScore(mode: CoordMode, color: Color, hits: Int)(using me: MyId): Funit =
     scoreColl.update
       .one(
-        $id(userId),
-        $push(
-          $doc(
-            "white" -> BSONDocument(
-              "$each"  -> (white ?? List(BSONInteger(hits))),
-              "$slice" -> -20
-            ),
-            "black" -> BSONDocument(
-              "$each"  -> (!white ?? List(BSONInteger(hits))),
+        bid(me),
+        push(
+          bdoc(
+            s"${color.name}${(mode == CoordMode.nameSquare).so("NameSquare")}" -> bdoc(
+              "$each" -> barr(hits),
               "$slice" -> -20
             )
           )
@@ -33,30 +31,22 @@ final class CoordinateApi(scoreColl: Coll)(implicit ec: scala.concurrent.Executi
       )
       .void
 
-  def bestScores(userIds: List[User.ID]): Fu[Map[User.ID, chess.Color.Map[Int]]] =
+  def bestScores(userIds: List[UserId]): Fu[Map[UserId, ByColor[Int]]] =
     scoreColl
-      .aggregateList(
-        maxDocs = Int.MaxValue,
-        readPreference = ReadPreference.secondaryPreferred
-      ) { framework =>
-        import framework._
-        Match($doc("_id" $in userIds)) -> List(
+      .aggregateList(maxDocs = Int.MaxValue, _.sec): framework =>
+        import framework.*
+        Match(bdoc("_id".in(userIds))) -> List(
           Project(
-            $doc(
-              "white" -> $doc("$max" -> "$white"),
-              "black" -> $doc("$max" -> "$black")
+            bdoc(
+              "white" -> bdoc("$max" -> "$white"),
+              "black" -> bdoc("$max" -> "$black")
             )
           )
         )
-      }
-      .map {
-        _.flatMap { doc =>
-          doc.string("_id") map {
-            _ -> chess.Color.Map(
-              ~doc.int("white"),
-              ~doc.int("black")
-            )
-          }
-        }.toMap
-      }
-}
+      .map:
+        _.flatMap: doc =>
+          doc
+            .getAsOpt[UserId]("_id")
+            .map:
+              _ -> ByColor(~doc.int("white"), ~doc.int("black"))
+        .toMap

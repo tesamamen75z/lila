@@ -1,6 +1,4 @@
-package lila
+package lila.learn
 
-package object learn extends PackageObject {
-
-  private[learn] val logger = lila.log("learn")
-}
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

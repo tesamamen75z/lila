@@ -1,6 +1,6 @@
-@import 'car-font';
 @import 'race';
 @import 'countdown';
+@import 'zen';
 
 .racer {
   &__race {
@@ -8,16 +8,16 @@
   }
 
   display: grid;
-  grid-row-gap: $block-gap;
-  grid-column-gap: $block-gap;
-  grid-template-areas: 'board' 'race' 'side';
+  gap: $block-gap;
+  grid-template-areas: 'board' 'race' 'side' 'history';
 
-  @include breakpoint($mq-col2) {
-    grid-template-columns: $col2-uniboard-width $col2-uniboard-table;
+  @include mq-at-least-col2 {
+    grid-template-columns: var(---col2-uniboard-width) $col2-uniboard-table;
     grid-template-rows: auto fit-content(0);
     grid-template-areas:
-      'board side'
-      'race  race';
+      'board  side'
+      'race   race'
+      'history history';
   }
 
   &__started {
@@ -26,7 +26,7 @@
     justify-content: stretch;
     text-align: center;
 
-    i {
+    icon {
       font-size: 15em;
       line-height: 1.2em;
     }
@@ -44,14 +44,7 @@
   }
 
   .puz-side__top::before {
-    background-image: img-url('racer/checkered-flag.svg');
-  }
-
-  .puz-side__link > div {
-    display: flex;
-    input {
-      flex: 1 1 auto;
-    }
+    background-image: url('../images/racer/checkered-flag.svg');
   }
 
   .puz-side__start {
@@ -65,24 +58,29 @@
 
   &__skip {
     @extend %flex-column;
-    align-items: center;
     @include transition;
+
+    align-items: center;
     outline: none;
+
     &.disabled {
       opacity: 0;
       cursor: default;
     }
+
     &::before {
       content: '';
-      background-image: img-url('racer/gear-stick.svg');
+      background-image: url('../images/racer/gear-stick.svg');
       width: 4ch;
       height: 4ch;
       margin-bottom: 0.6ch;
     }
+
     &:hover::before {
       transform: scaleX(-1);
     }
   }
+
   &--pre .racer__skip {
     cursor: not-allowed;
   }
@@ -94,21 +92,29 @@
   &__pre__message {
     &--with-skip {
       @extend %flex-center-nowrap;
+
       justify-content: space-between;
     }
+
     &__pov {
       color: $c-brag;
       margin: 1em 0;
-      @include breakpoint($mq-col2) {
+
+      @include mq-at-least-col2 {
         margin: 1em 0 0 0;
       }
     }
+  }
+
+  &__rematch {
+    white-space: normal;
   }
 
   &__post__next {
     &__new {
       margin: 2em 0 1em 0;
     }
+
     &__button {
       width: 100%;
     }

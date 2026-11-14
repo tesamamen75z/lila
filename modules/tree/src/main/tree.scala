@@ -1,34 +1,143 @@
 package lila.tree
 
-import chess.Centis
-import chess.format.pgn.{ Glyph, Glyphs }
-import chess.format.{ FEN, Uci, UciCharPair }
-import chess.opening.FullOpening
-import chess.Pos
-import chess.variant.Crazyhouse
-import play.api.libs.json._
+import alleycats.Zero
+import chess.format.pgn.{ Comment as CommentStr, Glyph as BaseGlyph, Glyphs as BaseGlyphs }
+import chess.format.{ Fen, Uci, UciCharPair, UciPath }
+import chess.variant.{ Crazyhouse, Variant }
+import chess.{ Centis, Ply, Square }
+import play.api.libs.json.*
+import scalalib.StringOps.softCleanUp
+import scalalib.ThreadLocalRandom
+import scalalib.json.Json.given
 
-import lila.common.Json._
+import scala.annotation.tailrec
+import scala.util.matching.Regex
 
-sealed trait Node {
-  def ply: Int
-  def fen: FEN
-  def check: Boolean
-  // None when not computed yet
-  def dests: Option[Map[Pos, List[Pos]]]
-  def drops: Option[List[Pos]]
+import lila.core.LightUser
+import lila.tree.Node.{ Comment, Comments, Gamebook, Shapes }
+
+/* The mainline is the first node. If the first node has `forceVariation` then all nodes are variations.
+ * problem: we need to reorder the nodes when a variation is promoted to mainline.
+ */
+opaque type Branches = List[Branch]
+object Branches:
+
+  def apply(branches: List[Branch]): Branches = branches
+  val empty: Branches = Nil
+  given Zero[Branches] = Zero(empty)
+
+  extension (nodes: Branches)
+    def toList: List[Branch] = nodes
+    def map(f: Update[List[Branch]]): Branches = f(nodes)
+    def first: Option[Branch] = nodes.headOption
+    def mainlineFirst: Option[Branch] = first.filterNot(_.forceVariation)
+    def variationsOnly: List[Branch] = nodes match
+      case first :: rest => if first.forceVariation then nodes else rest
+      case Nil => Nil
+    def isEmpty = nodes.isEmpty
+    def nonEmpty = !isEmpty
+
+    def get(id: UciCharPair): Option[Branch] = nodes.find(_.id == id)
+    def hasNode(id: UciCharPair): Boolean = nodes.exists(_.id == id)
+
+    def nodeAt(path: UciPath): Option[Branch] =
+      path.split.flatMap: (head, rest) =>
+        rest.computeIds.foldLeft(get(head)): (cur, id) =>
+          cur.flatMap(_.children.get(id))
+
+    // select all nodes on that path
+    def nodesOn(path: UciPath): Vector[(Branch, UciPath)] =
+      path.split.so: (head, tail) =>
+        get(head).so: first =>
+          (first, UciPath.fromId(head)) +: first.children.nodesOn(tail).map { (n, p) =>
+            (n, p.prepend(head))
+          }
+
+    def addNodeAt(node: Branch, path: UciPath): Option[Branches] =
+      path.split.fold(addNode(node).some): (head, tail) =>
+        updateChildren(head, _.addNodeAt(node, tail))
+
+    // suboptimal due to using List instead of Vector
+    def addNode(node: Branch): Branches =
+      get(node.id).fold(nodes :+ node): prev =>
+        nodes.filterNot(_.id == node.id) :+ prev.merge(node)
+
+    // doesn't check if a node with the same ID exists!
+    def prependUnchecked(b: Branch): Branches = b :: nodes
+
+    def promoteToMainlineAt(path: UciPath): Option[Branches] =
+      path.split.fold(nodes.some): (head, tail) =>
+        for
+          node <- get(head)
+          promoted <- node.withChildren(_.promoteToMainlineAt(tail))
+        yield promoted :: nodes.filterNot(_ == node)
+
+    def promoteUpAt(path: UciPath): Option[(Branches, Boolean)] =
+      path.split.fold(Some(nodes -> false)): (head, tail) =>
+        for
+          node <- get(head)
+          mainlineNode <- nodes.first
+          (newChildren, isDone) <- node.children.promoteUpAt(tail)
+          newNode = node.copy(children = newChildren)
+        yield
+          if isDone then update(newNode) -> true
+          else if newNode.id == mainlineNode.id then update(newNode) -> false
+          else (newNode :: nodes.filterNot(newNode ==)) -> true
+
+    def updateAt(path: UciPath, f: Branch => Branch): Option[Branches] =
+      path.split.flatMap:
+        case (head, p) if p.isEmpty => updateWith(head, n => Some(f(n)))
+        case (head, tail) => updateChildren(head, _.updateAt(tail, f))
+
+    def updateAllWith(op: Branch => Branch): Branches =
+      nodes.map: n =>
+        op(n.copy(children = n.children.updateAllWith(op)))
+
+    def update(child: Branch): Branches =
+      nodes.map: n =>
+        if child.id == n.id then child else n
+
+    def updateWith(id: UciCharPair, op: Branch => Option[Branch]): Option[Branches] =
+      get(id).flatMap(op).map(update)
+
+    def updateChildren(id: UciCharPair, f: Branches => Option[Branches]): Option[Branches] =
+      updateWith(id, _.withChildren(f))
+
+    def updateMainline(f: Branch => Branch): Branches =
+      nodes match
+        case main :: others =>
+          val newNode = f(main)
+          newNode.copy(children = newNode.children.updateMainline(f)) :: others
+        case x => x
+
+    def takeMainlineWhile(f: Branch => Boolean): Branches =
+      updateMainline: node =>
+        node.children.first.fold(node): mainline =>
+          if f(mainline) then node
+          else node.withoutChildren
+
+    def countRecursive: Int =
+      nodes.foldLeft(nodes.size): (count, n) =>
+        count + n.children.countRecursive
+
+    def lastMainlineNode: Option[Node] =
+      first.map: first =>
+        first.children.lastMainlineNode | first
+
+sealed trait Node:
+  def ply: Ply
+  def fen: Fen.Full
   def eval: Option[Eval]
   def shapes: Node.Shapes
   def comments: Node.Comments
   def gamebook: Option[Node.Gamebook]
-  def glyphs: Glyphs
-  def children: List[Branch]
-  def opening: Option[FullOpening]
+  def glyphs: Node.Glyphs
+  def children: Branches
   def comp: Boolean // generated by a computer analysis
   def crazyData: Option[Crazyhouse.Data]
   def addChild(branch: Branch): Node
-  def dropFirstChild: Node
-  def clock: Option[Centis]
+  def withoutMainlineChild: Node
+  def clock: Option[Clock]
   def forceVariation: Boolean
 
   // implementation dependent
@@ -36,154 +145,352 @@ sealed trait Node {
   def moveOption: Option[Uci.WithSan]
 
   // who's color plays next
-  def color = chess.Color.fromPly(ply)
+  def color = ply.turn
 
-  def mainlineNodeList: List[Node] =
-    dropFirstChild :: children.headOption.fold(List.empty[Node])(_.mainlineNodeList)
-}
+  // list of all mainline node, with their children only containing variations
+  def mainlineNodeList: List[Node] = withoutMainlineChild :: children.mainlineFirst.so(_.mainlineNodeList)
 
 case class Root(
-    ply: Int,
-    fen: FEN,
-    check: Boolean,
-    // None when not computed yet
-    dests: Option[Map[Pos, List[Pos]]] = None,
-    drops: Option[List[Pos]] = None,
+    ply: Ply,
+    fen: Fen.Full,
     eval: Option[Eval] = None,
     shapes: Node.Shapes = Node.Shapes(Nil),
     comments: Node.Comments = Node.Comments(Nil),
     gamebook: Option[Node.Gamebook] = None,
-    glyphs: Glyphs = Glyphs.empty,
-    children: List[Branch] = Nil,
-    opening: Option[FullOpening] = None,
-    clock: Option[Centis] = None, // clock state at game start, assumed same for both players
+    glyphs: Node.Glyphs = Node.Glyphs.empty,
+    children: Branches = Branches.empty,
+    clock: Option[Clock] = None, // clock state at game start, assumed same for both players
     crazyData: Option[Crazyhouse.Data]
-) extends Node {
+) extends Node:
 
-  def idOption       = None
-  def moveOption     = None
-  def comp           = false
+  def idOption = None
+  def moveOption = None
+  def comp = false
   def forceVariation = false
 
-  def addChild(branch: Branch)     = copy(children = children :+ branch)
-  def prependChild(branch: Branch) = copy(children = branch :: children)
-  def dropFirstChild               = copy(children = if (children.isEmpty) children else children.tail)
-}
+  def addChild(child: Branch): Root = copy(children = children.addNode(child))
+  def prependChildUnchecked(branch: Branch) = copy(children = children.prependUnchecked(branch))
+  def withoutMainlineChild = copy(children = Branches(children.variationsOnly))
+
+  def withChildren(f: Branches => Option[Branches]): Option[Root] =
+    f(children).map: newChildren =>
+      copy(children = newChildren)
+
+  def withoutChildren = copy(children = Branches.empty)
+
+  def nodeAt(path: UciPath): Option[Node] =
+    if path.isEmpty then this.some else children.nodeAt(path)
+
+  def pathExists(path: UciPath): Boolean = nodeAt(path).isDefined
+
+  def setShapesAt(shapes: Shapes, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(shapes = shapes).some
+    else updateChildrenAt(path, _.setShapes(shapes))
+
+  def setCommentAt(comment: Comment, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(comments = comments.set(comment)).some
+    else updateChildrenAt(path, _.setComment(comment))
+
+  def deleteCommentAt(commentId: Comment.Id, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(comments = comments.delete(commentId)).some
+    else updateChildrenAt(path, _.deleteComment(commentId))
+
+  def setGamebookAt(gamebook: Gamebook, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(gamebook = gamebook.some).some
+    else updateChildrenAt(path, _.setGamebook(gamebook))
+
+  def toggleGlyphAt(glyph: BaseGlyph, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(glyphs = glyphs.toggle(glyph)).some
+    else updateChildrenAt(path, _.toggleGlyph(glyph))
+
+  def setClockAt(clock: Option[Clock], path: UciPath): Option[Root] =
+    if path.isEmpty then copy(clock = clock).some
+    else updateChildrenAt(path, _.withClock(clock))
+
+  def forceVariationAt(force: Boolean, path: UciPath): Option[Root] =
+    if path.isEmpty then copy(clock = clock).some
+    else updateChildrenAt(path, _.withForceVariation(force))
+
+  def updateChildrenAt(path: UciPath, f: Branch => Branch): Option[Root] =
+    withChildren(_.updateAt(path, f))
+
+  def updateMainlineLast(f: Branch => Branch): Root =
+    children.first.fold(this) { main =>
+      copy(children = children.update(main.updateMainlineLast(f)))
+    }
+
+  def clearAnnotationsRecursively =
+    copy(
+      eval = none,
+      comments = Comments(Nil),
+      shapes = Shapes(Nil),
+      glyphs = Node.Glyphs.empty,
+      children = children.updateAllWith(_.clearAnnotations)
+    )
+
+  def clearVariations =
+    copy(
+      children = children.first.fold(Branches.empty) { child =>
+        Branches(List(child.clearVariations))
+      }
+    )
+
+  // NOT `Branches` as it does not represent one mainline move and variations
+  // but only mainline moves
+  lazy val mainline: List[Branch] = children.first.so(_.mainline)
+
+  def lastMainlinePly = mainline.lastOption.fold(Ply.initial)(_.ply)
+
+  def lastMainlinePlyOf(path: UciPath) =
+    mainline
+      .zip(path.computeIds)
+      .takeWhile((node, id) => node.id == id)
+      .lastOption
+      .fold(Ply.initial)((node, _) => node.ply)
+
+  def mainlinePath = UciPath.fromIds(mainline.map(_.id))
+
+  def lastMainlineNode: Node = children.lastMainlineNode.getOrElse(this)
+
+  def takeMainlineWhile(f: Branch => Boolean) =
+    if children.first.isDefined
+    then copy(children = children.takeMainlineWhile(f))
+    else this
+
+  def merge(n: Root): Root = copy(
+    shapes = shapes ++ n.shapes,
+    comments = comments ++ n.comments,
+    gamebook = n.gamebook.orElse(gamebook),
+    glyphs = glyphs.merge(n.glyphs),
+    eval = n.eval.orElse(eval),
+    clock = n.clock.orElse(clock),
+    crazyData = n.crazyData.orElse(crazyData),
+    children = n.children.toList.foldLeft(children)(_.addNode(_))
+  )
+
+  override def toString = s"$ply $children"
+
+object Root:
+  def default(variant: Variant) =
+    Root(
+      ply = Ply.initial,
+      fen = variant.initialFen,
+      crazyData = variant.crazyhouse.option(Crazyhouse.Data.init)
+    )
+
+case class Clock(centis: Centis, trust: Option[Boolean] = none):
+  def positive = centis >= Centis(0)
 
 case class Branch(
-    id: UciCharPair,
-    ply: Int,
+    ply: Ply,
     move: Uci.WithSan,
-    fen: FEN,
-    check: Boolean,
-    // None when not computed yet
-    dests: Option[Map[Pos, List[Pos]]] = None,
-    drops: Option[List[Pos]] = None,
+    fen: Fen.Full,
     eval: Option[Eval] = None,
     shapes: Node.Shapes = Node.Shapes(Nil),
     comments: Node.Comments = Node.Comments(Nil),
     gamebook: Option[Node.Gamebook] = None,
-    glyphs: Glyphs = Glyphs.empty,
-    children: List[Branch] = Nil,
-    opening: Option[FullOpening] = None,
+    glyphs: Node.Glyphs = Node.Glyphs.empty,
+    children: Branches = Branches.empty, // Vector used in `Study.Node`, switch?
     comp: Boolean = false,
-    clock: Option[Centis] = None, // clock state after the move is played, and the increment applied
+    clock: Option[Clock] = None, // clock state after the move is played, and the increment applied
     crazyData: Option[Crazyhouse.Data],
     forceVariation: Boolean = false // cannot be mainline
-) extends Node {
+) extends Node:
 
-  def idOption   = Some(id)
+  val id = UciCharPair(move.uci)
+  def idOption = Some(id)
   def moveOption = Some(move)
 
-  def addChild(branch: Branch)     = copy(children = children :+ branch)
-  def prependChild(branch: Branch) = copy(children = branch :: children)
-  def dropFirstChild               = copy(children = if (children.isEmpty) children else children.tail)
+  // NOT `Branches` as it does not represent one mainline move and variations
+  // but only mainline moves
+  def mainline: List[Branch] =
+    mainlineReverse.reverse
+
+  /*
+   * Return all nodes in the mainline but in reverse order
+   * Could be useful as a building block for other operations
+   */
+  final def mainlineReverse: List[Branch] =
+    @tailrec
+    def loop(tree: Branch, acc: List[Branch]): List[Branch] =
+      tree.children.first match
+        case Some(child) => loop(child, tree :: acc)
+        case None => tree :: acc
+    loop(this, Nil)
+
+  def withChildren(f: Branches => Option[Branches]) =
+    f(children).map { newChildren =>
+      copy(children = newChildren)
+    }
+
+  def withoutChildren = copy(children = Branches.empty)
+
+  def addChild(branch: Branch): Branch = copy(children = children.addNode(branch))
+
+  def withClock(clock: Option[Clock]) = copy(clock = clock)
+  def withForceVariation(force: Boolean) = copy(forceVariation = force)
+
+  def isCommented = comments.value.nonEmpty
+  def setComment(comment: Comment) = copy(comments = comments.set(comment))
+  def deleteComment(commentId: Comment.Id) = copy(comments = comments.delete(commentId))
+  def deleteComments = copy(comments = Comments.empty)
+  def setGamebook(gamebook: Gamebook) = copy(gamebook = gamebook.some)
+  def setShapes(s: Shapes) = copy(shapes = s)
+  def toggleGlyph(glyph: BaseGlyph) = copy(glyphs = glyphs.toggle(glyph))
+
+  def updateMainlineLast(f: Branch => Branch): Branch =
+    children.first.fold(f(this)) { main =>
+      copy(children = children.update(main.updateMainlineLast(f)))
+    }
+
+  def clearAnnotations =
+    copy(
+      eval = none,
+      comments = Comments(Nil),
+      shapes = Shapes(Nil),
+      glyphs = Node.Glyphs.empty
+    )
+
+  def clearVariations: Branch =
+    copy(
+      children = children.first.fold(Branches.empty)(child => Branches(List(child.clearVariations)))
+    )
+
+  def prependChildUnchecked(branch: Branch) = copy(children = children.prependUnchecked(branch))
+  def withoutMainlineChild = copy(children = Branches(children.variationsOnly))
 
   def setComp = copy(comp = true)
-}
 
-object Node {
+  def merge(n: Branch): Branch =
+    copy(
+      shapes = shapes ++ n.shapes,
+      comments = comments ++ n.comments,
+      gamebook = n.gamebook.orElse(gamebook),
+      glyphs = glyphs.merge(n.glyphs),
+      eval = n.eval.orElse(eval),
+      clock = n.clock.orElse(clock),
+      crazyData = n.crazyData.orElse(crazyData),
+      children = n.children.toList.foldLeft(children)(_.addNode(_)),
+      forceVariation = n.forceVariation || forceVariation
+    )
 
-  sealed trait Shape
-  object Shape {
-    type ID    = String
+  override def toString = s"$ply.${move.san}${forceVariation.so(" FV")} (Branches: $children)"
+
+object Node:
+
+  enum Shape:
+    case Circle(brush: Shape.Brush, orig: Square)
+    case Arrow(brush: Shape.Brush, orig: Square, dest: Square)
+  object Shape:
     type Brush = String
-    case class Circle(brush: Brush, orig: Pos)           extends Shape
-    case class Arrow(brush: Brush, orig: Pos, dest: Pos) extends Shape
-  }
-  case class Shapes(value: List[Shape]) extends AnyVal {
-    def list = value
-    def ++(shapes: Shapes) =
-      Shapes {
-        (value ::: shapes.value).distinct
-      }
-  }
-  object Shapes {
-    val empty = Shapes(Nil)
-  }
 
-  case class Comment(id: Comment.Id, text: Comment.Text, by: Comment.Author) {
-    def removeMeta =
-      text.removeMeta map { t =>
-        copy(text = t)
-      }
-  }
-  object Comment {
-    case class Id(value: String) extends AnyVal
-    object Id {
-      def make = Id(lila.common.ThreadLocalRandom nextString 4)
-    }
-    private val metaReg = """\[%[^\]]+\]""".r
-    case class Text(value: String) extends AnyVal {
-      def removeMeta: Option[Text] = {
-        val v = metaReg.replaceAllIn(value, "").trim
-        if (v.nonEmpty) Some(Text(v)) else None
-      }
-    }
-    sealed trait Author
-    object Author {
-      case class User(id: String, titleName: String) extends Author
-      case class External(name: String)              extends Author
-      case object Lichess                            extends Author
-      case object Unknown                            extends Author
-    }
-    def sanitize(text: String) =
-      Text {
-        text.trim
-          .take(4000)
-          .replaceAll("""\r\n""", "\n") // these 3 lines dedup white spaces and new lines
-          .replaceAll("""(?m)(^ *| +(?= |$))""", "")
-          .replaceAll("""(?m)^$([\n]+?)(^$[\n]+?^)+""", "$1")
-          .replaceAll("[{}]", "") // {} are reserved in PGN comments
-      }
-  }
-  case class Comments(value: List[Comment]) extends AnyVal {
-    def list                           = value
-    def findBy(author: Comment.Author) = list.find(_.by == author)
-    def set(comment: Comment) =
-      Comments {
-        if (list.exists(_.by == comment.by)) list.map {
-          case c if c.by == comment.by => c.copy(text = comment.text)
-          case c                       => c
-        }
-        else list :+ comment
-      }
-    def delete(commentId: Comment.Id) =
-      Comments {
-        value.filterNot(_.id == commentId)
-      }
-    def +(comment: Comment)    = Comments(comment :: value)
-    def ++(comments: Comments) = Comments(value ::: comments.value)
+  opaque type Shapes = List[Shape]
+  object Shapes extends TotalWrapper[Shapes, List[Shape]]:
+    extension (a: Shapes) def ++(shapes: Shapes): Shapes = (a ::: shapes.value).distinct
+    val empty: Shapes = Nil
 
-    def filterEmpty = Comments(value.filter(_.text.value.nonEmpty))
+  case class Glyph(value: BaseGlyph, comp: Boolean = false):
+    export value.{ id, name, symbol }
 
-    def hasLichessComment = value.exists(_.by == Comment.Author.Lichess)
-  }
-  object Comments {
+  opaque type Glyphs = List[Glyph]
+  object Glyphs extends TotalWrapper[Glyphs, List[Glyph]]:
+    private def split(glyphs: Glyphs, comp: Boolean) =
+      BaseGlyphs.fromList(glyphs.value.filter(_.comp == comp).map(_.value))
+
+    def fromBase(glyphs: BaseGlyphs, comp: Boolean = false): Glyphs =
+      glyphs.toList.map(Glyph(_, comp))
+
+    extension (glyphs: Glyphs)
+      def toBase = split(glyphs, false).merge(split(glyphs, true))
+      def merge(other: Glyphs): Glyphs =
+        fromBase(split(glyphs, false).merge(split(other, false))) :::
+          fromBase(split(glyphs, true).merge(split(other, true)), comp = true)
+      def toggle(glyph: BaseGlyph): Glyphs =
+        fromBase(split(glyphs, false).toggle(glyph)) ::: glyphs.value.filter(_.comp)
+      def nonEmptyOption: Option[Glyphs] = Option.when(glyphs.nonEmpty)(glyphs)
+
+    val empty: Glyphs = Nil
+
+  case class Comment(id: Comment.Id, text: CommentStr, by: Comment.Author, comp: Boolean = false):
+    def removeMeta = Comment.removeMeta(text).trimNonEmpty.map(t => copy(text = t))
+    def same(other: Comment) = text == other.text && by == other.by
+
+  object Comment:
+    opaque type Id = String
+    object Id extends OpaqueString[Id]:
+      def make = Id(ThreadLocalRandom.nextString(4))
+
+    def removeMeta(c: CommentStr): CommentStr = c.map(metaReg.replaceAllIn(_, ""))
+
+    private val clockRegex = """(?s)\[%clk[\s\r\n]++([\d:,\.]++)\]""".r.unanchored
+    private val emtRegex = """(?s)\[\%emt[\s\r\n]++([\d:,\.]++)\]""".r.unanchored
+    private val tcecClockRegex = """(?s)tl=([\d:\.]++)""".r.unanchored
+    private val metaReg = """\[%[^\]]++\]""".r
+
+    enum Author:
+      case User(id: UserId, titleName: String)
+      case External(name: String)
+      case Lichess
+      case Unknown
+
+      def is(other: Author) = (this, other) match
+        case (User(a, _), User(b, _)) => a == b
+        case _ => this == other
+
+    def author(u: LightUser) = Author.User(u.id, u.titleName)
+
+    def clk(text: CommentStr) = parseTime(clockRegex, text)
+    def emt(text: CommentStr) = parseTime(emtRegex, text)
+    def tcec(text: CommentStr) = parseTime(tcecClockRegex, text)
+
+    private def parseTime(re: Regex, text: CommentStr): Option[Centis] =
+      re
+        .findFirstMatchIn(text.value)
+        .flatMap:
+          _.group(1).replace(",", ".").split(":") match
+            case Array(h, m, s) =>
+              for
+                hi <- h.toIntOption
+                mi <- m.toIntOption
+                sd <- s.toDoubleOption
+              yield Centis(((hi * 3600 + mi * 60) * 100 + math.round(sd * 100)).toInt)
+            case Array(h, altFormatMinuteAndSeconds) =>
+              for
+                hi <- h.toIntOption
+                minsAndSecs <- altFormatMinuteAndSeconds.toDoubleOption
+              yield
+                val mi = minsAndSecs.toInt
+                Centis(((hi * 3600 + mi * 60) * 100 + math.round((minsAndSecs - mi) * 100 * 100)).toInt)
+            case Array(ms) if re == Comment.tcecClockRegex =>
+              ms.toLongOption.map(Centis.ofMillis)
+            case _ => none
+
+    def sanitize(text: String) = CommentStr:
+      softCleanUp(text)
+        .take(4000)
+        .replaceAll("""\r\n""", "\n") // these 3 lines dedup white spaces and new lines
+        .replaceAll("""(?m)(^ *| +(?= |$))""", "")
+        .replaceAll("""(?m)^$([\n]+?)(^$[\n]+?^)+""", "$1")
+        .replaceAll("[{}]", "") // {} are reserved in PGN comments
+
+  opaque type Comments = List[Comment]
+  object Comments extends TotalWrapper[Comments, List[Comment]]:
+    extension (a: Comments)
+      def findBy(author: Comment.Author) = a.find(_.by.is(author))
+      def set(comment: Comment): Comments =
+        if a.exists(_.by.is(comment.by)) then
+          a.map:
+            case c if c.by.is(comment.by) => c.copy(text = comment.text, by = comment.by, comp = comment.comp)
+            case c => c
+        else a :+ comment
+      def delete(commentId: Comment.Id): Comments = a.filterNot(_.id == commentId)
+      def +(comment: Comment): Comments = comment :: a
+      def ++(comments: Comments): Comments = a ::: comments.value
+      def filterEmpty: Comments = a.filter(_.text.value.nonEmpty)
+      def hasLichessComment = a.exists(_.by == Comment.Author.Lichess)
     val empty = Comments(Nil)
-  }
 
-  case class Gamebook(deviation: Option[String], hint: Option[String]) {
+  case class Gamebook(deviation: Option[String], hint: Option[String]):
     private def trimOrNone(txt: Option[String]) = txt.map(_.trim).filter(_.nonEmpty)
     def cleanUp =
       copy(
@@ -191,144 +498,81 @@ object Node {
         hint = trimOrNone(hint)
       )
     def nonEmpty = deviation.nonEmpty || hint.nonEmpty
+
+  import chess.json.Json.given
+  private val shapeCircleWrites = Json.writes[Shape.Circle]
+  private val shapeArrowWrites = Json.writes[Shape.Arrow]
+  given shapeWrites: Writes[Shape] = Writes[Shape]:
+    case s: Shape.Circle => shapeCircleWrites.writes(s)
+    case s: Shape.Arrow => shapeArrowWrites.writes(s)
+  given Writes[Node.Shapes] = Writes[Node.Shapes] { s =>
+    JsArray(s.map(shapeWrites.writes))
   }
 
-  // TODO copied from lila.game
-  // put all that shit somewhere else
-  implicit private val crazyhousePocketWriter: OWrites[Crazyhouse.Pocket] = OWrites { v =>
-    JsObject(
-      Crazyhouse.storableRoles.flatMap { role =>
-        Some(v.roles.count(role ==)).filter(0 <).map { count =>
-          role.name -> JsNumber(count)
-        }
-      }
-    )
-  }
-  implicit private val crazyhouseDataWriter: OWrites[chess.variant.Crazyhouse.Data] = OWrites { v =>
-    Json.obj("pockets" -> List(v.pockets.white, v.pockets.black))
-  }
-
-  implicit val openingWriter: OWrites[chess.opening.FullOpening] = OWrites { o =>
-    Json.obj(
-      "eco"  -> o.eco,
-      "name" -> o.name
-    )
-  }
-
-  implicit private val posWrites: Writes[Pos] = Writes[Pos] { p =>
-    JsString(p.key)
-  }
-  implicit private val shapeCircleWrites = Json.writes[Shape.Circle]
-  implicit private val shapeArrowWrites  = Json.writes[Shape.Arrow]
-  implicit val shapeWrites: Writes[Shape] = Writes[Shape] {
-    case s: Shape.Circle => shapeCircleWrites writes s
-    case s: Shape.Arrow  => shapeArrowWrites writes s
-  }
-  implicit val shapesWrites: Writes[Node.Shapes] = Writes[Node.Shapes] { s =>
-    JsArray(s.list.map(shapeWrites.writes))
-  }
-  implicit val glyphWriter: Writes[Glyph] = Json.writes[Glyph]
-  implicit val glyphsWriter: Writes[Glyphs] = Writes[Glyphs] { gs =>
-    Json.toJson(gs.toList)
-  }
-
-  implicit val clockWrites: Writes[Centis] = Writes { clock =>
-    JsNumber(clock.centis)
-  }
-  implicit val commentIdWrites: Writes[Comment.Id] = Writes { id =>
-    JsString(id.value)
-  }
-  implicit val commentTextWrites: Writes[Comment.Text] = Writes { text =>
-    JsString(text.value)
-  }
-  implicit val commentAuthorWrites: Writes[Comment.Author] = Writes[Comment.Author] {
+  given Writes[Comment.Author] = Writes[Comment.Author]:
     case Comment.Author.User(id, name) => Json.obj("id" -> id, "name" -> name)
     case Comment.Author.External(name) => JsString(s"${name.trim}")
-    case Comment.Author.Lichess        => JsString("lichess")
-    case Comment.Author.Unknown        => JsNull
-  }
-  implicit val commentWriter  = Json.writes[Node.Comment]
-  implicit val gamebookWriter = Json.writes[Node.Gamebook]
-  import Eval.JsonHandlers.evalWrites
+    case Comment.Author.Lichess => JsString("lichess")
+    case Comment.Author.Unknown => JsNull
+  given Writes[Node.Comment] = Writes: comment =>
+    Json
+      .obj("id" -> comment.id, "text" -> comment.text, "by" -> comment.by)
+      .add("comp", comment.comp.option(comment.comp))
+  given Writes[Node.Glyph] = Writes: glyph =>
+    Json
+      .obj("id" -> glyph.id, "symbol" -> glyph.symbol, "name" -> glyph.name)
+      .add("comp", glyph.comp.option(glyph.comp))
+  given Writes[Node.Glyphs] = Writes: glyphs =>
+    JsArray(glyphs.toList.map(Json.toJson(_)))
+  given Writes[Node.Gamebook] = Json.writes[Node.Gamebook]
 
-  @inline implicit private def toPimpedJsObject(jo: JsObject) = new lila.base.PimpedJsObject(jo)
+  given defaultNodeJsonWriter: Writes[Node] = makeNodeJsonWriter(lichobile = false)
+  val lichobileNodeJsonWriter: Writes[Node] = makeNodeJsonWriter(lichobile = true)
 
-  implicit val defaultNodeJsonWriter: Writes[Node] =
-    makeNodeJsonWriter(alwaysChildren = true)
+  private def makeNodeJsonWriter(lichobile: Boolean): Writes[Node] = Writes: node =>
+    import node.*
+    try
+      val comments = node.comments.flatMap(_.removeMeta)
+      Json
+        .obj(
+          "ply" -> ply,
+          "fen" -> fen
+        )
+        .add("id", lichobile.so(idOption))
+        .add("uci", moveOption.map(_.uci.uci))
+        .add("san", moveOption.map(_.san))
+        .add("eval", eval.flatMap(evals.json))
+        .add("comments", comments.nonEmpty.option(comments))
+        .add("gamebook", gamebook)
+        .add("glyphs", glyphs.nonEmptyOption)
+        .add("shapes", shapes.nonEmpty.option(shapes))
+        .add("clock", clock.map(_.centis))
+        .add("crazy", crazyData)
+        .add("comp", comp)
+        .add(
+          "children",
+          Option.when(lichobile || children.nonEmpty):
+            val writer = if lichobile then lichobileNodeJsonWriter else defaultNodeJsonWriter
+            JsArray(children.toList.map(writer.writes))
+        )
+        .add("forceVariation", forceVariation)
+    catch
+      case e: StackOverflowError =>
+        e.printStackTrace()
+        sys.error(s"### StackOverflowError ### in tree.makeNodeJsonWriter($lichobile)")
 
-  val minimalNodeJsonWriter: Writes[Node] =
-    makeNodeJsonWriter(alwaysChildren = false)
+  def partitionTreeWriter(node: Node, lichobile: Boolean): JsValue =
+    val writer = if lichobile then lichobileNodeJsonWriter.writes else defaultNodeJsonWriter.writes
+    JsArray(node.mainlineNodeList.map(writer))
 
-  implicit def nodeListJsonWriter(alwaysChildren: Boolean): Writes[List[Node]] =
-    Writes[List[Node]] { list =>
-      val writer = if (alwaysChildren) defaultNodeJsonWriter else minimalNodeJsonWriter
-      JsArray(list map writer.writes)
-    }
+object Tree:
 
-  def makeNodeJsonWriter(alwaysChildren: Boolean): Writes[Node] =
-    Writes { node =>
-      import node._
-      try {
-        val comments = node.comments.list.flatMap(_.removeMeta)
-        Json
-          .obj(
-            "ply" -> ply,
-            "fen" -> fen
-          )
-          .add("id", idOption.map(_.toString))
-          .add("uci", moveOption.map(_.uci.uci))
-          .add("san", moveOption.map(_.san))
-          .add("check", check)
-          .add("eval", eval.filterNot(_.isEmpty))
-          .add("comments", if (comments.nonEmpty) Some(comments) else None)
-          .add("gamebook", gamebook)
-          .add("glyphs", glyphs.nonEmpty)
-          .add("shapes", if (shapes.list.nonEmpty) Some(shapes.list) else None)
-          .add("opening", opening)
-          .add("dests", dests)
-          .add(
-            "drops",
-            drops.map { drops =>
-              JsString(drops.map(_.key).mkString)
-            }
-          )
-          .add("clock", clock)
-          .add("crazy", crazyData)
-          .add("comp", comp)
-          .add(
-            "children",
-            if (alwaysChildren || children.nonEmpty) Some {
-              nodeListJsonWriter(true) writes children
-            }
-            else None
-          )
-          .add("forceVariation", forceVariation)
-      } catch {
-        case e: StackOverflowError =>
-          e.printStackTrace()
-          sys error s"### StackOverflowError ### in tree.makeNodeJsonWriter($alwaysChildren)"
-      }
-    }
-
-  def destString(dests: Map[Pos, List[Pos]]): String = {
-    val sb    = new java.lang.StringBuilder(80)
-    var first = true
-    dests foreach { case (orig, dests) =>
-      if (first) first = false
-      else sb append " "
-      sb append orig.piotr
-      dests foreach { sb append _.piotr }
-    }
-    sb.toString
-  }
-
-  implicit val destsJsonWriter: Writes[Map[Pos, List[Pos]]] = Writes { dests =>
-    JsString(destString(dests))
-  }
-
-  val partitionTreeJsonWriter: Writes[Node] = Writes { node =>
-    JsArray {
-      node.mainlineNodeList.map(minimalNodeJsonWriter.writes)
-    }
-  }
-}
+  def makePartitionTreeJson(
+      game: Game,
+      analysis: Option[Analysis],
+      initialFen: Fen.Full,
+      options: ExportOptions,
+      logChessError: TreeBuilder.LogChessError
+  ): JsValue =
+    val root = TreeBuilder(game, analysis, initialFen, options, logChessError)
+    Node.partitionTreeWriter(root, options.lichobileCompat)

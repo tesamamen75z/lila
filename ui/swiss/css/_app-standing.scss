@@ -2,15 +2,15 @@
   border: none;
 
   .player {
-    padding-left: 0px;
-    padding-right: 0px;
+    padding-left: 0;
+    padding-right: 0;
 
     .name {
       @extend %nowrap-ellipsis;
 
       display: inline-block;
       vertical-align: middle;
-      padding-right: 5px;
+      padding-inline-end: 5px;
       max-width: 140px;
     }
   }
@@ -26,8 +26,7 @@
 
   tr {
     @include transition;
-
-    user-select: none;
+    @include prevent-select;
   }
 
   .loading tbody {
@@ -36,43 +35,31 @@
     @include transition(opacity, 0.3s);
   }
 
-  &:not(.created):not(.loading) tbody tr:hover {
-    background: mix($c-primary, $c-bg-box, 15%);
+  &:not(.created, .loading) tbody tr:hover {
+    background: color-mix(in oklab, $c-primary 15%, $c-bg);
     cursor: pointer;
   }
 
   tr.me td:first-child {
-    $c-me-border: mix($c-secondary, $c-bg-box, 70%);
+    $c-me-border: color-mix(in oklab, $c-secondary 70%, $c-bg);
 
-    background: linear-gradient(
-      to right,
-      $c-me-border 0px,
-      $c-me-border 5px,
-      rgba(0, 0, 0, 0) 5px,
-      rgba(0, 0, 0, 0) 100%
-    );
+    @include gradient-border($c-me-border, to right, to left);
   }
 
   tr.active td:last-child {
-    $c-active-border: mix($c-primary, $c-bg-box, 70%);
+    $c-active-border: color-mix(in oklab, $c-primary 70%, $c-bg);
 
-    background: linear-gradient(
-      to left,
-      $c-active-border 0px,
-      $c-active-border 5px,
-      rgba(0, 0, 0, 0) 5px,
-      rgba(0, 0, 0, 0) 100%
-    );
+    @include gradient-border($c-active-border, to left, to right);
   }
 
   td.rank {
     @extend %roboto;
+    @include padding-direction(1em, 0.5em, 1em, 10px);
 
-    padding: 1em 0.5em 1em 10px;
     width: 1px;
 
     /* helps keeping it as small as possible */
-    i {
+    icon {
       opacity: 0.4;
       font-size: 0.8em;
     }
@@ -84,16 +71,15 @@
     width: 100%;
 
     div {
-      @extend %flex-center;
+      @extend %flex-wrap;
 
       justify-content: flex-end;
       align-items: stretch;
       min-height: 3.5em;
 
       & > * {
-        @extend %flex-center;
+        @extend %flex-center-center;
 
-        justify-content: center;
         flex: 0 0 2em;
         text-align: center;
       }
@@ -102,32 +88,29 @@
     .ongoing {
       color: $c-link;
 
-      // background: mix($c-link, $c-bg-box, 15%);
       &:hover {
-        background: mix($c-link, $c-bg-box, 35%);
+        background: color-mix(in oklab, $c-primary 35%, $c-bg);
       }
     }
 
     .win {
       color: $c-good;
 
-      // background: mix($c-good, $c-bg-box, 15%);
       &:hover {
-        background: mix($c-good, $c-bg-box, 35%);
+        background: color-mix(in oklab, $c-secondary 35%, $c-bg);
       }
     }
 
     .loss {
-      color: mix($c-bad, $c-bg-box, 60%);
+      color: color-mix(in oklab, $c-bad 60%, $c-bg);
 
-      // background: mix($c-bad, $c-bg-box, 10%);
       &:hover {
-        background: mix($c-bad, $c-bg-box, 20%);
+        background: color-mix(in oklab, $c-bad 20%, $c-bg);
       }
     }
 
     .draw {
-      color: mix($c-brag, $c-bg-box, 70);
+      color: color-mix(in oklab, $c-brag 70%, $c-bg);
     }
 
     bye {
@@ -139,11 +122,11 @@
     }
 
     absent {
-      color: mix($c-bad, $c-bg-box, 60%);
+      color: color-mix(in oklab, $c-bad 60%, $c-bg);
     }
 
     r {
-      border-left: 1px dotted $c-border;
+      border-inline-start: 1px dotted $c-border;
     }
   }
 
@@ -156,13 +139,13 @@
     @extend %roboto;
 
     text-align: right;
-    padding-right: $block-gap;
+    padding-inline-end: $block-gap;
   }
 
   &.long {
     .user-link .rating {
       display: block;
-      padding-left: 0px;
+      padding-inline-start: 0;
     }
 
     .pairings div > * {

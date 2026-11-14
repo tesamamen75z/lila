@@ -1,75 +1,70 @@
 package lila.setup
 
-import chess.format.{ FEN, Forsyth }
-import chess.variant.Chess960
-import chess.variant.FromPosition
-import chess.{ Clock, Speed }
+import chess.format.Fen
+import chess.variant.{ FromPosition, Variant }
+import chess.{ Clock, Rated, Speed }
+import scalalib.model.Days
 
-import lila.game.PerfPicker
-import lila.lobby.Color
+import lila.core.data.Template
+import lila.core.game.GameRule
+import lila.lobby.TriColor
 import lila.rating.PerfType
-import chess.variant.Variant
-import lila.common.Template
 
 final case class ApiConfig(
     variant: chess.variant.Variant,
     clock: Option[Clock.Config],
-    days: Option[Int],
-    rated: Boolean,
-    color: Color,
-    position: Option[FEN] = None,
-    acceptByToken: Option[String] = None,
-    message: Option[Template]
-) {
+    days: Option[Days],
+    rated: Rated,
+    color: TriColor,
+    position: Option[Fen.Full] = None,
+    message: Option[Template],
+    keepAliveStream: Boolean,
+    rules: Set[GameRule] = Set.empty,
+    onlyIfOpponentFollowsMe: Boolean = false
+):
 
-  def perfType: Option[PerfType] = PerfPicker.perfType(chess.Speed(clock), variant, days)
+  def perfType: PerfType = lila.rating.PerfType(variant, chess.Speed(days.isEmpty.so(clock)))
+  def perfKey = perfType.key
 
-  def validFen = ApiConfig.validFen(variant, position)
+  def validFen = Variant.isValidInitialFen(variant, position)
 
   def validSpeed(isBot: Boolean) =
-    !isBot || clock.fold(true) { c =>
+    !isBot || clock.forall: c =>
       Speed(c) >= Speed.Bullet
-    }
 
-  def validRated = mode.casual || clock.isDefined || variant.standard
-
-  def mode = chess.Mode(rated)
+  def validRated = rated.no || ((clock.isDefined || variant.standard) && variant.fromPosition.not)
 
   def autoVariant =
-    if (variant.standard && position.exists(!_.initial)) copy(variant = FromPosition)
+    if variant.standard && position.exists(!_.isInitial)
+    then copy(variant = FromPosition)
     else this
-}
 
-object ApiConfig extends BaseHumanConfig {
+object ApiConfig extends BaseConfig:
 
-  lazy val clockLimitSeconds: Set[Int] = Set(0, 15, 30, 45, 60, 90) ++ (2 to 180).view.map(60 *).toSet
+  lazy val clockLimitSeconds =
+    Clock.LimitSeconds.from(Set(0, 15, 30, 45, 60, 90) ++ (2 to 180).view.map(_ * 60).toSet)
 
   def from(
-      v: Option[String],
+      v: Option[Variant.LilaKey],
       cl: Option[Clock.Config],
-      d: Option[Int],
-      r: Boolean,
+      d: Option[Days],
+      r: Rated,
       c: Option[String],
-      pos: Option[FEN],
-      tok: Option[String],
-      msg: Option[String]
+      pos: Option[Fen.Full],
+      msg: Option[String],
+      keepAliveStream: Option[Boolean],
+      rules: Option[Set[GameRule]],
+      onlyIfOpponentFollowsMe: Option[Boolean] = None
   ) =
-    new ApiConfig(
-      variant = chess.variant.Variant.orDefault(~v),
+    ApiConfig(
+      variant = chess.variant.Variant.orDefault(v),
       clock = cl,
       days = d,
       rated = r,
-      color = Color.orDefault(~c),
+      color = TriColor.orDefault(~c),
       position = pos,
-      acceptByToken = tok,
-      message = msg map Template
+      message = msg.map(Template.apply),
+      keepAliveStream = ~keepAliveStream,
+      rules = ~rules,
+      onlyIfOpponentFollowsMe = ~onlyIfOpponentFollowsMe
     ).autoVariant
-
-  def validFen(variant: Variant, fen: Option[FEN]) =
-    if (variant.chess960) fen.forall(f => Chess960.positionNumber(f).isDefined)
-    else if (variant.fromPosition)
-      fen exists { f =>
-        (Forsyth <<< f).exists(_.situation playable false)
-      }
-    else true
-}

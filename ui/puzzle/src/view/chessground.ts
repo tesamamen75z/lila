@@ -1,20 +1,27 @@
-import changeColorHandle from 'common/coordsColor';
-import resizeHandle from 'common/resize';
-import { Chessground } from 'chessground';
-import { Config as CgConfig } from 'chessground/config';
-import { Controller } from '../interfaces';
-import { h, VNode } from 'snabbdom';
+import { Chessground as makeChessground } from '@lichess-org/chessground';
+import { h, type VNode } from 'snabbdom';
 
-export default function (ctrl: Controller): VNode {
-  return h('div.cg-wrap', {
+import resizeHandle from 'lib/chessgroundResize';
+import { isSafari } from 'lib/device';
+import { Coords, ShowResizeHandle } from 'lib/prefs';
+import { storage } from 'lib/storage';
+import { onInsert } from 'lib/view';
+
+import type PuzzleCtrl from '../ctrl';
+
+export default function (ctrl: PuzzleCtrl): VNode {
+  return h('div.cg-wrap.cgv' + ctrl.cgVersion, {
     hook: {
-      insert: vnode => ctrl.ground(Chessground(vnode.elm as HTMLElement, makeConfig(ctrl))),
-      destroy: _ => ctrl.ground()!.destroy(),
+      ...onInsert(el => ctrl.setChessground(makeChessground(el, makeConfig(ctrl)))),
+      destroy: () => {
+        // ctrl.disableGooglyEyes();
+        ctrl.ground().destroy();
+      },
     },
   });
 }
 
-export function makeConfig(ctrl: Controller): CgConfig {
+export function makeConfig(ctrl: PuzzleCtrl): CgConfig {
   const opts = ctrl.makeCgOpts();
   return {
     fen: opts.fen,
@@ -22,14 +29,16 @@ export function makeConfig(ctrl: Controller): CgConfig {
     turnColor: opts.turnColor,
     check: opts.check,
     lastMove: opts.lastMove,
-    coordinates: ctrl.pref.coords !== Prefs.Coords.Hidden,
+    coordinates: ctrl.pref.coords !== Coords.Hidden,
+    coordinatesOnSquares: ctrl.pref.coords === Coords.All,
     addPieceZIndex: ctrl.pref.is3d,
-    addDimensionsCssVars: true,
+    addDimensionsCssVarsTo: document.body,
+    jsHover: isSafari(),
     movable: {
       free: false,
       color: opts.movable!.color,
       dests: opts.movable!.dests,
-      showDests: ctrl.pref.destination,
+      showDests: ctrl.pref.destination && !ctrl.blindfold(),
       rookCastle: ctrl.pref.rookCastle,
     },
     draggable: {
@@ -42,8 +51,8 @@ export function makeConfig(ctrl: Controller): CgConfig {
     events: {
       move: ctrl.userMove,
       insert(elements) {
-        resizeHandle(elements, Prefs.ShowResizeHandle.Always, ctrl.vm.node.ply, _ => true);
-        if (ctrl.pref.coords === Prefs.Coords.Inside) changeColorHandle();
+        resizeHandle(elements, ShowResizeHandle.Always, ctrl.node.ply);
+        // ctrl.enableGooglyEyes(elements.wrap);
       },
     },
     premovable: {
@@ -51,7 +60,7 @@ export function makeConfig(ctrl: Controller): CgConfig {
     },
     drawable: {
       enabled: true,
-      defaultSnapToValidMove: (lichess.storage.get('arrow.snap') || 1) != '0',
+      defaultSnapToValidMove: storage.boolean('arrow.snap').getOrDefault(true),
     },
     highlight: {
       lastMove: ctrl.pref.highlight,

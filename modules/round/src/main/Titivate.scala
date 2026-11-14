@@ -1,127 +1,113 @@
 package lila.round
 
-import akka.actor._
-import akka.stream.scaladsl._
-import org.joda.time.DateTime
-
-import scala.concurrent.duration._
+import org.apache.pekko.actor.*
+import org.apache.pekko.stream.scaladsl.*
 
 import lila.common.LilaStream
-import lila.db.dsl._
-import lila.game.{ Game, GameRepo, Query }
-import lila.round.actorApi.round.{ Abandon, QuietFlag }
+import lila.core.round.{ Abandon, RoundBus }
+import lila.db.dsl.*
+import lila.game.GameExt.abandoned
+import lila.game.{ GameRepo, Query }
+import lila.mon.extensions.*
 
 /*
  * Cleans up unfinished games
  * and flagged games when no one is around
  */
-final private[round] class Titivate(
-    tellRound: TellRound,
+final private class Titivate(
+    roundApi: lila.core.round.RoundApi,
     gameRepo: GameRepo,
-    bookmark: lila.hub.actors.Bookmark,
     chatApi: lila.chat.ChatApi
-)(implicit mat: akka.stream.Materializer)
-    extends Actor {
+)(using org.apache.pekko.stream.Materializer)
+    extends Actor:
 
-  private type GameOrFail = Either[(Game.ID, Throwable), Game]
+  private type GameOrFail = Either[(GameId, Throwable), Game]
 
   object Run
 
-  override def preStart(): Unit = {
+  override def preStart(): Unit =
     scheduleNext()
-    context setReceiveTimeout 30.seconds
-  }
+    context.setReceiveTimeout(30.seconds)
 
-  implicit def ec = context.system.dispatcher
-  def scheduler   = context.system.scheduler
+  given Executor = context.system.dispatcher
 
-  def scheduleNext(): Unit = scheduler.scheduleOnce(5 seconds, self, Run).unit
+  def scheduleNext(): Unit = context.system.scheduler.scheduleOnce(5.seconds, self, Run)
 
-  def receive = {
+  def receive =
     case ReceiveTimeout =>
       val msg = "Titivate timed out!"
-      logBranch.error(msg)
+      logger.error(msg)
       throw new RuntimeException(msg)
 
     case Run =>
-      gameRepo.count(_.checkable) foreach { total =>
-        lila.mon.round.titivate.total.record(total)
-        gameRepo
+      val run = for
+        total <- gameRepo.countSec(_.checkable)
+        _ = lila.mon.round.titivate.total.record(total)
+        done <- gameRepo
           .docCursor(Query.checkable)
           .documentSource(100)
           .via(gameRead)
           .via(gameFlow)
-          .toMat(LilaStream.sinkCount)(Keep.right)
-          .run()
-          .addEffect(lila.mon.round.titivate.game.record(_).unit)
-          .>> {
-            gameRepo
-              .count(_.checkableOld)
-              .dmap(lila.mon.round.titivate.old.record(_))
-          }
-          .monSuccess(_.round.titivate.time)
-          .logFailure(logBranch)
-          .addEffectAnyway(scheduleNext().unit)
-      }
-  }
+          .runWith(LilaStream.sinkCount)
+        _ = lila.mon.round.titivate.game.record(done)
+        old <- gameRepo.countSec(_.checkableOld)
+      yield lila.mon.round.titivate.old.record(old)
 
-  private val logBranch = logger branch "titivate"
+      run
+        .monSuccess(lila.mon.round.titivate.time)
+        .logFailure(logger)
+        .addEffectAnyway(scheduleNext())
 
-  private val gameRead = Flow[Bdoc].map { doc =>
-    lila.game.BSONHandlers.gameBSONHandler
+  private lazy val logger = lila.log("round.titivate")
+
+  private val gameRead = Flow[Bdoc].map: doc =>
+    gameRepo.gameHandler
       .readDocument(doc)
       .fold[GameOrFail](
-        err => Left(~doc.string("_id") -> err),
+        err => Left(GameId(~doc.string("_id")) -> err),
         Right.apply
       )
-  }
 
-  private val gameFlow: Flow[GameOrFail, Unit, _] = Flow[GameOrFail].mapAsyncUnordered(8) {
+  private val unplayedDays = 3
+  private def unplayedDate = nowInstant.minusDays(unplayedDays)
+  private def unplayed(g: Game) = !g.bothPlayersHaveMoved && g.createdAt.isBefore(unplayedDate)
+
+  private val gameFlow: Flow[GameOrFail, Unit, ?] = Flow[GameOrFail].mapAsyncUnordered(8):
 
     case Left((id, err)) =>
       lila.mon.round.titivate.broken(err.getClass.getSimpleName).increment()
-      logBranch.warn(s"Can't read game $id", err)
-      gameRepo unsetCheckAt id
+      logger.warn(s"Can't read game $id", err)
+      gameRepo.unsetCheckAt(id)
 
     case Right(game) =>
-      game match {
+      game match
 
-        case game if game.finished || game.isPgnImport || game.playedThenAborted =>
-          gameRepo unsetCheckAt game.id
+        case game if game.finished || game.isPgnImport || (game.aborted && game.bothPlayersHaveMoved) =>
+          gameRepo.unsetCheckAt(game.id)
 
         case game if game.outoftime(withGrace = true) =>
-          fuccess {
-            tellRound(game.id, QuietFlag)
-          }
+          fuccess:
+            roundApi.tell(game.id, RoundBus.QuietFlagCheck)
 
         case game if game.abandoned =>
-          fuccess {
-            tellRound(game.id, Abandon)
-          }
+          fuccess:
+            roundApi.tell(game.id, Abandon)
 
-        case game if game.unplayed =>
-          bookmark ! lila.hub.actorApi.bookmark.Remove(game.id)
-          chatApi.remove(lila.chat.Chat.Id(game.id))
-          gameRepo remove game.id
+        case game if unplayed(game) =>
+          lila.common.Bus.pub(lila.core.round.DeleteUnplayed(game.id))
+          chatApi.remove(game.id.into(ChatId))
+          gameRepo.remove(game.id)
 
         case game =>
-          game.clock match {
+          game.clock match
 
             case Some(clock) if clock.isRunning =>
               val minutes = clock.estimateTotalSeconds / 60
-              gameRepo.setCheckAt(game, DateTime.now plusMinutes minutes).void
+              gameRepo.setCheckAt(game, nowInstant.plusMinutes(minutes)).void
 
             case Some(_) =>
-              val hours = Game.unplayedHours
-              gameRepo.setCheckAt(game, DateTime.now plusHours hours).void
+              gameRepo.setCheckAt(game, nowInstant.plusDays(unplayedDays)).void
 
             case None =>
-              val hours = game.daysPerTurn.fold(
-                if (game.hasAi) Game.aiAbandonedHours
-                else Game.abandonedDays * 24
-              )(_ * 24)
-              gameRepo.setCheckAt(game, DateTime.now plusHours hours).void
-          }
-      }
-  }
-}
+              val days = game.daysPerTurn | lila.game.Game.abandonedDays
+              gameRepo.setCheckAt(game, nowInstant.plusDays(days.value)).void

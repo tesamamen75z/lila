@@ -1,73 +1,21 @@
-import { Attrs, h, Hooks, VNode } from 'snabbdom';
-import { BasePlayer } from '../interfaces';
-import { numberFormat } from 'common/number';
+import { h } from 'snabbdom';
 
-export function bind(eventName: string, f: (e: Event) => any, redraw?: () => void): Hooks {
-  return onInsert(el =>
-    el.addEventListener(eventName, e => {
-      const res = f(e);
-      if (redraw) redraw();
-      return res;
-    })
-  );
-}
+import { fullName, profileUrl, userLine, userRating } from 'lib/view/userLink';
 
-export function onInsert(f: (element: HTMLElement) => void): Hooks {
-  return {
-    insert(vnode: VNode) {
-      f(vnode.elm as HTMLElement);
-    },
-  };
-}
-
-export function dataIcon(icon: string): Attrs {
-  return {
-    'data-icon': icon,
-  };
-}
-
-export const userName = (u: LightUser) => (u.title ? [h('span.utitle', u.title), ' ' + u.name] : [u.name]);
+import type { BasePlayer } from '../interfaces';
 
 export function player(p: BasePlayer, asLink: boolean, withRating: boolean) {
+  const profileHref = profileUrl(p.user.name);
   return h(
-    'a.ulpt.user-link' + (((p.user.title || '') + p.user.name).length > 15 ? '.long' : ''),
+    'a.ulpt.user-link.online' + (((p.user.title || '') + p.user.name).length > 15 ? '.long' : ''),
     {
-      attrs: asLink ? { href: '/@/' + p.user.name } : { 'data-href': '/@/' + p.user.name },
-      hook: {
-        destroy: vnode => $.powerTip.destroy(vnode.elm as HTMLElement),
-      },
+      attrs: asLink ? { href: profileHref } : { 'data-href': profileHref },
+      hook: { destroy: vnode => $.powerTip.destroy(vnode.elm) },
     },
     [
-      h('span.name', userName(p.user)),
-      withRating ? h('span.rating', ' ' + p.rating + (p.provisional ? '?' : '')) : null,
-    ]
+      p.user.patronColor && userLine({ patronColor: p.user.patronColor }),
+      h('span.name', fullName(p.user)),
+      withRating ? h('span.rating', userRating({ ...p, brackets: false })) : null,
+    ],
   );
-}
-
-export const ratio2percent = (r: number) => Math.round(100 * r) + '%';
-
-export function numberRow(name: string, value: any, typ?: string) {
-  return h('tr', [
-    h('th', name),
-    h(
-      'td',
-      typ === 'raw'
-        ? value
-        : typ === 'percent'
-        ? value[1] > 0
-          ? ratio2percent(value[0] / value[1])
-          : 0
-        : numberFormat(value)
-    ),
-  ]);
-}
-
-export function spinner(): VNode {
-  return h('div.spinner', [
-    h('svg', { attrs: { viewBox: '0 0 40 40' } }, [
-      h('circle', {
-        attrs: { cx: 20, cy: 20, r: 18, fill: 'none' },
-      }),
-    ]),
-  ]);
 }

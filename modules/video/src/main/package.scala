@@ -1,10 +1,10 @@
-package lila
+package lila.video
 
-package object video extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  type Target = Int
-  type Tag    = String
-  type Lang   = String
+type Target = Int
+type Tag = String
+type Lang = String
 
-  private[video] def logger = lila.log("video")
-}
+private lazy val logger = lila.log("video")

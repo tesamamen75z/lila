@@ -1,35 +1,42 @@
-import * as xhr from './xhr';
-import config from './config';
-import sign from 'puz/sign';
-import { Api as CgApi } from 'chessground/api';
-import { getNow, puzzlePov, sound } from 'puz/util';
-import { makeCgOpts } from 'puz/run';
-import { parseUci } from 'chessops/util';
-import { prop, Prop } from 'common';
-import { Role } from 'chessground/types';
-import { StormOpts, StormData, StormVm, StormRecap, StormPrefs } from './interfaces';
-import { Run } from 'puz/interfaces';
-import { Combo } from 'puz/combo';
-import CurrentPuzzle from 'puz/current';
-import { Clock } from 'puz/clock';
-import { PromotionCtrl } from 'chess/promotion';
+import type { Api as CgApi } from '@lichess-org/chessground/api';
 
-export default class StormCtrl {
-  private data: StormData;
-  private redraw: () => void;
+import { prop, type Prop } from 'lib';
+import type { WithGround } from 'lib/game/ground';
+import { PromotionCtrl } from 'lib/game/promotion';
+import { pubsub } from 'lib/pubsub';
+import { Clock } from 'lib/puz/clock';
+import { Combo } from 'lib/puz/combo';
+import CurrentPuzzle from 'lib/puz/current';
+import { PuzFilters } from 'lib/puz/filters';
+import type { PuzCtrl, Run } from 'lib/puz/interfaces';
+import { playAndTestMutatingPosition } from 'lib/puz/moveTest';
+import { makeCgOpts } from 'lib/puz/run';
+import sign from 'lib/puz/sign';
+import { getNow, puzzlePov, sound } from 'lib/puz/util';
+import { storage } from 'lib/storage';
+import { toggleZenMode } from 'lib/view/zen';
+
+import config from './config';
+import type { StormOpts, StormVm, StormRecap, StormPrefs, StormData } from './interfaces';
+import * as xhr from './xhr';
+
+export default class StormCtrl implements PuzCtrl {
+  private readonly data: StormData;
+  private readonly redraw: () => void;
+  readonly duration = 900;
   pref: StormPrefs;
   run: Run;
   vm: StormVm;
-  trans: Trans;
+  filters: PuzFilters;
   promotion: PromotionCtrl;
-  ground = prop<CgApi | false>(false) as Prop<CgApi | false>;
+  ground: Prop<CgApi | false> = prop<CgApi | false>(false);
   flipped = false;
 
   constructor(opts: StormOpts, redraw: (data: StormData) => void) {
-    this.data = opts.data;
+    this.data = { puzzles: opts.puzzles, key: opts.key };
     this.pref = opts.pref;
     this.redraw = () => redraw(this.data);
-    this.trans = lichess.trans(opts.i18n);
+    this.filters = new PuzFilters(this.redraw, false);
     this.run = {
       pov: puzzlePov(this.data.puzzles[0]),
       moves: 0,
@@ -45,14 +52,12 @@ export default class StormCtrl {
     this.vm = {
       signed: prop(undefined),
       lateStart: false,
-      filterFailed: false,
-      filterSlow: false,
     };
-    this.promotion = new PromotionCtrl(
-      this.withGround,
-      () => this.withGround(g => g.set(makeCgOpts(this.run, !this.run.endAt, this.flipped))),
-      this.redraw
-    );
+    this.promotion = new PromotionCtrl(this.withGround, this.setGround, this.redraw);
+    setTimeout(() => {
+      this.run.current.moveIndex = 0;
+      this.setGround();
+    }, 100);
     this.checkDupTab();
     setTimeout(this.hotkeys, 1000);
     if (this.data.key) setTimeout(() => sign(this.data.key!).then(this.vm.signed), 1000 * 40);
@@ -62,23 +67,19 @@ export default class StormCtrl {
         this.redraw();
       }
     }, config.timeToStart + 1000);
-    lichess.pubsub.on('zen', () => {
-      if (!this.run.endAt) {
-        const zen = $('body').toggleClass('zen').hasClass('zen');
-        window.dispatchEvent(new Event('resize'));
-        xhr.setZen(zen);
-      }
-    });
+    pubsub.on('zen', toggleZenMode);
     $('#zentog').on('click', this.toggleZen);
+    this.run.current.playSound();
   }
 
   end = (): void => {
+    if (this.run.endAt) return;
     this.run.history.reverse();
     this.run.endAt = getNow();
     this.ground(false);
     this.redraw();
     sound.end();
-    xhr.record(this.runStats(), this.data.notAnExploit).then(res => {
+    xhr.record(this.runStats()).then(res => {
       this.vm.response = res;
       this.redraw();
     });
@@ -87,15 +88,16 @@ export default class StormCtrl {
   };
 
   endNow = (): void => {
+    this.run.unfinishedId = this.run.current.puzzle.id;
     this.pushToHistory(false);
     this.end();
   };
 
   userMove = (orig: Key, dest: Key): void => {
-    if (!this.promotion.start(orig, dest, this.playUserMove)) this.playUserMove(orig, dest);
+    if (!this.promotion.start(orig, dest, { submit: this.playUserMove })) this.playUserMove(orig, dest);
   };
 
-  playUserMove = (orig: Key, dest: Key, promotion?: Role): any => {
+  playUserMove = (orig: Key, dest: Key, promotion?: Role): void => {
     const now = getNow();
     const puzzle = this.run.current;
     if (puzzle.startAt + config.minFirstMoveTime > now) console.log('reverted!');
@@ -103,12 +105,13 @@ export default class StormCtrl {
       this.run.clock.start();
       this.run.moves++;
       this.promotion.cancel();
-      const uci = `${orig}${dest}${promotion ? (promotion == 'knight' ? 'n' : promotion[0]) : ''}`;
-      const pos = puzzle.position();
-      const move = parseUci(uci)!;
-      let captureSound = pos.board.occupied.has(move.to);
-      pos.play(move);
-      const correct = pos.isCheckmate() || uci == puzzle.expectedMove();
+      const correct = playAndTestMutatingPosition(
+        puzzle.position(),
+        puzzle.expectedMove(),
+        orig,
+        dest,
+        promotion,
+      );
       if (correct) {
         puzzle.moveIndex++;
         this.run.combo.inc();
@@ -123,9 +126,7 @@ export default class StormCtrl {
           if (!this.incPuzzle()) this.end();
         } else {
           puzzle.moveIndex++;
-          captureSound = captureSound || pos.board.occupied.has(parseUci(puzzle.line[puzzle.moveIndex]!)!.to);
         }
-        sound.move(captureSound);
       } else {
         sound.wrong();
         this.pushToHistory(false);
@@ -140,25 +141,30 @@ export default class StormCtrl {
         if (this.run.clock.flag()) this.end();
         else if (!this.incPuzzle()) this.end();
       }
+      this.run.current.playSound(correct ? puzzle : undefined);
       this.redraw();
       this.redrawQuick();
       this.redrawSlow();
     }
-    this.withGround(g => g.set(makeCgOpts(this.run, !this.run.endAt, this.flipped)));
-    lichess.pubsub.emit('ply', this.run.moves);
+    this.setGround();
+    if (this.run.current.moveIndex < 0) {
+      this.run.current.moveIndex = 0;
+      this.setGround();
+    }
+    pubsub.emit('ply', this.run.moves);
   };
 
-  private redrawQuick = () => setTimeout(this.redraw, 100);
-  private redrawSlow = () => setTimeout(this.redraw, 1000);
+  private readonly redrawQuick = () => setTimeout(this.redraw, 100);
+  private readonly redrawSlow = () => setTimeout(this.redraw, 1000);
 
-  private pushToHistory = (win: boolean) =>
+  private readonly pushToHistory = (win: boolean) =>
     this.run.history.push({
       puzzle: this.run.current.puzzle,
       win,
       millis: this.run.history.length ? getNow() - this.run.current.startAt : 0, // first one is free
     });
 
-  private incPuzzle = (): boolean => {
+  private readonly incPuzzle = (): boolean => {
     const index = this.run.current.index;
     if (index < this.data.puzzles.length - 1) {
       this.run.current = new CurrentPuzzle(index + 1, this.data.puzzles[index + 1]);
@@ -167,10 +173,13 @@ export default class StormCtrl {
     return false;
   };
 
-  withGround = <A>(f: (cg: CgApi) => A): A | false => {
+  withGround: WithGround = f => {
     const g = this.ground();
-    return g && f(g);
+    return g ? f(g) : undefined;
   };
+
+  private readonly setGround = () =>
+    this.withGround(g => g.set(makeCgOpts(this.run, !this.run.endAt, this.flipped)));
 
   countWins = (): number => this.run.history.reduce((c, r) => c + (r.win ? 1 : 0), 0);
 
@@ -185,37 +194,28 @@ export default class StormCtrl {
     signed: this.vm.signed(),
   });
 
-  toggleFilterSlow = () => {
-    this.vm.filterSlow = !this.vm.filterSlow;
-    this.redraw();
-  };
-
-  toggleFilterFailed = () => {
-    this.vm.filterFailed = !this.vm.filterFailed;
-    this.redraw();
-  };
-
-  flip = () => {
+  flip = (): void => {
     this.flipped = !this.flipped;
     this.withGround(g => g.toggleOrientation());
     this.redraw();
   };
 
-  private checkDupTab = () => {
-    const dupTabMsg = lichess.storage.make('storm.tab');
+  private readonly checkDupTab = () => {
+    const dupTabMsg = storage.make('storm.tab');
     dupTabMsg.fire(this.data.puzzles[0].id);
     dupTabMsg.listen(ev => {
-      if (!this.run.clock.startAt && ev.value == this.data.puzzles[0].id) {
+      if (!this.run.clock.startAt && ev.value === this.data.puzzles[0].id) {
         this.vm.dupTab = true;
         this.redraw();
       }
     });
   };
 
-  private toggleZen = () => lichess.pubsub.emit('zen');
+  private readonly toggleZen = () => pubsub.emit('zen');
 
-  private hotkeys = () =>
-    window.Mousetrap.bind('space', () => location.reload())
+  private readonly hotkeys = () =>
+    site.mousetrap
+      .bind('space', () => location.reload())
       .bind('return', this.end)
       .bind('f', this.flip)
       .bind('z', this.toggleZen);

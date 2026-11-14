@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="challenges">Haasteet</string>
+  <string name="challengesX">Haasteet: %1$s</string>
   <string name="challengeToPlay">Haasta peliin</string>
   <string name="challengeDeclined">Haasteesta kieltäydyttiin</string>
   <string name="challengeAccepted">Haaste hyväksytty!</string>
@@ -22,4 +22,5 @@
   <string name="declineVariant">En juuri nyt halua pelata tätä varianttia.</string>
   <string name="declineNoBot">En ota vastaan haasteita boteilta.</string>
   <string name="declineOnlyBot">Otan vastaan haasteita vain boteilta.</string>
+  <string name="inviteLichessUser">Tai kutsu Lichess-käyttäjä:</string>
 </resources>

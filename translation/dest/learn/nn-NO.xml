@@ -109,6 +109,7 @@ Det er inga grunn til omvandling.</string>
   <string name="pawnsFormTheFrontLine">Bøndene dannar frontlina. Gjer eit valfritt trekk når du vil halda fram.</string>
   <string name="boardSetupComplete">Gratulerar! No kjenner du til korleis brikkene står stilt opp på brettet når eit parti sjakk startar.</string>
   <string name="castling">Rokade</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Det særeigne kongetrekket</string>
   <string name="castlingIntro">Få kongen din i tryggleik og gjer tårnet klårt for åtak!</string>
   <string name="castleKingSide">Flytt kongen to felt mot kongefløya for å rokere kort!</string>
@@ -121,7 +122,6 @@ Det er inga grunn til omvandling.</string>
   <string name="findAWayToCastleKingSide">Finn eit vis å rokere kort på!</string>
   <string name="findAWayToCastleQueenSide">Finn eit vis å rokere langt på!</string>
   <string name="castlingComplete">Gratulerar! Du bør nesten alltid rokere.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Det særeigne bondetrekket</string>
   <string name="enPassantIntro">Om motspelaren sin bonde hoppar to felt fram, kan du slå den ut som om den flytta eitt felt.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Svart flytta bonden to felt fram! Ta han \"en passant\" (i forbifarta).</string>
@@ -188,15 +188,15 @@ Bonde = 1</string>
   <string name="greatJob">Bra jobba!</string>
   <string name="perfect">Perfekt!</string>
   <string name="outstanding">Briljant!</string>
-  <string name="wayToGo">Hald fram slik!</string>
+  <string name="wayToGo">Fortsett slik!</string>
   <string name="yesYesYes">Ja, ja, ja!</string>
   <string name="youreGoodAtThis">Dette er du god på!</string>
   <string name="nailedIt">Du traff spikeren på hovudet.</string>
   <string name="rightOn">Midt i blinken!</string>
   <string name="stageXComplete">Nivå %s er fullført</string>
-  <string name="yourScore">Poengsum</string>
   <string name="next">Neste</string>
+  <string name="nextX">Neste: %s</string>
   <string name="backToMenu">Attende til menyen</string>
-  <string name="puzzleFailed">Oppgava vart ikke løyst!</string>
+  <string name="puzzleFailed">Oppgåva vart ikke løyst!</string>
   <string name="retry">Prøv på nytt</string>
 </resources>

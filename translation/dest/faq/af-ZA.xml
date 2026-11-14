@@ -16,6 +16,8 @@
   <string name="otherWaysToHelp">ander maniere om te help</string>
   <string name="areThereWebsitesBasedOnLichess">Is daar webwerwe wat op Lichess gebaseer is?</string>
   <string name="yesLichessInspiredOtherOpenSourceWebsites">Ja. Lichess het inderdaad ander open source-webwerwe geïnspireer wat ons %1$s, %2$s of %3$s gebruik.</string>
+  <string name="keyboardShortcuts">Watter sleutelbordkortpaaie is daar?</string>
+  <string name="keyboardShortcutsExplanation">Party Lichess blaaie het kitssleutels wat jy kan gebruik. Probeer om die \'?\' sleutel te druk op \'n studie, analise, raaisel of spel blad om die beskikbare kitssleutels te vertoon.</string>
   <string name="fairPlay">Regverdige spel</string>
   <string name="whenAmIEligibleRatinRefund">Wanneer kom ek in aanmerking vir die outomatiese terugbetaling van graderings van bedrieërs?</string>
   <string name="ratingRefundExplanation">Een minuut nadat \'n speler gemerk is, word hul 40 laaste wedstryde in die afgelope drie dae geneem. As u die teenstander in daardie wedstryde is, het u \'n aanslag verloor (as gevolg van \'n verlies of gelykop uitslag) en u gradering was nie voorlopig nie, u ontvang \'n terugbetaling. Die terugbetaling is beperk op grond van u piekgradering en u vordering na die wedstryd.
@@ -25,6 +27,8 @@
   <string name="howCanIBecomeModerator">Hoe kan ek moderator word?</string>
   <string name="youCannotApply">Dit is nie moontlik om aansoek te doen om moderator te word nie. As ons iemand sien wat volgens ons goed sal wees as moderator, sal ons hulle direk kontak.</string>
   <string name="isCorrespondenceDifferent">Is korrespondensie anders as normale skaak?</string>
+  <string name="pleaseReadFairPlayPage">Lees asb. ons %s vir meer inligting</string>
+  <string name="fairPlayPage">bladsy oor regverdige spel</string>
   <string name="youCanUseOpeningBookNoEngine">Op Lichess is die belangrikste verskil in reëls vir korrespondensie-skaak dat \'n openingsboek toegelaat word. Die gebruik van enjins is steeds verbode en sal daartoe gelei word dat dit vir enjinbystand gemerk word. Alhoewel ICCF die gebruik van enjins in korrespondensie toelaat, doen Lichess dit nie.</string>
   <string name="gameplay">Spel</string>
   <string name="howBulletBlitzEtcDecided">Hoe word daar besluit oor Bullet, Blitz en ander tydsbeheer?</string>
@@ -50,6 +54,7 @@ Die rekenaaranalise op Lichess word aangedryf deur Stockfish.</string>
 In seldsame gevalle kan dit moeilik wees om outomaties te besluit (gedwonge lyne, vestings). By verstek staan ​​ons altyd saam met die speler wat nie tyd verloor het nie.
 
 Let daarop dat dit moontlik kan wees om met \'n enkele ridder of biskop te paar as die opponent \'n stuk het wat die koning kan blokkeer.</string>
+  <string name="fideHandbook">FIDE-handboek</string>
   <string name="fideHandbookX">FIDE-handboek %s</string>
   <string name="discoveringEnPassant">Waarom kan \'n pion \'n ander pion vang as dit reeds geslaag is? (en passant)</string>
   <string name="explainingEnPassant">Dit is \'n wettige stap wat bekend staan ​​as \'en passant\'. Die Wikipedia-artikel gee \'n %1$s.
@@ -60,10 +65,9 @@ Dit word in afdeling 3.7 (d) van die %2$s beskryf:
 
 Kyk na die %3$s vir hierdie oefening vir oefening.</string>
   <string name="goodIntroduction">goeie inleiding</string>
-  <string name="officialRulesPDF">amptelike reëls (PDF)</string>
   <string name="lichessTraining">Lichess-opleiding</string>
   <string name="threefoldRepetition">Driedubbele herhaling</string>
-  <string name="threefoldRepetitionExplanation">As \'n posisie drie keer voorkom, kan spelers \'n loting met %1$s eis. Lichess implementeer die amptelike FIDE-reëls, soos beskryf in artikel 9.2 (d) van die %2$s.</string>
+  <string name="threefoldRepetitionExplanation">As \'n posisie drie keer voorkom, kan spelers \'n loting met %1$s eis. Lichess implementeer die amptelike FIDE-reëls, soos beskryf in artikel 9.2 van die %2$s.</string>
   <string name="threefoldRepetitionLowerCase">drieledige herhaling</string>
   <string name="notRepeatedMoves">Ons het nie bewegings herhaal nie. Waarom is die spel steeds deur herhaling getrek?</string>
   <string name="repeatedPositionsThatMatters">Driedubbele herhaling gaan oor herhaalde %1$s, nie beweeg nie. Herhaling hoef nie agtereenvolgens plaas te vind nie.</string>
@@ -95,7 +99,6 @@ Moenie om die LM-titel vra nie.</string>
   <string name="usernamesCannotBeChanged">Nee, gebruikersname kan nie verander word nie vir tegniese en praktiese redes. Gebruikersname word in te veel plekke gematerialiseer: databasisse, uitvoere, logboeke en mense se geheue. Jy kan die hoofletters en kleinletters een keer verander.</string>
   <string name="uniqueTrophies">Unieke trofeë</string>
   <string name="ownerUniqueTrophies">Daardie trofee is uniek in die geskiedenis van Lichess, niemand anders as %1$s sal dit ooit hê nie.</string>
-  <string name="wayOfBerserkExplanation">Om dit te kry, het hiimgosu homself uitgedaag om te berserk en 100 %% wedstryde van %s te wen.</string>
   <string name="aHourlyBulletTournament">\'n Bulletoernooi per uur</string>
   <string name="goldenZeeExplanation">ZugAddict was besig om te stroom en die laaste 2 uur het hy probeer om A.I. vlak 8 in \'n 1 + 0-wedstryd, sonder sukses. Thibault het vir hom gesê dat hy \'n unieke trofee sou kry as hy dit suksesvol gedoen het. Een uur later het hy Stockfish verpletter, en die belofte is nagekom.</string>
   <string name="lichessRatings">Lichess-graderings</string>

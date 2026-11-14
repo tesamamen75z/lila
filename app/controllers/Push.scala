@@ -1,29 +1,33 @@
 package controllers
 
-import lila.app._
+import lila.app.*
+import lila.common.HTTPRequest
+import lila.oauth.AccessToken
 import lila.push.WebSubscription
-import lila.push.WebSubscription.readers._
 
-final class Push(env: Env) extends LilaController(env) {
+final class Push(env: Env) extends LilaController(env):
 
-  def mobileRegister(platform: String, deviceId: String) =
-    Auth { implicit ctx => me =>
-      env.push.registerDevice(me, platform, deviceId)
-    }
+  def mobileRegister(platform: String, deviceId: String) = AuthOrScoped(_.Web.Mobile) { ctx ?=> me ?=>
+    env.push.registerDevice(me, platform, deviceId).inject(NoContent)
+  }
 
-  def mobileUnregister =
-    Auth { implicit ctx => me =>
-      env.push.unregisterDevices(me)
-    }
+  def mobileUnregister = AuthOrScoped(_.Web.Mobile) { ctx ?=> me ?=>
+    env.push.unregisterDevices(me).inject(NoContent)
+  }
 
-  def webSubscribe =
-    AuthBody(parse.json) { implicit ctx => me =>
-      val currentSessionId = ~env.security.api.reqSessionId(ctx.req)
-      ctx.body.body
-        .validate[WebSubscription]
-        .fold(
-          err => BadRequest(err.toString).fuccess,
-          data => env.push.webSubscriptionApi.subscribe(me, data, currentSessionId) inject NoContent
-        )
-    }
-}
+  def webSubscribe = AuthOrScopedBodyWithParser(parse.json)(_.Web.Mobile) { ctx ?=> me ?=>
+    val currentSessionId =
+      if ctx.isMobileOauth then HTTPRequest.bearer._1F.map(AccessToken.idFrom)
+      else env.security.api.reqSessionId(ctx.req)
+
+    currentSessionId match
+      case Some(currentSessionId) =>
+        val api = if ctx.isMobileOauth then env.push.unifiedSub else env.push.browserSub
+        ctx.body.body
+          .validate[WebSubscription]
+          .fold(
+            err => BadRequest(err.toString),
+            data => api.subscribe(me, data, currentSessionId).inject(NoContent)
+          )
+      case None => BadRequest("Session ID is missing")
+  }

@@ -1,3 +1,6 @@
-package lila
+package lila.search
 
-package object search extends PackageObject
+export lila.common.extensions.*
+export lila.core.lilaism.Lilaism.{ *, given }
+
+private lazy val logger = lila.log("lilaSearch")

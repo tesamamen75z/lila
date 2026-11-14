@@ -1,92 +1,36 @@
 package lila.api
 
-import chess.format.FEN
-import org.joda.time.DateTime
-import play.api.libs.json._
-import reactivemongo.api.bson._
-import reactivemongo.api.ReadPreference
+import chess.format.Fen
+import play.api.libs.json.*
+import reactivemongo.api.bson.*
+import scalalib.Json.given
+import scalalib.paginator.Paginator
 
-import lila.analyse.{ JsonView => analysisJson, Analysis }
-import lila.common.config._
-import lila.common.Json.jodaWrites
-import lila.common.paginator.{ Paginator, PaginatorJson }
-import lila.db.dsl._
-import lila.db.paginator.{ Adapter, CachedAdapter }
-import lila.game.BSONHandlers._
-import lila.game.Game.{ BSONFields => G }
-import lila.game.JsonView._
-import lila.game.{ CrosstableApi, Game, PerfPicker }
-import lila.user.User
+import lila.analyse.{ Analysis, JsonView as analysisJson }
+import lila.common.Json.given
+import lila.core.config.*
+import lila.db.dsl.{ *, given }
+import lila.db.paginator.Adapter
+import lila.game.BSONHandlers.given
+import lila.game.Game.BSONFields as G
 
 final private[api] class GameApi(
     net: NetConfig,
     apiToken: Secret,
     gameRepo: lila.game.GameRepo,
-    gameCache: lila.game.Cached,
+    playingUsers: lila.round.PlayingUsers,
     analysisRepo: lila.analyse.AnalysisRepo,
-    crosstableApi: CrosstableApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    crosstableApi: lila.game.CrosstableApi,
+    gameOpening: lila.game.GameOpening
+)(using Executor):
 
   import GameApi.WithFlags
 
-  def byUser(
-      user: User,
-      rated: Option[Boolean],
-      playing: Option[Boolean],
-      analysed: Option[Boolean],
-      withFlags: WithFlags,
-      nb: MaxPerPage,
-      page: Int
-  ): Fu[JsObject] =
-    Paginator(
-      adapter = new CachedAdapter(
-        adapter = new Adapter[Game](
-          collection = gameRepo.coll,
-          selector = {
-            if (~playing) lila.game.Query.nowPlaying(user.id)
-            else
-              $doc(
-                G.playerUids -> user.id,
-                G.status $gte chess.Status.Mate.id,
-                G.analysed -> analysed.map[BSONValue] {
-                  case true => BSONBoolean(true)
-                  case _    => $doc("$exists" -> false)
-                }
-              )
-          } ++ $doc(
-            G.rated -> rated.map[BSONValue] {
-              case true => BSONBoolean(true)
-              case _    => $doc("$exists" -> false)
-            }
-          ),
-          projection = none,
-          sort = $doc(G.createdAt -> -1),
-          readPreference = ReadPreference.secondaryPreferred
-        ),
-        nbResults =
-          if (~playing) gameCache.nbPlaying(user.id)
-          else
-            fuccess {
-              rated.fold(user.count.game) {
-                case true => user.count.rated
-                case _    => user.count.casual
-              }
-            }
-      ),
-      currentPage = page,
-      maxPerPage = nb
-    ) flatMap { pag =>
-      gamesJson(withFlags = withFlags)(pag.currentPageResults) map { games =>
-        PaginatorJson(pag withCurrentPageResults games)
-      }
-    }
-
-  def one(id: String, withFlags: WithFlags): Fu[Option[JsObject]] =
-    gameRepo game id flatMap {
-      _ ?? { g =>
-        gamesJson(withFlags)(List(g)) map (_.headOption)
-      }
-    }
+  def one(id: GameId)(using Req): Fu[Option[JsObject]] =
+    gameRepo
+      .game(id)
+      .flatMapz: g =>
+        gamesJson(GameApi.requestFlags)(List(g)).map(_.headOption)
 
   def byUsersVs(
       users: (User, User),
@@ -98,161 +42,157 @@ final private[api] class GameApi(
       page: Int
   ): Fu[JsObject] =
     Paginator(
-      adapter = new CachedAdapter(
-        adapter = new Adapter[Game](
-          collection = gameRepo.coll,
-          selector = {
-            if (~playing) lila.game.Query.nowPlayingVs(users._1.id, users._2.id)
-            else
-              lila.game.Query.opponents(users._1, users._2) ++ $doc(
-                G.status $gte chess.Status.Mate.id,
-                G.analysed -> analysed.map[BSONValue] {
-                  case true => BSONBoolean(true)
-                  case _    => $doc("$exists" -> false)
-                }
-              )
-          } ++ $doc(
-            G.rated -> rated.map[BSONValue] {
-              case true => BSONBoolean(true)
-              case _    => $doc("$exists" -> false)
-            }
-          ),
-          projection = none,
-          sort = $doc(G.createdAt -> -1),
-          readPreference = ReadPreference.secondaryPreferred
+      adapter = Adapter[Game](
+        collection = gameRepo.coll,
+        selector = {
+          if ~playing then lila.game.Query.nowPlayingVs(users._1.id, users._2.id)
+          else
+            lila.game.Query.opponents(users._1, users._2) ++ bdoc(
+              G.status.gte(chess.Status.Mate.id),
+              G.analysed -> analysed.map[BSONValue] {
+                if _ then BSONBoolean(true)
+                else bdoc("$exists" -> false)
+              }
+            )
+        } ++ bdoc(
+          G.rated -> rated.map[BSONValue] {
+            if _ then BSONBoolean(true)
+            else bdoc("$exists" -> false)
+          }
         ),
-        nbResults =
-          if (~playing) gameCache.nbPlaying(users._1.id)
-          else crosstableApi(users._1.id, users._2.id).dmap(_.nbGames)
+        projection = none,
+        sort = bdoc(G.createdAt -> -1),
+        _.sec
+      ).withNbResults(
+        if ~playing then playingUsers.nbPlayingRealtime(users._1.id)
+        else crosstableApi(users._1.id, users._2.id).dmap(_.nbGames)
       ),
       currentPage = page,
       maxPerPage = nb
-    ) flatMap { pag =>
-      gamesJson(withFlags.copy(fens = false))(pag.currentPageResults) map { games =>
-        PaginatorJson(pag withCurrentPageResults games)
+    ).flatMap { pag =>
+      gamesJson(withFlags.copy(fens = false))(pag.currentPageResults).map { games =>
+        Json.toJsObject(pag.withCurrentPageResults(games))
       }
     }
 
   def byUsersVs(
-      userIds: Iterable[User.ID],
+      userIds: Iterable[UserId],
       rated: Option[Boolean],
       playing: Option[Boolean],
       analysed: Option[Boolean],
       withFlags: WithFlags,
-      since: DateTime,
+      since: Instant,
       nb: MaxPerPage,
       page: Int
   ): Fu[JsObject] =
     Paginator(
-      adapter = new Adapter[Game](
+      adapter = Adapter[Game](
         collection = gameRepo.coll,
         selector = {
-          if (~playing) lila.game.Query.nowPlayingVs(userIds)
+          if ~playing then lila.game.Query.nowPlayingVs(userIds)
           else
-            lila.game.Query.opponents(userIds) ++ $doc(
-              G.status $gte chess.Status.Mate.id,
+            lila.game.Query.opponents(userIds) ++ bdoc(
+              G.status.gte(chess.Status.Mate.id),
               G.analysed -> analysed.map[BSONValue] {
-                case true => BSONBoolean(true)
-                case _    => $doc("$exists" -> false)
+                if _ then BSONBoolean(true)
+                else bdoc("$exists" -> false)
               }
             )
-        } ++ $doc(
+        } ++ bdoc(
           G.rated -> rated.map[BSONValue] {
-            case true => BSONBoolean(true)
-            case _    => $doc("$exists" -> false)
+            if _ then BSONBoolean(true)
+            else bdoc("$exists" -> false)
           },
-          G.createdAt $gte since
+          G.createdAt.gte(since)
         ),
         projection = none,
-        sort = $doc(G.createdAt -> -1),
-        readPreference = ReadPreference.secondaryPreferred
+        sort = bdoc(G.createdAt -> -1),
+        _.sec
       ),
       currentPage = page,
       maxPerPage = nb
-    ) flatMap { pag =>
-      gamesJson(withFlags.copy(fens = false))(pag.currentPageResults) map { games =>
-        PaginatorJson(pag withCurrentPageResults games)
+    ).flatMap { pag =>
+      gamesJson(withFlags.copy(fens = false))(pag.currentPageResults).map { games =>
+        Json.toJsObject(pag.withCurrentPageResults(games))
       }
     }
 
   private def makeUrl(game: Game) = s"${net.baseUrl}/${game.id}/${game.naturalOrientation.name}"
 
-  private def gamesJson(withFlags: WithFlags)(games: Seq[Game]): Fu[Seq[JsObject]] = {
+  private def gamesJson(withFlags: WithFlags)(games: Seq[Game]): Fu[Seq[JsObject]] =
     val allAnalysis =
-      if (withFlags.analysis) analysisRepo byIds games.map(_.id)
+      if withFlags.analysis then analysisRepo.byIds(games.map(g => Analysis.Id(g.id)))
       else fuccess(List.fill(games.size)(none[Analysis]))
-    allAnalysis flatMap { analysisOptions =>
-      (games map gameRepo.initialFen).sequenceFu map { initialFens =>
-        games zip analysisOptions zip initialFens map { case ((g, analysisOption), initialFen) =>
+    allAnalysis.flatMap { analysisOptions =>
+      (games.map(gameRepo.initialFen)).parallel.map { initialFens =>
+        games.zip(analysisOptions).zip(initialFens).map { case ((g, analysisOption), initialFen) =>
           gameToJson(g, analysisOption, initialFen, checkToken(withFlags))
         }
       }
     }
-  }
 
-  private def checkToken(withFlags: WithFlags) = withFlags applyToken apiToken.value
+  private def checkToken(withFlags: WithFlags) = withFlags.applyToken(apiToken.value)
 
   private def gameToJson(
       g: Game,
       analysisOption: Option[Analysis],
-      initialFen: Option[FEN],
+      initialFen: Option[Fen.Full],
       withFlags: WithFlags
   ) =
     Json
       .obj(
-        "id"         -> g.id,
+        "id" -> g.id,
         "initialFen" -> initialFen,
-        "rated"      -> g.rated,
-        "variant"    -> g.variant.key,
-        "speed"      -> g.speed.key,
-        "perf"       -> PerfPicker.key(g),
-        "createdAt"  -> g.createdAt,
+        "rated" -> g.rated,
+        "variant" -> g.variant.key,
+        "speed" -> g.speed.key,
+        "perf" -> g.perfKey,
+        "createdAt" -> g.createdAt,
         "lastMoveAt" -> g.movedAt,
-        "turns"      -> g.turns,
-        "color"      -> g.turnColor.name,
-        "status"     -> g.status.name,
+        "turns" -> g.ply,
+        "color" -> g.turnColor.name,
+        "status" -> g.status.name,
         "clock" -> g.clock.map { clock =>
           Json.obj(
-            "initial"   -> clock.limitSeconds,
+            "initial" -> clock.limitSeconds,
             "increment" -> clock.incrementSeconds,
             "totalTime" -> clock.estimateTotalSeconds
           )
         },
         "daysPerTurn" -> g.daysPerTurn,
-        "players" -> JsObject(g.players map { p =>
+        "players" -> JsObject(g.players.mapList { p =>
           p.color.name -> Json
             .obj(
-              "userId"     -> p.userId,
-              "rating"     -> p.rating,
+              "userId" -> p.userId,
+              "rating" -> p.rating,
               "ratingDiff" -> p.ratingDiff
             )
             .add("name", p.name)
             .add("provisional" -> p.provisional)
-            .add("moveCentis" -> withFlags.moveTimes ?? g.moveTimes(p.color).map(_.map(_.centis)))
+            .add("moveCentis" -> withFlags.moveTimes.so:
+              lila.game.GameExt.computeMoveTimes(g, p.color).map(_.map(_.centis)))
             .add("blurs" -> withFlags.blurs.option(p.blurs.nb))
-            .add("analysis" -> analysisOption.flatMap(analysisJson.player(g pov p.color)))
-        }),
-        "analysis" -> analysisOption.ifTrue(withFlags.analysis).map(analysisJson.moves(_)),
-        "moves"    -> withFlags.moves.option(g.pgnMoves mkString " "),
-        "opening"  -> withFlags.opening.??(g.opening),
-        "fens" -> (withFlags.fens && g.finished) ?? {
-          chess.Replay
-            .boards(
-              moveStrs = g.pgnMoves,
-              initialFen = initialFen,
-              variant = g.variant
+            .add(
+              "analysis" -> analysisOption
+                .flatMap(analysisJson.player(g.pov(p.color).sideAndStart)(_, accuracy = none))
             )
-            .toOption map { boards =>
-            JsArray(boards map chess.format.Forsyth.exportBoard map JsString.apply)
-          }
-        },
+        }),
+        "moves" -> withFlags.moves.option(g.sans.mkString(" ")),
+        "fens" -> ((withFlags.fens && g.finished).so {
+          chess
+            .Position(g.variant, initialFen)
+            .playPositions(g.sans)
+            .toOption
+            .map(boards => JsArray(boards.map(chess.format.Fen.writeBoard).map(Json.toJson)))
+        }: Option[JsArray]),
         "winner" -> g.winnerColor.map(_.name),
-        "url"    -> makeUrl(g)
+        "url" -> makeUrl(g)
       )
+      .add("analysis", analysisOption.ifTrue(withFlags.analysis).map(analysisJson.moves(_)))
+      .add("opening", withFlags.opening.so(gameOpening.quickAtPly(g)))
       .noNull
-}
 
-object GameApi {
+object GameApi:
 
   case class WithFlags(
       analysis: Boolean = false,
@@ -262,11 +202,16 @@ object GameApi {
       moveTimes: Boolean = false,
       blurs: Boolean = false,
       token: Option[String] = none
-  ) {
+  ):
+    def applyToken(validToken: String) = copy(blurs = token.has(validToken))
 
-    def applyToken(validToken: String) =
-      copy(
-        blurs = token has validToken
-      )
-  }
-}
+  def requestFlags(using Req) =
+    import lila.common.HTTPRequest.*
+    WithFlags(
+      analysis = queryStringBool("with_analysis"),
+      moves = queryStringBool("with_moves"),
+      fens = queryStringBool("with_fens"),
+      opening = queryStringBool("with_opening"),
+      moveTimes = queryStringBool("with_movetimes"),
+      token = queryStringGet("token")
+    )

@@ -1,6 +1,6 @@
-package lila
+package lila.msg
 
-package object msg extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[msg] val logger = lila.log("msg")
-}
+private lazy val logger = lila.log("msg")

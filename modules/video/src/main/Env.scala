@@ -1,46 +1,43 @@
 package lila.video
 
-import play.api.libs.ws.StandaloneWSClient
-import play.api.Mode
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
 import play.api.Configuration
-import scala.concurrent.duration._
+import play.api.libs.ws.StandaloneWSClient
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.common.config.given
+import lila.core.config.*
 
 @Module
-private class VideoConfig(
+private final class VideoConfig(
     @ConfigName("collection.video") val videoColl: CollName,
     @ConfigName("collection.view") val viewColl: CollName,
     @ConfigName("sheet.url") val sheetUrl: String,
-    @ConfigName("sheet.delay") val sheetDelay: FiniteDuration,
     @ConfigName("youtube.url") val youtubeUrl: String,
     @ConfigName("youtube.api_key") val youtubeApiKey: Secret,
-    @ConfigName("youtube.max") val youtubeMax: Max,
-    @ConfigName("youtube.delay") val youtubeDelay: FiniteDuration
+    @ConfigName("youtube.max") val youtubeMax: Max
 )
 
 final class Env(
     appConfig: Configuration,
     ws: StandaloneWSClient,
-    scheduler: akka.actor.Scheduler,
+    scheduler: Scheduler,
     db: lila.db.Db,
     cacheApi: lila.memo.CacheApi,
-    mode: Mode
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    mode: play.api.Mode
+)(using Executor, Scheduler):
 
-  private val config = appConfig.get[VideoConfig]("video")(AutoConfig.loader)
+  private val config = appConfig.get[VideoConfig]("video")(using AutoConfig.loader)
 
-  lazy val api = new VideoApi(
+  lazy val api = VideoApi(
     cacheApi = cacheApi,
     videoColl = db(config.videoColl),
     viewColl = db(config.viewColl)
   )
 
-  private lazy val sheet = new Sheet(ws, config.sheetUrl, api)
+  private lazy val sheet = VideoSheet(ws, config.sheetUrl, api)
 
-  private lazy val youtube = new Youtube(
+  private lazy val youtube = Youtube(
     ws = ws,
     url = config.youtubeUrl,
     apiKey = config.youtubeApiKey,
@@ -48,13 +45,13 @@ final class Env(
     api = api
   )
 
-  if (mode == Mode.Prod) {
-    scheduler.scheduleWithFixedDelay(config.sheetDelay * 2, config.sheetDelay) { () =>
-      sheet.fetchAll.logFailure(logger).unit
-    }
+  lila.common.Cli.handle():
+    case "video" :: "sheet" :: Nil =>
+      sheet.fetchAll.map(nb => s"Processed $nb videos")
 
-    scheduler.scheduleWithFixedDelay(config.youtubeDelay * 2, config.youtubeDelay) { () =>
-      youtube.updateAll.logFailure(logger).unit
-    }
-  }
-}
+  if mode.isProd then
+    scheduler.scheduleWithFixedDelay(6.hours, 6.hours): () =>
+      sheet.fetchAll.logFailure(logger)
+
+    scheduler.scheduleWithFixedDelay(98.minutes, 98.minutes): () =>
+      youtube.updateMany.logFailure(logger)

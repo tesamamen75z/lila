@@ -1,8 +1,7 @@
 package lila.irwin
 
-import lila.report.Suspect
-import lila.game.Game
 import lila.analyse.Analysis
+import lila.report.Suspect
 
 case class IrwinRequest(
     suspect: Suspect,
@@ -10,15 +9,8 @@ case class IrwinRequest(
     games: List[(Game, Option[Analysis])]
 )
 
-object IrwinRequest {
+object IrwinRequest:
 
-  sealed trait Origin {
-    def key = toString.toLowerCase
-  }
-
-  object Origin {
-    case object Moderator   extends Origin
-    case object Tournament  extends Origin
-    case object Leaderboard extends Origin
-  }
-}
+  enum Origin:
+    case Moderator, Tournament, Leaderboard
+    def key = Origin.this.toString.toLowerCase

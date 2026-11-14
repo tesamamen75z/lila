@@ -1,58 +1,56 @@
 package lila.fishnet
 
-import reactivemongo.api.bson._
-import scala.concurrent.duration._
-
-import lila.common.IpAddress
-import lila.db.dsl._
+import lila.core.net.IpAddress
+import lila.db.dsl.{ *, given }
 
 final private class FishnetLimiter(
     analysisColl: Coll,
     requesterApi: lila.analyse.RequesterApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+)(using Executor, lila.core.config.RateLimit):
 
-  def apply(sender: Work.Sender, ignoreConcurrentCheck: Boolean, ownGame: Boolean): Fu[Boolean] =
-    (fuccess(ignoreConcurrentCheck) >>| concurrentCheck(sender)) flatMap {
-      case false => fuFalse
-      case true  => perDayCheck(sender)
-    } flatMap { accepted =>
-      (accepted ?? requesterApi.add(sender.userId, ownGame)) inject accepted
-    }
+  import FishnetLimiter.*
 
-  private val RequestLimitPerIP = new lila.memo.RateLimit[IpAddress](
-    credits = 60,
-    duration = 20 hours,
-    key = "request_analysis.ip"
+  def apply(sender: Work.Sender, ignoreConcurrentCheck: Boolean, ownGame: Boolean): Fu[Analyser.Result] =
+    (fuccess(ignoreConcurrentCheck) >>| concurrentCheck(sender))
+      .flatMap:
+        if _ then perDayCheck(sender)
+        else fuccess(Analyser.Result.ConcurrentAnalysis)
+      .flatMap: result =>
+        (result.ok.so(requesterApi.add(sender.userId, ownGame))).inject(result)
+
+  private val RequestLimitPerIP = lila.memo.RateLimit[IpAddress](
+    credits = 120,
+    duration = 1.day,
+    limiterKey = "request_analysis.ip"
   )
 
   private def concurrentCheck(sender: Work.Sender) =
-    sender match {
+    sender match
       case Work.Sender(_, _, mod, system) if mod || system => fuTrue
       case Work.Sender(userId, ip, _, _) =>
-        !analysisColl.exists(
-          $or(
-            $doc("sender.ip"     -> ip),
-            $doc("sender.userId" -> userId)
+        analysisColl
+          .exists(
+            or(
+              bdoc("sender.ip" -> ip),
+              bdoc("sender.userId" -> userId)
+            )
           )
-        )
-      case _ => fuFalse
-    }
+          .not
 
-  private val maxPerDay  = 35
-  private val maxPerWeek = 160
-
-  private def perDayCheck(sender: Work.Sender) =
-    sender match {
-      case Work.Sender(_, _, mod, system) if mod || system => fuTrue
+  private def perDayCheck(sender: Work.Sender): Fu[Analyser.Result] =
+    sender match
+      case Work.Sender(_, _, mod, system) if mod || system => fuccess(Analyser.Result.Ok)
       case Work.Sender(userId, ip, _, _) =>
-        def perUser =
-          requesterApi.countTodayAndThisWeek(userId) map { case (daily, weekly) =>
-            weekly < maxPerWeek &&
-              daily < (if (weekly < maxPerWeek * 2 / 3) maxPerDay else maxPerDay * 2 / 3)
-          }
-        ip.fold(perUser) { ipAddress =>
-          RequestLimitPerIP(ipAddress, cost = 1)(perUser)(fuccess(false))
-        }
-      case _ => fuFalse
-    }
-}
+        def perUser = requesterApi
+          .countTodayAndThisWeek(userId)
+          .map: (daily, weekly) =>
+            if weekly >= maxPerWeek then Analyser.Result.WeeklyLimit
+            else if daily >= (if weekly < maxPerWeek * 2 / 3 then maxPerDay else maxPerDay * 2 / 3)
+            then Analyser.Result.DailyLimit
+            else Analyser.Result.Ok
+        ip.fold(perUser): ipAddress =>
+          RequestLimitPerIP(ipAddress, fuccess(Analyser.Result.DailyIpLimit))(perUser)
+
+object FishnetLimiter:
+  val maxPerDay = 40
+  val maxPerWeek = 200

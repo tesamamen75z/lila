@@ -1,316 +1,447 @@
 package lila.team
 
-import actorApi._
-import org.joda.time.Period
-import play.api.libs.json.{ JsSuccess, Json }
-import reactivemongo.api.{ Cursor, ReadPreference }
-import scala.util.chaining._
-import scala.util.Try
+import scalalib.actor.AsyncActorSequencers
 
-import lila.chat.ChatApi
+import java.time.Period
+
 import lila.common.Bus
-import lila.db.dsl._
-import lila.hub.actorApi.team.{ CreateTeam, JoinTeam, KickFromTeam }
-import lila.hub.actorApi.timeline.{ Propagate, TeamCreate, TeamJoin }
-import lila.hub.LeaderTeam
-import lila.memo.CacheApi._
-import lila.mod.ModlogApi
-import lila.user.{ User, UserRepo }
+import lila.core.i18n.I18nKey
+import lila.core.notify.{ NotificationContent, NotifyApi }
+import lila.core.perm.Granter
+import lila.core.team.*
+import lila.core.timeline as tl
+import lila.core.userId.UserSearch
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi.*
 
 final class TeamApi(
     teamRepo: TeamRepo,
-    memberRepo: MemberRepo,
-    requestRepo: RequestRepo,
-    userRepo: UserRepo,
-    cached: Cached,
-    notifier: Notifier,
-    timeline: lila.hub.actors.Timeline,
-    indexer: lila.hub.actors.TeamSearch,
-    modLog: ModlogApi,
-    chatApi: ChatApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    memberRepo: TeamMemberRepo,
+    requestRepo: TeamRequestRepo,
+    updateApi: TeamUpdateApi,
+    userApi: lila.core.user.UserApi,
+    cached: TeamCached,
+    notifyApi: NotifyApi,
+    chatApi: lila.core.chat.ChatApi,
+    spam: lila.core.security.SpamApi
+)(using Executor, Scheduler)
+    extends lila.core.team.TeamApi:
 
-  import BSONHandlers._
+  import BSONHandlers.given
 
-  def team(id: Team.ID) = teamRepo byId id
+  export teamRepo.{ filterHideForum, onUserDelete, creatorOf }
 
-  def teamEnabled(id: Team.ID) = teamRepo enabled id
+  private val workQueue = AsyncActorSequencers[TeamId](
+    maxSize = Max(8),
+    expiration = 30.seconds,
+    timeout = 5.seconds,
+    name = "team",
+    lila.mon.asyncActorMonitor.highCardinality
+  )
 
-  def leaderTeam(id: Team.ID) = teamRepo.coll.byId[LeaderTeam](id, $doc("name" -> true))
+  def team(id: TeamId) = teamRepo.byId(id)
 
-  def lightsByLeader = teamRepo.lightsByLeader _
+  def teamEnabled(id: TeamId) = teamRepo.enabled(id)
 
-  def request(id: Team.ID) = requestRepo.coll.byId[Request](id)
+  def leaderTeam(id: TeamId) = teamRepo.coll.byId[LightTeam](id, bdoc("name" -> true))
 
-  def create(setup: TeamSetup, me: User): Fu[Team] = {
-    val s      = setup.trim
-    val bestId = Team.nameToId(s.name)
-    chatApi.exists(bestId) map {
-      case true  => Team.randomId()
-      case false => bestId
-    } flatMap { id =>
-      val team = Team.make(
-        id = id,
-        name = s.name,
-        location = s.location,
-        password = s.password,
-        description = s.description,
-        descPrivate = s.descPrivate,
-        open = s.isOpen,
-        createdBy = me,
-        hideMembers = Some(s.hideMembers),
-        hideForum = Some(s.hideForum)
-      )
-      teamRepo.coll.insert.one(team) >>
-        memberRepo.add(team.id, me.id) >>- {
-          cached invalidateTeamIds me.id
-          indexer ! InsertTeam(team)
-          timeline ! Propagate(
-            TeamCreate(me.id, team.id)
-          ).toFollowersOf(me.id)
-          Bus.publish(CreateTeam(id = team.id, name = team.name, userId = me.id), "team")
-        } inject team
-    }
-  }
+  def lightsByTourLeader[U: UserIdOf](leader: U): Fu[List[LightTeam]] =
+    memberRepo.teamsLedBy(leader, Some(_.Tour)).flatMap(teamRepo.lightsByIds)
 
-  def update(team: Team, edit: TeamEdit, me: User): Funit =
-    edit.trim pipe { e =>
-      team.copy(
-        location = e.location,
-        password = e.password,
-        description = e.description,
-        descPrivate = e.descPrivate,
-        open = e.isOpen,
-        chat = e.chat,
-        hideMembers = Some(e.hideMembers),
-        hideForum = Some(e.hideForum)
-      ) pipe { team =>
-        teamRepo.coll.update.one($id(team.id), team).void >>
-          !team.leaders(me.id) ?? {
-            modLog.teamEdit(me.id, team.createdBy, team.name)
-          } >>-
-          (indexer ! InsertTeam(team))
-      }
-    }
+  def lightsOf[U: UserIdOf](member: U): Fu[List[LightTeam]] =
+    cached.teamIdsList(member).flatMap(teamRepo.lightsByIds)
 
-  def mine(me: User): Fu[List[Team]] =
-    cached teamIdsList me.id flatMap teamRepo.byIdsSortPopular
+  def forumAccessOf(id: TeamId) = cached.forumAccess.get(id)
 
-  def isSubscribed = memberRepo.isSubscribed _
+  def request(id: TeamRequest.ID) = requestRepo.coll.byId[TeamRequest](id)
 
-  def subscribe = memberRepo.subscribe _
+  def show(team: Team)(using me: Option[Me]): Fu[Team.TeamShow] = for
+    leaders <- memberRepo.leaders(team.id)
+    member <- me.soUse(memberOf(team.id))
+    requests <- (team.enabled && member.exists(_.hasPerm(_.Request))).so(requestsWithUsers(team))
+    myRequest <- member.isEmpty.so(me.so(m => requestRepo.find(team.id, m.userId)))
+    update <- ((team.enabled && member.isDefined) || Granter.opt(_.ManageTeam))
+      .so(updateApi.teamLatest(team.id))
+  yield Team.TeamShow(team, leaders, member, myRequest, requests, update)
 
-  def countTeamsOf(me: User) =
-    cached teamIdsList me.id dmap (_.size)
+  def create(setup: TeamSetup)(using me: Me): Fu[Team] =
+    val bestId = Team.nameToId(setup.name)
+    for
+      exists <- chatApi.exists(bestId.into(ChatId))
+      id = if exists then Team.randomId() else bestId
+      team = Team
+        .make(
+          id = id,
+          name = setup.name,
+          password = setup.password,
+          intro = setup.intro,
+          description = setup.description,
+          descPrivate = setup.descPrivate.filter(_.value.nonEmpty),
+          open = setup.isOpen,
+          createdBy = me
+        )
+        .copy(chat = setup.chat, forum = setup.forum)
+      _ <- teamRepo.coll.insert.one(team)
+      _ <- memberRepo.add(team.id, me.userId, TeamSecurity.Permission.values.toSet)
+    yield
+      cached.invalidateTeamIds(me.userId)
+      Bus.pub(TeamCreate(team.data))
+      lila.common.Bus.pub(tl.Propagate(tl.TeamCreate(me.userId, team.id)).toFollowersOf(me.userId))
+      team
 
-  def hasJoinedTooManyTeams(me: User) =
-    countTeamsOf(me).dmap(_ > Team.maxJoin(me))
+  private[team] def createQuietly(team: Team)(using me: Me): Fu[Team] = for
+    _ <- teamRepo.coll.insert.one(team)
+    _ <- memberRepo.add(team.id, me.userId, TeamSecurity.Permission.values.toSet)
+  yield
+    cached.invalidateTeamIds(me.userId)
+    team
 
-  def hasTeams(me: User): Fu[Boolean] = cached.teamIds(me.id).map(_.value.nonEmpty)
+  def update(old: Team, edit: TeamEdit)(using me: Me): Fu[String] = update:
+    old.copy(
+      password = edit.password,
+      intro = edit.intro,
+      description = edit.description.map(spam.replace),
+      descPrivate = edit.descPrivate.map(_.map(spam.replace)),
+      open = edit.isOpen,
+      chat = edit.chat,
+      forum = edit.forum,
+      hideMembers = Some(edit.hideMembers),
+      flair = edit.flair
+    )
+
+  def update(team: Team)(using me: Me): Fu[String] =
+    import reactivemongo.api.bson.*
+    for
+      blocklist <- blocklist.get(team)
+      _ <- teamRepo.coll.update.one(bid(team.id), bsonWriteDoc(team) ++ bdoc("blocklist" -> blocklist))
+      isLeader <- hasPerm(team.id, _.Settings)
+    yield
+      cached.forumAccess.invalidate(team.id)
+      cached.lightCache.invalidate(team.id)
+      Bus.pub(TeamUpdate(team.data, byMod = !isLeader))
+      team.automodText
+
+  def mine(using me: MyId): Fu[List[Team.WithMyLeadership]] =
+    cached.teamIdsList(me).flatMap(teamRepo.byIdsSortPopular).flatMap(memberRepo.addMyLeadership)
+
+  def countTeamsOf(me: Me) =
+    cached.teamIds(me).dmap(_.size)
+
+  def hasJoinedTooManyTeams(using me: Me) =
+    countTeamsOf(me).dmap(Team.maxJoin(me) < _)
+
+  def hasTeams(me: User): Fu[Boolean] = cached.teamIds(me.id).map(_.nonEmpty)
+
+  def joinedTeamIdsOfUserAsSeenBy(of: User)(using me: Me): Fu[List[TeamId]] =
+    cached
+      .teamIdsList(of.id)
+      .map(_.take(Team.maxJoin(of).value))
+      .flatMap: allIds =>
+        if Granter(_.AccountInfo) then fuccess(allIds)
+        else
+          allIds.nonEmpty.so:
+            teamRepo.filterHideMembers(allIds).flatMap { hiddenIds =>
+              if hiddenIds.isEmpty then fuccess(allIds)
+              else
+                cached.teamIds(me.userId).map { viewerTeamIds =>
+                  allIds.filter: id =>
+                    !hiddenIds(id) || viewerTeamIds.contains(id)
+                }
+            }
 
   def countCreatedRecently(me: User): Fu[Int] =
-    teamRepo.countCreatedSince(me.id, Period weeks 1)
+    teamRepo.countCreatedSince(me.id, Period.ofWeeks(1))
 
   def requestsWithUsers(team: Team): Fu[List[RequestWithUser]] =
-    for {
-      requests <- requestRepo findByTeam team.id
-      users    <- userRepo usersFromSecondary requests.map(_.user)
-    } yield requests zip users map { case (request, user) =>
-      RequestWithUser(request, user)
-    }
+    requestRepo.findActiveByTeam(team.id, 50).flatMap(requestsWithUsers)
 
-  def requestsWithUsers(user: User): Fu[List[RequestWithUser]] =
-    for {
-      teamIds  <- teamRepo enabledTeamIdsByLeader user.id
-      requests <- requestRepo findByTeams teamIds
-      users    <- userRepo usersFromSecondary requests.map(_.user)
-    } yield requests zip users map { case (request, user) =>
-      RequestWithUser(request, user)
-    }
+  def declinedRequestsWithUsers(team: Team): Fu[List[RequestWithUser]] =
+    requestRepo.findDeclinedByTeam(team.id, 50).flatMap(requestsWithUsers)
 
-  def join(team: Team, me: User, request: Option[String], password: Option[String]): Fu[Requesting] =
-    if (team.open) {
-      if (team.passwordMatches(~password)) doJoin(team, me) inject Requesting.Joined
-      else fuccess(Requesting.NeedPassword)
-    } else motivateOrJoin(team, me, request)
+  def requestsWithUsers(user: User): Fu[List[RequestWithUser]] = for
+    requestManagers <- memberRepo.leadersOf(user, _.Request)
+    teamIds = requestManagers.map(_.team)
+    requests <- requestRepo.findActiveByTeams(teamIds)
+    withUsers <- requestsWithUsers(requests)
+  yield withUsers
 
-  private def motivateOrJoin(team: Team, me: User, msg: Option[String]) =
-    msg.fold(fuccess[Requesting](Requesting.NeedRequest)) { txt =>
-      createRequest(team, me, txt) inject Requesting.Joined
-    }
+  private def requestsWithUsers(requests: List[TeamRequest]): Fu[List[RequestWithUser]] =
+    userApi
+      .listWithPerfs(requests.map(_.user), includeClosed = false)
+      .map: users =>
+        RequestWithUser.combine(requests, users.filter(_.enabled.yes))
 
-  def requestable(teamId: Team.ID, user: User): Fu[Option[Team]] =
-    for {
-      teamOption <- teamEnabled(teamId)
-      able       <- teamOption.??(requestable(_, user))
-    } yield teamOption ifTrue able
-
-  def requestable(team: Team, user: User): Fu[Boolean] =
-    for {
-      belongs   <- belongsTo(team.id, user.id)
-      requested <- requestRepo.exists(team.id, user.id)
-    } yield !belongs && !requested
-
-  def createRequest(team: Team, user: User, msg: String): Funit =
-    requestable(team, user) flatMap {
-      _ ?? {
-        val request = Request.make(team = team.id, user = user.id, message = msg)
-        requestRepo.coll.insert.one(request).void >>- (cached.nbRequests invalidate team.createdBy)
-      }
-    }
-
-  def cancelRequest(teamId: Team.ID, user: User): Fu[Option[Team]] =
-    teamRepo.coll.byId[Team](teamId) flatMap {
-      _ ?? { team =>
-        requestRepo.cancel(team.id, user) map (_ option team)
-      }
-    }
-
-  def processRequest(team: Team, request: Request, accept: Boolean): Funit =
-    for {
-      _ <- requestRepo.coll.delete.one(request)
-      _ = cached.nbRequests invalidate team.createdBy
-      userOption <- userRepo byId request.user
-      _ <-
-        userOption
-          .filter(_ => accept)
-          .??(user => doJoin(team, user) >> notifier.acceptRequest(team, request))
-    } yield ()
-
-  def deleteRequestsByUserId(userId: User.ID) =
-    requestRepo.getByUserId(userId) flatMap {
-      _.map { request =>
-        requestRepo.remove(request.id) >>
-          teamRepo.leadersOf(request.team).map {
-            _ foreach cached.nbRequests.invalidate
-          }
-      }.sequenceFu
-    }
-
-  def doJoin(team: Team, user: User): Funit =
-    !belongsTo(team.id, user.id) flatMap {
-      _ ?? {
-        memberRepo.add(team.id, user.id) >>
-          teamRepo.incMembers(team.id, +1) >>- {
-            cached invalidateTeamIds user.id
-            timeline ! Propagate(TeamJoin(user.id, team.id)).toFollowersOf(user.id)
-            Bus.publish(JoinTeam(id = team.id, userId = user.id), "team")
-          }
-      } recover lila.db.ignoreDuplicateKey
-    }
-
-  def quit(teamId: Team.ID, me: User): Fu[Option[Team]] =
-    teamRepo.coll.byId[Team](teamId) flatMap {
-      _ ?? { team =>
-        doQuit(team, me.id) inject team.some
-      }
-    }
-
-  def teamsOf(username: String) =
-    cached.teamIdsList(User normalize username) flatMap {
-      teamRepo.coll.byIds[Team](_, ReadPreference.secondaryPreferred)
-    }
-
-  private def doQuit(team: Team, userId: User.ID): Funit =
-    memberRepo.remove(team.id, userId) map { res =>
-      if (res.n == 1) teamRepo.incMembers(team.id, -1)
-      cached.invalidateTeamIds(userId)
-    }
-
-  def quitAll(userId: User.ID): Fu[List[Team.ID]] =
-    cached.teamIdsList(userId) flatMap { teamIds =>
-      memberRepo.removeByUser(userId) >>
-        requestRepo.removeByUser(userId) >>
-        teamIds.map { teamRepo.incMembers(_, -1) }.sequenceFu.void >>-
-        cached.invalidateTeamIds(userId) inject teamIds
-    }
-
-  def kick(team: Team, userId: User.ID, me: User): Funit =
-    doQuit(team, userId) >>
-      (!team.leaders(me.id)).?? {
-        modLog.teamKick(me.id, userId, team.name)
-      } >>-
-      Bus.publish(KickFromTeam(teamId = team.id, userId = userId), "teamKick")
-
-  private case class TagifyUser(value: String)
-  implicit private val TagifyUserReads = Json.reads[TagifyUser]
-
-  def setLeaders(team: Team, json: String, by: User, byMod: Boolean): Funit = {
-    val leaders: Set[User.ID] = Try {
-      json.trim.nonEmpty ?? {
-        Json.parse(json).validate[List[TagifyUser]] match {
-          case JsSuccess(users, _) =>
-            users
-              .map(_.value.toLowerCase.trim)
-              .filter(User.lichessId !=)
-              .toSet take 30
-          case _ => Set.empty[User.ID]
-        }
-      }
-    } getOrElse Set.empty
-    memberRepo.filterUserIdsInTeam(team.id, leaders) flatMap { ids =>
-      ids.nonEmpty ?? {
-        if (ids(team.createdBy) || !team.leaders(team.createdBy) || by.id == team.createdBy || byMod) {
-          cached.leaders.put(team.id, fuccess(ids))
-          logger.info(s"valid setLeaders ${team.id}: ${ids mkString ", "} by @${by.id}")
-          teamRepo.setLeaders(team.id, ids).void
-        } else {
-          logger.info(s"invalid setLeaders ${team.id}: ${ids mkString ", "} by @${by.id}")
-          funit
-        }
-      }
-    }
-  }
-
-  def isLeaderOf(leader: User.ID, member: User.ID) =
-    cached.teamIdsList(member) flatMap { teamIds =>
-      teamIds.nonEmpty ?? teamRepo.coll.exists($inIds(teamIds) ++ $doc("leaders" -> leader))
-    }
-
-  def toggleEnabled(team: Team, by: User): Funit =
-    if (
-      lila.security.Granter(_.ManageTeam)(by) || team.createdBy == by.id ||
-      (team.leaders(by.id) && !team.leaders(team.createdBy))
-    ) {
-      if (team.enabled)
-        teamRepo.disable(team).void >>
-          memberRepo.userIdsByTeam(team.id).map { _ foreach cached.invalidateTeamIds } >>
-          requestRepo.removeByTeam(team.id).void >>-
-          (indexer ! RemoveTeam(team.id))
+  def join(team: Team, request: Option[String], password: Option[String])(using me: Me): Fu[Requesting] =
+    workQueue(team.id):
+      if !team.acceptsMembers then fuccess(Requesting.Closed)
       else
-        teamRepo.enable(team).void >>- (indexer ! InsertTeam(team))
-    } else
-      teamRepo.setLeaders(team.id, team.leaders - by.id)
+        blocklist
+          .has(team, me.userId)
+          .flatMap:
+            if _ then fuccess(Requesting.Blocklist)
+            else if team.open then
+              if team.passwordMatches(~password)
+              then doJoin(team, me.userId).inject(Requesting.Joined)
+              else fuccess(Requesting.NeedPassword)
+            else motivateOrJoin(team, request)
 
-  // delete for ever, with members but not forums
-  def delete(team: Team): Funit =
-    teamRepo.coll.delete.one($id(team.id)) >>
-      memberRepo.removeByteam(team.id) >>-
-      (indexer ! RemoveTeam(team.id))
+  private def motivateOrJoin(team: Team, msg: Option[String])(using Me) =
+    msg.fold(fuccess[Requesting](Requesting.NeedRequest)): txt =>
+      createRequest(team, txt).inject(Requesting.Joined)
 
-  def syncBelongsTo(teamId: Team.ID, userId: User.ID): Boolean =
-    cached.syncTeamIds(userId) contains teamId
+  def requestable(teamId: TeamId)(using Me): Fu[Option[Team]] = for
+    teamOption <- teamEnabled(teamId)
+    able <- teamOption.so(requestable)
+  yield teamOption.ifTrue(able)
 
-  def belongsTo(teamId: Team.ID, userId: User.ID): Fu[Boolean] =
-    cached.teamIds(userId).dmap(_ contains teamId)
+  def requestable(team: Team)(using me: Me): Fu[Boolean] = for
+    belongs <- isMember(team.id)
+    requested <- requestRepo.exists(team.id, me)
+  yield !team.isClas && !belongs && !requested
 
-  def leads(teamId: Team.ID, userId: User.ID): Fu[Boolean] =
-    teamRepo.leads(teamId, userId)
+  def createRequest(team: Team, msg: String)(using me: Me): Funit =
+    requestable(team).flatMapz:
+      val request = TeamRequest.make(
+        team = team.id,
+        user = me,
+        message = if me.marks.troll then TeamRequest.defaultMessage else msg
+      )
+      for _ <- requestRepo.coll.insert.one(request) yield cached.nbRequests.invalidate(team.createdBy)
 
-  def filterExistingIds(ids: Set[String]): Fu[Set[Team.ID]] =
-    teamRepo.coll.distinctEasy[Team.ID, Set]("_id", $doc("_id" $in ids), ReadPreference.secondaryPreferred)
+  def cancelRequestOrQuit(team: Team)(using me: Me): Fu[Option[I18nKey]] =
+    withLeaders(team).flatMap: t =>
+      val admins = t.leaders.filter(_.hasPerm(_.Admin))
+      if team.isClas then fuccess(I18nKey("Can't leave a class team").some)
+      else if admins.nonEmpty && admins.forall(_.is(me))
+      then fuccess(I18nKey.teamLead.onlyLeaderLeavesTeam.some)
+      else
+        requestRepo
+          .cancel(team.id, me)
+          .flatMap(if _ then funit else quit(team, me))
+          .inject(none)
+
+  def processRequest(team: Team, request: TeamRequest, decision: String): Funit = workQueue(team.id) {
+    if decision == "decline"
+    then requestRepo.coll.updateField(bid(request.id), "declined", true).void
+    else if decision == "accept"
+    then
+      for
+        _ <- requestRepo.remove(request.id)
+        _ <- doJoin(team, request.user)
+        _ <- notifyApi.notifyOne(request.user, NotificationContent.TeamJoined(team.id, team.name))
+      yield ()
+    else funit
+  }.addEffect: _ =>
+    cached.nbRequests.invalidate(team.createdBy)
+
+  def deleteRequestsByUserId(userId: UserId): Funit =
+    requestRepo
+      .getByUserId(userId)
+      .flatMap:
+        _.sequentiallyVoid: request =>
+          requestRepo.remove(request.id) >>
+            memberRepo
+              .leaders(request.team, Some(_.Request))
+              .map:
+                _.map(_.user).foreach(cached.nbRequests.invalidate)
+
+  private[team] def doJoin(team: Team, userId: UserId): Funit =
+    isMember(team.id)(using userId.into(MyId)).not.flatMapz:
+      for
+        done <- memberRepo.add(team.id, userId)
+        _ <- done.so(teamRepo.incMembers(team.id, 1))
+      yield
+        cached.invalidateTeamIds(userId)
+        lila.common.Bus.pub(tl.Propagate(tl.TeamJoin(userId, team.id)).toFollowersOf(userId))
+        Bus.pub(JoinTeam(team.id, userId))
+
+  private[team] def addMembers(team: Team, userIds: List[UserId]): Funit =
+    userIds
+      .sequentially: userId =>
+        userApi
+          .enabledById(userId)
+          .flatMapz: user =>
+            memberRepo
+              .add(team.id, user.id)
+              .addEffect: done =>
+                if done then cached.invalidateTeamIds(user.id)
+      .flatMap: inserts =>
+        teamRepo.incMembers(team.id, inserts.count(identity))
+
+  def teamsOf(username: UserStr) =
+    cached.teamIdsList(username.id).flatMap(teamsByIds)
+
+  def teamsByIds(ids: List[TeamId]) =
+    teamRepo.coll.byIds[Team, TeamId](ids, _.sec)
+
+  def quit(team: Team, userId: UserId): Funit = workQueue(team.id):
+    doQuit(team.id, userId)
+
+  private def doQuit(teamId: TeamId, userId: UserId): Funit =
+    for
+      res <- memberRepo.remove(teamId, userId)
+      _ <- (res.n == 1).so:
+        teamRepo.incMembers(teamId, -1)
+    yield
+      Bus.pub(LeaveTeam(teamId = teamId, userId = userId))
+      cached.invalidateTeamIds(userId)
+
+  def quitAllOnAccountClosure(userId: UserId): Fu[List[TeamId]] = for
+    teamIds <- memberRepo.teamIdsByUser(userId)
+    _ <- requestRepo.removeByUser(userId)
+    _ <- teamIds.sequentially: teamId =>
+      workQueue(teamId):
+        doQuit(teamId, userId)
+  yield
+    cached.invalidateTeamIds(userId)
+    teamIds
+
+  def searchMembersAs(teamId: TeamId, term: UserSearch, nb: Int, showHidden: Boolean)(using
+      me: Option[MyId]
+  ): Fu[List[UserId]] =
+    team(teamId).flatMapz: team =>
+      val canSee = fuccess(team.publicMembers) >>| me.ifTrue(showHidden).soUse(cached.isMember(teamId))
+      canSee.flatMapz:
+        memberRepo.coll.primitive[UserId](
+          selector = memberRepo.teamQuery(teamId) ++ bdoc("user".regexStart(term.value)),
+          sort = sort.desc("user"),
+          nb = nb,
+          field = "user"
+        )
+
+  def kick(team: Team, userId: UserId)(using me: Me): Funit = workQueue(team.id):
+    for
+      kicked <- memberRepo.get(team.id, userId)
+      myself <- memberRepo.get(team.id, me)
+      allowed = userId.isnt(team.createdBy) && kicked.exists: kicked =>
+        Granter(_.ManageTeam) || myself.exists: myself =>
+          kicked.perms.isEmpty || myself.hasPerm(_.Admin)
+      _ <- allowed.so:
+        // create a request to set declined in order to prevent kicked use to rejoin
+        val request = TeamRequest.make(team.id, userId, "Kicked from team", declined = true)
+        for
+          _ <- requestRepo.coll.update.one(bid(request.id), request, upsert = true)
+          _ <- doQuit(team.id, userId)
+        yield Bus.pub(KickFromTeam(teamId = team.id, teamName = team.name, userId = userId))
+    yield ()
+
+  def kickMembers(team: Team, users: List[UserId])(using me: Me)(using Req): Funit =
+    val client = lila.common.HTTPRequest.printClient
+    logger.info:
+      s"kick members ${users.size} by ${me.username} from lichess.org/team/${team.slug} $client | ${users.mkString(" ")}"
+    users.sequentiallyVoid(kick(team, _))
+
+  object blocklist:
+    def set(team: Team, list: String): Funit =
+      teamRepo.coll.updateOrUnsetField(bid(team.id), "blocklist", list.nonEmpty.option(list)).void
+    def get(team: Team): Fu[String] =
+      teamRepo.coll
+        .primitiveOne[String](bid(team.id), "blocklist")
+        .dmap(~_)
+    def has(team: Team, user: UserId): Fu[Boolean] =
+      get(team).map: list =>
+        UserStr.from(list.split("\n")).exists(_.is(user))
+
+  def toggleEnabled(team: Team, explain: String)(using me: Me): Funit =
+    isCreatorGranted(team, _.Admin).flatMap: activeCreator =>
+      if Granter(_.ManageTeam) || me.is(team.createdBy) || !activeCreator
+      then
+        logger.info(s"toggleEnabled ${team.id}: ${!team.enabled} by @${me}: $explain")
+        if team.enabled then
+          for
+            _ <- teamRepo.disable(team)
+            _ <- invalidateTeamIdsOfMembers(team.id)
+            _ <- requestRepo.removeByTeam(team.id)
+          yield ()
+        else
+          for _ <- teamRepo.enable(team)
+          yield Bus.pub(TeamUpdate(team.data, byMod = Granter(_.ManageTeam)))
+      else memberRepo.setPerms(team.id, me, Set.empty)
+
+  def invalidateTeamIdsOfMembers(team: TeamId): Funit =
+    for users <- memberRepo.userIdsByTeam(team)
+    yield users.foreach(cached.invalidateTeamIds)
+
+  def idAndLeaderIds(teamId: TeamId): Fu[Option[Team.IdAndLeaderIds]] =
+    memberRepo
+      .leaderIds(teamId)
+      .map: ids =>
+        ids.nonEmpty.option(Team.IdAndLeaderIds(teamId, ids))
+
+  def teamsLedBy[U: UserIdOf](leader: U): Fu[List[Team]] = for
+    ids <- memberRepo.teamsLedBy(leader, None)
+    teams <- teamRepo.byIdsSortPopular(ids)
+  yield teams
+
+  export teamRepo.cursor
+  export memberRepo.{ publicLeaderIds, leaderIds, isSubscribed, subscribe, filterUserIdsInTeam }
+  export cached.isMember
+
+  // delete forever, with members but not forums
+  def delete(team: Team, by: UserId, explain: String): Funit = for
+    userIds <- memberRepo.userIdsByTeam(team.id)
+    _ <- teamRepo.coll.delete.one(bid(team.id))
+    _ <- memberRepo.removeByTeam(team.id)
+    _ <- requestRepo.removeByTeam(team.id)
+    _ = userIds.foreach(cached.invalidateTeamIds)
+  yield logger.info(s"delete team ${team.id} by @$by: $explain")
+
+  def deleteNewlyCreatedBy(userId: UserId): Funit = for
+    teams <- teamRepo.findNewlyCreatedBy(userId)
+    _ <- teams.sequentially(delete(_, UserId.lichess, "newly created"))
+  yield ()
+
+  def syncBelongsTo(teamId: TeamId, userId: UserId): Boolean =
+    cached.syncTeamIds(userId).contains(teamId)
+
+  def clasMemberCheck(teamId: TeamId)(using me: Option[MyId]): Fu[Boolean] =
+    for
+      isClas <- teamRepo.isClas(teamId)
+      ok <- if isClas then me.soUse(isMember(teamId)) else fuTrue
+    yield ok
+
+  def memberOf(teamId: TeamId)(using myId: MyId): Fu[Option[TeamMember]] =
+    isMember(teamId).flatMapz:
+      memberRepo.get(teamId, myId)
+
+  def isCreatorGranted(team: Team, perm: TeamSecurity.Permission.Selector): Fu[Boolean] =
+    memberRepo.hasPerm(team.id, team.createdBy, perm)
+
+  def isLeader(team: TeamId)(using myId: MyId) =
+    isMember(team).flatMapz:
+      memberRepo.hasAnyPerm(team, myId)
+
+  def isGranted(team: TeamId, perm: TeamSecurity.Permission.Selector)(using Me) =
+    fuccess(Granter(_.ManageTeam)) >>|
+      hasPerm(team, perm)
+
+  def hasPerm(team: TeamId, perm: TeamSecurity.Permission.Selector)(using myId: MyId): Fu[Boolean] =
+    isMember(team).flatMapz:
+      memberRepo.hasPerm(team, myId, perm)
+
+  def hasCommPerm(team: TeamId)(using MyId): Fu[Boolean] = hasPerm(team, _.Comm)
+
+  def isLeaderOf[U: UserIdOf](leader: UserId, member: U) =
+    cached
+      .teamIdsList(member)
+      .flatMap:
+        memberRepo.leadsOneOf(leader, _)
+
+  def withLeaders(team: Team): Fu[Team.WithLeaders] =
+    memberRepo.leaders(team.id).map(Team.WithLeaders(team, _))
+
+  def filterExistingIdsNoClas(ids: Set[TeamId]): Fu[Set[TeamId]] =
+    teamRepo.coll.distinctEasy[TeamId, Set]("_id", inIds(ids) ++ teamRepo.noClasSelect, _.sec)
 
   def autocomplete(term: String, max: Int): Fu[List[Team]] =
     teamRepo.coll
-      .find(
-        $doc(
-          "name".$startsWith(java.util.regex.Pattern.quote(term), "i"),
+      .find:
+        bdoc(
+          "name".regexStart(java.util.regex.Pattern.quote(term), "i"),
           "enabled" -> true
         )
-      )
-      .sort($sort desc "nbMembers")
-      .cursor[Team](ReadPreference.secondaryPreferred)
+      .sort(sort.desc("nbMembers"))
+      .cursor[Team](ReadPref.sec)
       .list(max)
 
-  def nbRequests(teamId: Team.ID) = cached.nbRequests get teamId
-}
+  export cached.nbRequests.get as nbRequests

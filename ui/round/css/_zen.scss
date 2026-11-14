@@ -1,10 +1,10 @@
 %zen {
-  body.playing.zen & {
+  body.zenable.zen & {
     display: none;
   }
 }
 
-body.playing.zen {
+body.zenable.zen {
   .ricons {
     margin: 0.5em 0 1em 0;
   }
@@ -16,6 +16,7 @@ body.playing.zen {
 
 #friend_box,
 .site-title-nav,
-.site-buttons {
+.site-buttons,
+.opponent-left-counter {
   @extend %zen;
 }

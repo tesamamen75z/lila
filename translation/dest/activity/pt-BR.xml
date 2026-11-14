@@ -11,8 +11,8 @@
     <item quantity="other">Praticou %1$s posições em %2$s</item>
   </plurals>
   <plurals name="solvedNbPuzzles">
-    <item quantity="one">Resolveu %s quebra-cabeças tático</item>
-    <item quantity="other">Resolveu %s quebra-cabeças tático</item>
+    <item quantity="one">Resolveu %s problema</item>
+    <item quantity="other">Resolveu %s problemas</item>
   </plurals>
   <plurals name="playedNbGames">
     <item quantity="one">Jogou %1$s partida de %2$s</item>
@@ -34,9 +34,13 @@
     <item quantity="one">Completou %s jogo por correspondência</item>
     <item quantity="other">Completou %s jogos por correspondência</item>
   </plurals>
+  <plurals name="completedNbVariantGames">
+    <item quantity="one">Completou %1$s %2$s partida por correspondência</item>
+    <item quantity="other">%1$s %2$s partidas por correspondência finalizadas</item>
+  </plurals>
   <plurals name="followedNbPlayers">
-    <item quantity="one">Seguiu %s jogador</item>
-    <item quantity="other">Seguiu %s jogadores</item>
+    <item quantity="one">Começou a seguir %s jogador</item>
+    <item quantity="other">Começou a seguir %s jogadores</item>
   </plurals>
   <plurals name="gainedNbFollowers">
     <item quantity="one">Ganhou %s novo seguidor</item>
@@ -55,8 +59,8 @@
     <item quantity="other">Criou %s novos estudos</item>
   </plurals>
   <plurals name="competedInNbTournaments">
-    <item quantity="one">Competiu em %s torneio</item>
-    <item quantity="other">Competiu em %s torneios</item>
+    <item quantity="one">Competiu em %s torneio arena</item>
+    <item quantity="other">Competiu em %s torneios arena</item>
   </plurals>
   <plurals name="rankedInTournament">
     <item quantity="one">Classificado #%1$s (top %2$s%%) com %3$s jogo em %4$s</item>
@@ -69,7 +73,7 @@
   <string name="rankedInSwissTournament">Classificado #%1$s entre %2$s</string>
   <string name="signedUp">Registrou-se no lichess</string>
   <plurals name="joinedNbTeams">
-    <item quantity="one">Juntou-se a %s equipe</item>
-    <item quantity="other">Juntou-se a %s equipes</item>
+    <item quantity="one">Entrou na %s equipe</item>
+    <item quantity="other">Entrou nas %s equipes</item>
   </plurals>
 </resources>

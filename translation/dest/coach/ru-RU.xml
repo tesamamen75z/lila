@@ -5,7 +5,7 @@
   <string name="areYouCoach">Вы отличный тренер по шахматам и у вас есть %s?</string>
   <string name="nmOrFideTitle" comment="nmOrFideTitle&#10;&#10;Part of sentence &quot;Are you a great chess coach with a NM or FIDE title?&quot;&#10;&#10;The text links to our title verification page: https://lichess.org/help/master">звание FIDE или национального мастера</string>
   <string name="confirmTitle">Подтвердите ваше звание, и мы рассмотрим вашу заявку.</string>
-  <string name="sendApplication" comment="sendApplication&#10;&#10;%s is the lichess email adress">Отправьте нам письмо на %s и мы рассмотрим вашу заявку.</string>
+  <string name="sendApplication" comment="sendApplication&#10;&#10;%s is the lichess email address">Отправьте нам письмо на %s и мы рассмотрим вашу заявку.</string>
   <string name="location">Местоположение</string>
   <string name="languages">Языки</string>
   <string name="rating">Рейтинг</string>
@@ -24,14 +24,7 @@
   <string name="teachingMethod">Методика преподавания</string>
   <string name="publicStudies">Открытые уроки</string>
   <string name="youtubeVideos">Видео на YouTube</string>
-  <plurals name="studentReviews">
-    <item quantity="one">Отзыв ученика</item>
-    <item quantity="few">%s отзыва учеников</item>
-    <item quantity="many">%s отзывов учеников</item>
-    <item quantity="other">%s отзывов учеников</item>
-  </plurals>
-  <string name="thankYouForReview">Спасибо за ваш отзыв!</string>
-  <string name="xWillApproveIt">%s утвердит его довольно скоро, или модератор взглянет на него.</string>
-  <string name="reviewCoach">Оставить отзыв об этом тренере</string>
-  <string name="describeExperienceWith">Опишите ваш опыт преподавания в %s</string>
+  <string name="allCountries">Все страны</string>
+  <string name="lastLogin">Последний вход</string>
+  <string name="lichessRating">Рейтинг Lichess</string>
 </resources>

@@ -1,34 +1,35 @@
 package controllers
 
-import lila.app._
+import lila.app.*
 
-final class Irwin(env: Env) extends LilaController(env) {
+final class Irwin(env: Env) extends LilaController(env):
 
-  import lila.irwin.JSONHandlers.reportReader
+  import lila.irwin.JSONHandlers.given
 
-  def dashboard =
-    Secure(_.SeeReport) { implicit ctx => _ =>
-      env.irwin.api.dashboard map { d =>
-        Ok(views.html.irwin.dashboard(d))
-      }
-    }
+  def dashboard = Secure(_.MarkEngine) { ctx ?=> _ ?=>
+    Ok.async:
+      env.irwin.irwinApi.dashboard.map:
+        views.irwin.dashboard
+  }
 
-  def saveReport =
-    ScopedBody(parse.json)(Nil) { req => me =>
-      IfGranted(_.Admin, req, me) {
-        req.body
-          .validate[lila.irwin.IrwinReport]
-          .fold(
-            err => fuccess(BadRequest(err.toString)),
-            report => env.irwin.api.reports.insert(report) inject Ok
-          ) map (_ as TEXT)
-      }
-    }
+  def saveReport = ScopedBody(parse.json)(Nil) { ctx ?=> me ?=>
+    IfGranted(_.Admin):
+      ctx.body.body
+        .validate[lila.irwin.IrwinReport]
+        .fold(
+          err => BadRequest(err.toString).toFuccess,
+          report => env.irwin.irwinApi.reports.insert(report).inject(Ok)
+        )
+        .map(_.as(TEXT))
+  }
 
-  def eventStream =
-    Scoped() { req => me =>
-      IfGranted(_.Admin, req, me) {
-        noProxyBuffer(Ok.chunked(env.irwin.stream())).fuccess
-      }
-    }
-}
+  def eventStream = Scoped() { _ ?=> me ?=>
+    IfGranted(_.Admin):
+      Ok.chunked(env.irwin.irwinStream()).noProxyBuffer
+  }
+
+  def kaladin = Secure(_.MarkEngine) { ctx ?=> _ ?=>
+    Ok.async:
+      env.irwin.kaladinApi.dashboard.map:
+        views.irwin.kaladin.dashboard
+  }

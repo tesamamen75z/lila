@@ -1,67 +1,61 @@
-import { h, VNode } from 'snabbdom';
+import { h, type VNode } from 'snabbdom';
 
-import { Redraw, defined } from './util';
+import { defined } from 'lib';
+import { pubsub } from 'lib/pubsub';
 
-export interface PingData {
-  ping: number | undefined;
-  server: number | undefined;
-}
+import type { DasherCtrl } from '@/ctrl';
 
-export interface PingCtrl {
-  data: PingData;
-  trans: Trans;
-}
+export class PingCtrl {
+  ping?: number;
+  server?: number;
 
-export function ctrl(trans: Trans, redraw: Redraw): PingCtrl {
-  const data: PingData = {
-    ping: undefined,
-    server: undefined,
+  constructor(readonly root: DasherCtrl) {}
+
+  onLag = (lag: number): void => {
+    this.ping = Math.round(lag);
+    this.root.redraw();
+  };
+  onMlat = (lat: number): void => {
+    this.server = lat;
+    this.root.redraw();
   };
 
-  const hub = lichess.pubsub;
+  connect = (): void => {
+    pubsub.emit('socket.send', 'moveLat', true);
+    pubsub.on('socket.lag', this.onLag);
+    pubsub.on('socket.in.mlat', this.onMlat);
+  };
 
-  hub.emit('socket.send', 'moveLat', true);
-  hub.on('socket.lag', lag => {
-    data.ping = Math.round(lag);
-    redraw();
-  });
-  hub.on('socket.in.mlat', lat => {
-    data.server = lat as number;
-    redraw();
-  });
+  disconnect = (): void => {
+    pubsub.off('socket.lag', this.onLag);
+    pubsub.off('socket.in.mlat', this.onMlat);
+  };
 
-  return { data, trans };
-}
+  render = (): VNode =>
+    h('a.status', { attrs: { href: '/lag' }, hook: { insert: this.connect, destroy: this.disconnect } }, [
+      this.signalBars(),
+      h(
+        'span.ping',
+        { attrs: { title: 'PING: ' + i18n.site.networkLagBetweenYouAndLichess } },
+        this.showMillis('PING', this.ping),
+      ),
+      h(
+        'span.server',
+        { attrs: { title: 'SERVER: ' + i18n.site.timeToProcessAMoveOnLichessServer } },
+        this.showMillis('SERVER', this.server),
+      ),
+    ]);
 
-function signalBars(d: PingData) {
-  const lagRating = !d.ping ? 0 : d.ping < 150 ? 4 : d.ping < 300 ? 3 : d.ping < 500 ? 2 : 1;
-  const bars = [];
-  for (let i = 1; i <= 4; i++) bars.push(h(i <= lagRating ? 'i' : 'i.off'));
-  return h('signal.q' + lagRating, bars);
-}
+  signalBars(): VNode {
+    const lagRating = !this.ping ? 0 : this.ping < 150 ? 4 : this.ping < 300 ? 3 : this.ping < 500 ? 2 : 1;
+    const bars = [];
+    for (let i = 1; i <= 4; i++) bars.push(h(i <= lagRating ? 'i' : 'i.off'));
+    return h('signal.q' + lagRating, bars);
+  }
 
-function showMillis(m: number): [string, VNode] {
-  return ['' + Math.floor(m), h('small', '.' + Math.round((m - Math.floor(m)) * 10))];
-}
-
-export function view(ctrl: PingCtrl): VNode {
-  const d = ctrl.data;
-
-  return h('a.status', { attrs: { href: '/lag' } }, [
-    signalBars(d),
-    h(
-      'span.ping',
-      {
-        attrs: { title: 'PING: ' + ctrl.trans.noarg('networkLagBetweenYouAndLichess') },
-      },
-      [h('em', 'PING'), h('strong', defined(d.ping) ? '' + d.ping : '?'), h('em', 'ms')]
-    ),
-    h(
-      'span.server',
-      {
-        attrs: { title: 'SERVER: ' + ctrl.trans.noarg('timeToProcessAMoveOnLichessServer') },
-      },
-      [h('em', 'SERVER'), h('strong', defined(d.server) ? showMillis(d.server) : ['?']), h('em', 'ms')]
-    ),
-  ]);
+  showMillis = (name: string, m?: number): VNode[] => [
+    h('em', name),
+    h('strong', defined(m) ? m : '?'),
+    h('em', 'ms'),
+  ];
 }

@@ -1,31 +1,18 @@
 package lila.racer
 
-import com.softwaremill.macwire._
+import com.softwaremill.macwire.*
 
-import lila.common.LightUser
-import lila.db.AsyncColl
-import lila.storm.StormJson
+import lila.core.LightUser
 import lila.storm.StormSelector
-import lila.storm.StormSign
 
 @Module
 final class Env(
     selector: StormSelector,
-    puzzleColls: lila.puzzle.PuzzleColls,
+    socketKit: lila.core.socket.SocketKit,
     cacheApi: lila.memo.CacheApi,
-    stormJson: StormJson,
-    stormSign: StormSign,
-    userRepo: lila.user.UserRepo,
-    lightUserGetter: LightUser.GetterSync,
-    remoteSocketApi: lila.socket.RemoteSocket,
-    db: lila.db.Db
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
-
-  private lazy val colls = new RacerColls(puzzle = puzzleColls.puzzle)
+    userApi: lila.core.user.UserApi,
+    lightUserGetter: LightUser.GetterSyncFallback
+)(using Executor, Scheduler):
 
   lazy val api = wire[RacerApi]
 
@@ -33,7 +20,4 @@ final class Env(
 
   lazy val json = wire[RacerJson]
 
-  private val socket = wire[RacerSocket] // requires eager eval
-}
-
-final private class RacerColls(val puzzle: AsyncColl)
+  wire[RacerSocket] // requires eager eval

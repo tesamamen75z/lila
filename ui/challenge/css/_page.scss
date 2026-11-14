@@ -1,19 +1,43 @@
 .challenge-page {
-  .challenge-id-form {
-    white-space: nowrap;
-  }
-
   .invite {
-    display: flex;
-    flex-flow: row wrap;
+    display: grid;
+    gap: $block-gap;
+    grid-template-columns: repeat(auto-fill, minmax(25em, 1fr));
+
+    h2 {
+      font-weight: bold;
+    }
 
     > div {
-      @extend %box-radius;
+      @extend %box-neat;
 
-      padding: 2em 2em 1em 2em;
+      padding: $block-gap;
       background: $c-bg-zebra;
-      margin: 1em;
-      flex: 1 1 auto;
+    }
+
+    &__qrcode {
+      @extend %flex-between-nowrap;
+
+      gap: $block-gap;
+    }
+
+    &__user {
+      &__recent {
+        @extend %flex-center;
+
+        margin-top: 1em;
+        gap: 0.5em;
+
+        .button {
+          text-align: start;
+          text-transform: none;
+        }
+      }
+
+      .error {
+        color: $c-bad;
+        margin-top: 1em;
+      }
     }
   }
 
@@ -29,6 +53,15 @@
       height: 13em;
       margin: 2em auto;
     }
+
+    .correspondence-waiting {
+      font-size: 1.5em;
+      margin: 2em auto;
+
+      &::before {
+        color: $c-good;
+      }
+    }
   }
 
   .cancel {
@@ -36,49 +69,103 @@
     text-align: center;
   }
 
-  .details {
-    @extend %flex-between;
+  .details-wrapper {
+    @extend %box-neat;
 
-    $c-bg: mix($c-good, $c-bg-box, 10%);
-    --c-font: #{$c-good};
-    --c-bg: #{$c-bg};
+    ---font: #{$c-secondary};
+    ---bg: #{color-mix(in oklab, $c-secondary 10%, $c-bg)};
 
-    border-radius: 99px;
-    padding: 0.5em 1.1em;
-    margin-bottom: 3rem;
-    font-size: 2em;
-    background: var(--c-bg);
-    border: 1px solid var(--c-font);
+    @include if-transp {
+      ---bg: #{color-mix(in oklab, $c-secondary 10%, transparent)};
+    }
 
-    > div {
-      @extend %flex-center, %roboto;
+    padding: $block-gap 4vw;
+    margin-bottom: 4rem;
+    background: var(---bg);
+    border: 1px solid var(---font);
+    font-size: 1.5em;
 
-      &::before {
-        color: var(--c-font);
-        font-size: 6rem;
-        margin-right: 0.2em;
+    @media (min-width: at-least($xx-small)) {
+      font-size: 2em;
+    }
+
+    .content {
+      @extend %flex-between;
+
+      > div {
+        @extend %flex-center, %roboto;
+
+        flex: 0 1 auto;
+
+        &::before {
+          color: var(---font);
+          font-size: 6rem;
+          margin-inline-end: 0.2em;
+
+          @media (max-width: at-most($xx-small)) {
+            display: none;
+          }
+        }
+
+        div {
+          line-height: 1.4;
+        }
+
+        .clock {
+          font-weight: bold;
+        }
       }
 
-      div {
-        line-height: 1.4;
-      }
-
-      .clock {
+      .mode {
+        text-align: end;
         font-weight: bold;
+        font-size: 0.8em;
+        color: var(---font);
       }
     }
 
-    .mode {
-      font-weight: bold;
-      color: var(--c-font);
-      text-transform: uppercase;
+    .rules {
+      margin-top: 1.5rem;
+      font-size: 1rem;
+
+      > div {
+        @extend %flex-center;
+
+        gap: 1em;
+        margin-top: 1em;
+
+        .challenge-rule {
+          @extend %flex-center;
+
+          .icon-flair {
+            height: 1.5em;
+            margin: 0.2em 0.8em 0 0;
+          }
+        }
+      }
     }
   }
 
+  .mobile-instructions {
+    @extend %flex-center-center;
+
+    font-size: 1.5rem;
+  }
+
+  .mobile-instructions::before {
+    font-family: lichess;
+    font-size: 3rem;
+    padding-inline-end: 1rem;
+    content: $licon-ShareAndroid;
+  }
+
+  .mobile-instructions.is-ios::before {
+    content: $licon-ShareIos;
+  }
+
   &.challenge--declined .details {
-    $c-bg: mix($c-bad, $c-bg-box, 10%);
-    --c-font: #{$c-bad};
-    --c-bg: #{$c-bg};
+    ---font: #{$c-bad};
+    ---bg: #{c_bad_bg--mix-10};
   }
 
   .challenge-reason {

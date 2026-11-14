@@ -1,31 +1,108 @@
 package lila.security
 
-import lila.common.IpAddress
+import lila.common.HTTPRequest
+import lila.core.net.IpAddress
+import lila.core.security.{ Ip2ProxyApi, IsProxy }
 
-final class IpTrust(proxyApi: Ip2Proxy, geoApi: GeoIP, torApi: Tor, firewallApi: Firewall) {
+final class IpTrust(proxyApi: Ip2ProxyApi, geoApi: GeoIP, firewallApi: Firewall)(using
+    Executor,
+    lila.core.config.RateLimit
+):
+  import IpTrust.*
 
-  def isSuspicious(ip: IpAddress): Fu[Boolean] =
-    if (firewallApi blocksIp ip) fuTrue
-    else if (torApi isExitNode ip) fuTrue
-    else {
-      val location = geoApi orUnknown ip
-      if (location == Location.unknown || location == Location.tor) fuTrue
-      else if (isUndetectedProxy(location)) fuTrue
-      else proxyApi(ip)
-    }
+  private[security] def isSuspicious(ip: IpAddress): Fu[Boolean] =
+    if firewallApi.blocksIp(ip) then fuTrue
+    else if geoApi.isSuspicious(ip) then fuTrue
+    else proxyApi.ofIp(ip).dmap(_.yes)
 
-  def isSuspicious(ipData: UserLogins.IPData): Fu[Boolean] =
-    isSuspicious(ipData.ip.value)
+  def ipData(ip: IpAddress): Fu[IpData] =
+    proxyApi.ofIp(ip).dmap(IpData(_, geoApi.orUnknown(ip)))
 
-  /* lichess blacklist of proxies that ip2proxy doesn't know about */
-  private def isUndetectedProxy(location: Location): Boolean =
-    location.shortCountry == "Iran" ||
-      location.shortCountry == "United Arab Emirates" || (location match {
-        case Location("Poland", _, Some("Subcarpathian Voivodeship"), Some("Stalowa Wola")) => true
-        case Location("Poland", _, Some("Lesser Poland Voivodeship"), Some("Krakow"))       => true
-        case Location("Russia", _, Some(region), Some("Ufa" | "Sterlitamak"))
-            if region contains "Bashkortostan" =>
-          true
-        case _ => false
-      })
-}
+  def reqData(req: Req)(using p: IsProxy): IpData =
+    IpData(p, geoApi.orUnknown(HTTPRequest.ipAddress(req)))
+
+  def isPubOrTor(req: Req): Fu[Boolean] = proxyApi
+    .ofReq(req)
+    .dmap:
+      case IsProxy.public | IsProxy.tor => true
+      case _ => false
+
+  final class rateLimit(
+      credits: Int,
+      duration: FiniteDuration,
+      key: String,
+      strategy: IpTrust.type => RateLimitStrategy = _.defaultRateLimitStrategy
+  ):
+    import lila.memo.RateLimit as RL
+    private val limiter = RL[IpAddress](credits, duration, key)
+
+    def apply[A](default: => Fu[A], cost: RL.Cost = 1, msg: => String = "")(
+        op: => Fu[A]
+    )(using req: Req)(using Executor): Fu[A] =
+      proxyApi
+        .ofReq(req)
+        .flatMap: proxy =>
+          knownProxy(default, cost, msg)(op)(using req, proxy)
+
+    def knownProxy[A](default: => Fu[A], cost: RL.Cost = 1, msg: => String = "")(
+        op: => Fu[A]
+    )(using req: Req, proxy: IsProxy): Fu[A] =
+      val ip = HTTPRequest.ipAddress(req)
+      val ipCostFactor =
+        if HTTPRequest.ipTier(req).yes then 1
+        else strategy(IpTrust)(proxy)
+      limiter[Fu[A]](ip, default, (cost * ipCostFactor).toInt, s"$msg proxy:$proxy")(op)
+
+  def rateLimitCostFactor(
+      req: Req,
+      strategy: IpTrust.type => RateLimitStrategy = _.defaultRateLimitStrategy
+  ): Fu[Float] =
+    proxyApi.ofReq(req).dmap(strategy(IpTrust))
+
+  def throttle(base: MaxPerSecond)(using req: Req)(using Executor): Fu[MaxPerSecond] =
+    if HTTPRequest.ipTier(req).yes then fuccess(base)
+    else
+      proxyApi
+        .ofReq(req)
+        .map(defaultThrottleStrategy)
+        .map: div =>
+          base.map(mps => (mps / div).toInt)
+
+object IpTrust:
+
+  case class IpData(proxy: IsProxy, location: Location)
+
+  type RateLimitStrategy = IsProxy => Float
+
+  // https://blog.ip2location.com/knowledge-base/what-are-the-proxy-types-supported-in-ip2proxy/
+  val defaultRateLimitStrategy: RateLimitStrategy =
+    case IsProxy.vpn => 3
+    case IsProxy.privacy => 3
+    case IsProxy.tor => 4
+    case IsProxy.server => 1.5f
+    case IsProxy.enterprise => 1.5f
+    case IsProxy.public => 5
+    case IsProxy.web => 3
+    case IsProxy.search => 0.5f
+    case IsProxy.residential => 3
+    case IsProxy.http1 => 2
+    case _ => 1
+
+  def proxyMultiplier(times: Float): RateLimitStrategy =
+    case IsProxy.empty => 1
+    case IsProxy.search => 0.5f // search factor is < 1 so don't multiply it
+    case proxy => defaultRateLimitStrategy(proxy) * times
+
+  def antiScraping(dch: Float, others: Float): RateLimitStrategy =
+    case IsProxy.server => dch
+    case IsProxy.http1 => dch
+    case IsProxy.search => 0.5f // search factor is < 1 so don't multiply it
+    case proxy => defaultRateLimitStrategy(proxy) * others
+
+  type ThrottleStrategy = IsProxy => Float
+
+  val defaultThrottleStrategy: ThrottleStrategy =
+    case IsProxy.server => 1
+    case IsProxy.enterprise => 1
+    case IsProxy.search => 1
+    case p => defaultRateLimitStrategy(p)

@@ -1,94 +1,93 @@
 package lila.event
 
-import org.joda.time.DateTime
-import play.api.data._
-import play.api.data.Forms._
-import play.api.i18n.Lang
+import play.api.data.*
+import play.api.data.Forms.*
+import scalalib.model.Language
 
-import lila.common.Form.stringIn
-import lila.common.Form.UTCDate._
-import lila.i18n.LangList
-import lila.user.User
+import lila.common.Form.{ PrettyDateTime, into, stringIn }
+import lila.core.i18n.LangList
 
-object EventForm {
+final class EventForm(langList: LangList):
 
-  object icon {
-    val default   = ""
-    val broadcast = "broadcast.icon"
-    val choices = List(
-      default               -> "Microphone",
-      "lichess.event.png"   -> "Lichess",
-      "trophy.event.png"    -> "Trophy",
-      broadcast             -> "Broadcast",
-      "offerspill.logo.png" -> "Offerspill"
-    )
-  }
+  import EventForm.*
 
   val form = Form(
     mapping(
-      "title"         -> text(minLength = 3, maxLength = 40),
-      "headline"      -> text(minLength = 5, maxLength = 30),
-      "description"   -> optional(text(minLength = 5, maxLength = 4000)),
+      "title" -> text(minLength = 3, maxLength = 40),
+      "headline" -> text(minLength = 5, maxLength = 30),
+      "description" -> optional(text(minLength = 5, maxLength = 4000).into[Markdown]),
       "homepageHours" -> bigDecimal(10, 2).verifying(d => d >= 0 && d <= 24),
-      "url"           -> nonEmptyText,
-      "lang"          -> text.verifying(l => LangList.allChoices.exists(_._1 == l)),
-      "enabled"       -> boolean,
-      "startsAt"      -> utcDate,
-      "finishesAt"    -> utcDate,
-      "hostedBy" -> optional {
-        lila.user.UserForm.historicalUsernameField
-          .transform[User.ID](_.toLowerCase, identity)
-      },
-      "icon"      -> stringIn(icon.choices),
+      "url" -> nonEmptyText,
+      "lang" -> langList.popularLanguagesForm.mapping,
+      "enabled" -> boolean,
+      "startsAt" -> PrettyDateTime.mapping,
+      "finishesAt" -> PrettyDateTime.mapping,
+      "hostedBy" -> optional(lila.common.Form.username.historicalField),
+      "icon" -> stringIn(icon.choices),
       "countdown" -> boolean
-    )(Data.apply)(Data.unapply)
-  ) fill Data(
-    title = "",
-    headline = "",
-    description = none,
-    homepageHours = 0,
-    url = "",
-    lang = lila.i18n.enLang.code,
-    enabled = true,
-    startsAt = DateTime.now,
-    finishesAt = DateTime.now,
-    countdown = true
+    )(Data.apply)(unapply)
+  ).fill(
+    Data(
+      title = "",
+      headline = "",
+      description = none,
+      homepageHours = 0,
+      url = "",
+      lang = lila.core.i18n.defaultLanguage,
+      enabled = true,
+      startsAt = nowDateTime,
+      finishesAt = nowDateTime,
+      countdown = true
+    )
   )
+
+object EventForm:
+
+  object icon:
+    val default = ""
+    val broadcast = "broadcast.icon"
+    val choices = List(
+      default -> "Microphone",
+      "lichess.event.png" -> "Lichess",
+      "trophy.event.png" -> "Trophy",
+      broadcast -> "Broadcast",
+      "offerspill.logo.png" -> "Offerspill"
+    )
 
   case class Data(
       title: String,
       headline: String,
-      description: Option[String],
+      description: Option[Markdown],
       homepageHours: BigDecimal,
       url: String,
-      lang: String,
+      lang: Language,
       enabled: Boolean,
-      startsAt: DateTime,
-      finishesAt: DateTime,
-      hostedBy: Option[User.ID] = None,
+      startsAt: LocalDateTime,
+      finishesAt: LocalDateTime,
+      hostedBy: Option[UserStr] = None,
       icon: String = "",
       countdown: Boolean
-  ) {
+  ):
 
-    def update(event: Event, by: User) =
+    def update(event: Event)(using me: MyId) =
       event.copy(
         title = title,
         headline = headline,
         description = description,
         homepageHours = homepageHours.toDouble,
         url = url,
-        lang = Lang(lang),
+        lang = lang,
         enabled = enabled,
-        startsAt = startsAt,
-        finishesAt = finishesAt,
-        hostedBy = hostedBy,
-        icon = icon.some.filter(_.nonEmpty),
+        startsAt = startsAt.instant,
+        finishesAt = finishesAt.instant,
+        hostedBy = hostedBy.map(_.id),
+        icon = icon.nonEmptyOption,
         countdown = countdown,
-        updatedAt = DateTime.now.some,
-        updatedBy = Event.UserId(by.id).some
+        updatedAt = nowInstant.some,
+        updatedBy = me.some
       )
 
-    def make(userId: String) =
+    def make(using me: MyId) =
       Event(
         _id = Event.makeId,
         title = title,
@@ -96,21 +95,20 @@ object EventForm {
         description = description,
         homepageHours = homepageHours.toDouble,
         url = url,
-        lang = Lang(lang),
+        lang = lang,
         enabled = enabled,
-        startsAt = startsAt,
-        finishesAt = finishesAt,
-        createdBy = Event.UserId(userId),
-        createdAt = DateTime.now,
+        startsAt = startsAt.instant,
+        finishesAt = finishesAt.instant,
+        createdBy = me,
+        createdAt = nowInstant,
         updatedAt = none,
         updatedBy = none,
-        hostedBy = hostedBy,
-        icon = icon.some.filter(_.nonEmpty),
+        hostedBy = hostedBy.map(_.id),
+        icon = icon.nonEmptyOption,
         countdown = countdown
       )
-  }
 
-  object Data {
+  object Data:
 
     def make(event: Event) =
       Data(
@@ -119,13 +117,11 @@ object EventForm {
         description = event.description,
         homepageHours = event.homepageHours,
         url = event.url,
-        lang = event.lang.code,
+        lang = event.lang,
         enabled = event.enabled,
-        startsAt = event.startsAt,
-        finishesAt = event.finishesAt,
-        hostedBy = event.hostedBy,
+        startsAt = event.startsAt.dateTime,
+        finishesAt = event.finishesAt.dateTime,
+        hostedBy = event.hostedBy.map(_.into(UserStr)),
         icon = ~event.icon,
         countdown = event.countdown
       )
-  }
-}

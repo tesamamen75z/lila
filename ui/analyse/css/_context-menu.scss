@@ -1,19 +1,20 @@
 #analyse-cm {
   @extend %box-radius, %popup-shadow;
+  @include prevent-select;
 
   background: $c-bg-box;
   position: absolute;
   display: none;
-  z-index: z('context-menu');
+  z-index: $z-context-menu-108;
   cursor: default;
-  user-select: none;
+  overflow: hidden;
 
   &.visible {
     display: block;
   }
 
   .title {
-    @extend %san, %metal;
+    @extend %san, %metal-bg;
 
     padding: 0.4em;
     text-align: center;
@@ -24,9 +25,9 @@
 
   a {
     @extend %flex-center-nowrap;
+    @include padding-direction(0.5em, 0.6em, 0.5em, 0.3em);
 
     color: $c-font;
-    padding: 0.5em 0.6em 0.5em 0.3em;
 
     &::before {
       width: 2em;
@@ -34,7 +35,12 @@
     }
 
     &:hover {
-      background: mix($c-accent, $c-bg-box, 10%);
+      background: rgb(from $c-primary r g b / calc(alpha * 0.3));
     }
+  }
+
+  &.transparent {
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
   }
 }

@@ -1,55 +1,17 @@
 package lila.teamSearch
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
-import play.api.Configuration
+import com.softwaremill.macwire.*
+import scalalib.paginator.Paginator
 
-import lila.common.config._
-import lila.search._
+import lila.search.client.SearchClient
+import lila.search.spec.Query
 
-@Module
-private class TeamSearchConfig(
-    @ConfigName("index") val indexName: String,
-    @ConfigName("actor.name") val actorName: String
-)
-
-final class Env(
-    appConfig: Configuration,
-    makeClient: Index => ESClient,
-    teamRepo: lila.team.TeamRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem
-) {
-
-  private val config = appConfig.get[TeamSearchConfig]("teamSearch")(AutoConfig.loader)
+final class Env(client: SearchClient)(using Executor):
 
   private val maxPerPage = MaxPerPage(15)
 
-  private lazy val client = makeClient(Index(config.indexName))
-
-  private lazy val paginatorBuilder = wire[lila.search.PaginatorBuilder[lila.team.Team, Query]]
+  private lazy val paginatorBuilder = lila.search.PaginatorBuilder(api, maxPerPage)
 
   lazy val api: TeamSearchApi = wire[TeamSearchApi]
 
-  def apply(text: String, page: Int) = paginatorBuilder(Query(text), page)
-
-  def cli =
-    new lila.common.Cli {
-      def process = { case "team" :: "search" :: "reset" :: Nil =>
-        api.reset inject "done"
-      }
-    }
-
-  system.actorOf(
-    Props(new Actor {
-      import lila.team.actorApi._
-      def receive = {
-        case InsertTeam(team) => api.store(team).unit
-        case RemoveTeam(id)   => client.deleteById(Id(id)).unit
-      }
-    }),
-    name = config.actorName
-  )
-}
+  def apply(text: String, page: Int): Fu[Paginator[TeamId]] = paginatorBuilder(Query.team(text), page)

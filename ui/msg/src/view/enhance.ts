@@ -1,17 +1,22 @@
+import { escapeHtml } from 'lib/index';
+import { licon } from 'lib/licon';
+import { linkRegex, linkReplace, newLineRegex, expandMentions } from 'lib/richText';
+
 import { scroller } from './scroller';
-import { linkRegex, linkReplace, newLineRegex, userPattern, userLinkReplace } from 'common/richText';
+export { isMoreThanText } from 'lib/richText';
 
-export { isMoreThanText } from 'common/richText';
+export const imgurRegex = /https?:\/\/(?:i\.)?imgur\.com\/(?!gallery\b)(\w{7})(?:\.jpe?g|\.png|\.gif)?/;
+const giphyRegex =
+  /https:\/\/(?:media\.giphy\.com\/media\/|giphy\.com\/gifs\/(?:\w+-)*)(\w+)(?:\/giphy\.gif)?/;
 
-const imgurRegex = /https?:\/\/(?:i\.)?imgur\.com\/(\w+)(?:\.jpe?g|\.png|\.gif)?/;
-const giphyRegex = /https:\/\/(?:media\.giphy\.com\/media\/|giphy\.com\/gifs\/(?:\w+-)*)(\w+)(?:\/giphy\.gif)?/;
-
-const img = (src: string) => `<img src="${src}"/>`;
+const img = (src: string) => `<img src="${src}" alt="${src}"/>`;
 
 const aImg = (src: string) => linkReplace(src, img(src));
 
 const expandImgur = (url: string) =>
-  imgurRegex.test(url) ? url.replace(imgurRegex, (_, id) => aImg(`https://i.imgur.com/${id}.jpg`)) : undefined;
+  imgurRegex.test(url)
+    ? url.replace(imgurRegex, (_, id) => aImg(`https://i.imgur.com/${id}.jpg`))
+    : undefined;
 
 const expandGiphy = (url: string) =>
   giphyRegex.test(url)
@@ -22,125 +27,107 @@ const expandImage = (url: string) => (/\.(jpg|jpeg|png|gif)$/.test(url) ? aImg(u
 
 const expandLink = (url: string) => linkReplace(url, url.replace(/^https?:\/\//, ''));
 
-const expandUrl = (url: string) => expandImgur(url) || expandGiphy(url) || expandImage(url) || expandLink(url);
+const expandUrl = (url: string) =>
+  expandImgur(url) || expandGiphy(url) || expandImage(url) || expandLink(url);
 
 const expandUrls = (html: string) =>
   html.replace(linkRegex, (_, space: string, url: string) => `${space}${expandUrl(url)}`);
 
-const expandMentions = (html: string) => html.replace(userPattern, userLinkReplace);
-
 const expandGameIds = (html: string) =>
   html.replace(
-    /\s#([\w]{8})($|[^\w-])/g,
-    (_: string, id: string, suffix: string) => ' ' + linkReplace('/' + id, '#' + id, 'text') + suffix
+    /(\s#)([\w]{8})($|[^\w-])/g,
+    (_: string, bulkStart: string, id: string, suffix: string) =>
+      ' ' + linkReplace('/game/' + id, '#' + id, !bulkStart) + suffix,
   );
 
 export const enhance = (str: string) =>
-  expandGameIds(expandMentions(expandUrls(lichess.escapeHtml(str)))).replace(newLineRegex, '<br>');
+  expandGameIds(expandMentions(expandUrls(escapeHtml(str)))).replace(newLineRegex, '<br>');
 
-/* Enhance with iframe expansion */
-
-interface Expandable {
+type Expandable = {
   element: HTMLElement;
   link: Link;
-}
-interface Link {
+};
+type Link = {
   type: LinkType;
   src: string;
-}
+  opts: any;
+};
 type LinkType = 'game';
 
 const domain = window.location.host;
-const gameRegex = new RegExp(`(?:https?://)${domain}/(?:embed/)?(\\w{8})(?:(?:/(white|black))|\\w{4}|)(#\\d+)?$`);
-const notGames = ['training', 'analysis', 'insights', 'practice', 'features', 'password', 'streamer', 'timeline'];
+const gameRegex = new RegExp(
+  `(?:https?://)${domain}/(?:embed/)?(?:game/)?(\\w{8})(?:(?:/(white|black))|\\w{4}|)(?:(?:#)(\\d+))?$`,
+);
+const notGames = new Set([
+  'training',
+  'analysis',
+  'insights',
+  'practice',
+  'features',
+  'password',
+  'streamer',
+  'timeline',
+]);
 
-export function expandIFrames(el: HTMLElement) {
+export function expandLpvs(el: HTMLElement) {
   const expandables: Expandable[] = [];
 
   el.querySelectorAll('a:not(.text)').forEach((a: HTMLAnchorElement) => {
+    if (a.closest('.lpv')) return;
     const link = parseLink(a);
     if (link)
       expandables.push({
         element: a,
-        link: link,
+        link,
       });
   });
 
-  expandGames(expandables.filter(e => e.link.type == 'game'));
+  expandGames(expandables);
 }
 
 function expandGames(games: Expandable[]): void {
-  if (games.length < 3) games.forEach(expand);
+  if (games.length < 3) games.forEach(expandGame);
   else
     games.forEach(game => {
       game.element.title = 'Click to expand';
       game.element.classList.add('text');
-      game.element.setAttribute('data-icon', '');
+      game.element.setAttribute('data-icon', licon.Expand);
       game.element.addEventListener('click', e => {
         if (e.button === 0) {
           e.preventDefault();
-          expand(game);
+          expandGame(game);
         }
       });
     });
 }
 
-function expand(exp: Expandable): void {
-  const $iframe: any = $('<iframe>').attr('src', exp.link.src);
-  $(exp.element).parent().parent().addClass('has-embed');
-  $(exp.element).replaceWith($('<div class="embed">').prepend($iframe));
-  return $iframe
-    .on('load', function (this: HTMLIFrameElement) {
-      if (this.contentDocument?.title.startsWith('404')) (this.parentNode as HTMLElement).classList.add('not-found');
-      scroller.auto();
-    })
-    .on('mouseenter', function (this: HTMLIFrameElement) {
-      this.focus();
+const expandGame = async (exp: Expandable) => {
+  const $lpv = $('<div>');
+  const wrapper = exp.element.parentElement?.parentElement;
+  if (!wrapper) return;
+  const backup = wrapper.cloneNode(true);
+  wrapper.classList.add('has-embed');
+  $(exp.element).replaceWith($('<div>').prepend($lpv));
+  try {
+    await site.asset.loadEsm('bits.lpv', {
+      init: { el: $lpv[0] as HTMLElement, url: exp.link.src, lpvOpts: exp.link.opts },
     });
-}
+  } catch (_) {
+    $(wrapper).replaceWith(backup);
+  }
+  scroller.auto();
+};
 
 function parseLink(a: HTMLAnchorElement): Link | undefined {
-  const [id, pov, ply] = Array.from(a.href.match(gameRegex) || []).slice(1);
-  if (id && !notGames.includes(id))
+  const [id, orientation, initialPly] = Array.from(a.href.match(gameRegex) || []).slice(1);
+  if (id && !notGames.has(id))
     return {
       type: 'game',
-      src: configureSrc(`/embed/${id}${pov ? `/${pov}` : ''}${ply || ''}`),
+      src: `/embed/game/${id}`,
+      opts: {
+        orientation,
+        initialPly,
+      },
     };
   return undefined;
-}
-
-const themes = [
-  'blue',
-  'blue2',
-  'blue3',
-  'blue-marble',
-  'canvas',
-  'wood',
-  'wood2',
-  'wood3',
-  'wood4',
-  'maple',
-  'maple2',
-  'brown',
-  'leather',
-  'green',
-  'marble',
-  'green-plastic',
-  'grey',
-  'metal',
-  'olive',
-  'newspaper',
-  'purple',
-  'purple-diag',
-  'pink',
-  'ic',
-  'horsey',
-];
-
-function configureSrc(url: string): string {
-  if (url.includes('://')) return url;
-  const parsed = new URL(url, window.location.href);
-  parsed.searchParams.append('theme', themes.find(theme => document.body.classList.contains(theme))!);
-  parsed.searchParams.append('bg', document.body.getAttribute('data-theme')!);
-  return parsed.href;
 }

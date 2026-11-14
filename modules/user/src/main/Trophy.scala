@@ -1,21 +1,27 @@
 package lila.user
 
-import org.joda.time.DateTime
-
 case class Trophy(
     _id: String, // random
-    user: String,
+    user: UserId,
     kind: TrophyKind,
-    date: DateTime,
+    date: Instant,
     url: Option[String]
-) extends Ordered[Trophy] {
+) extends Ordered[Trophy]:
 
-  def timestamp = date.getMillis
+  def timestamp = date.toMillis
 
   def compare(other: Trophy) =
-    if (kind.order == other.kind.order) date compareTo other.date
+    if kind.order == other.kind.order then date.compareTo(other.date)
     else Integer.compare(kind.order, other.kind.order)
-}
+
+  def anyUrl = url
+    .orElse(kind.url)
+    .map: link =>
+      if tournamentUrlPattern.matches(link)
+      then s"$link?player=$user"
+      else link
+
+private val tournamentUrlPattern = """/tournament/\w{8}$""".r.unanchored
 
 case class TrophyKind(
     _id: String,
@@ -27,15 +33,14 @@ case class TrophyKind(
     withCustomImage: Boolean
 )
 
-object TrophyKind {
-  val marathonWinner     = "marathonWinner"
-  val marathonTopTen     = "marathonTopTen"
-  val marathonTopFifty   = "marathonTopFifty"
-  val marathonTopHundred = "marathonTopHundred"
-  val moderator          = "moderator"
-  val developer          = "developer"
-  val verified           = "verified"
-  val zugMiracle         = "zugMiracle"
+object TrophyKind:
+  export lila.core.user.TrophyKind.*
+  val moderator = "moderator"
+  val developer = "developer"
+  val verified = "verified"
+  val contentTeam = "contentTeam"
+  val broadcastTeam = "broadcastTeam"
+  val zugMiracle = "zugMiracle"
 
   object Unknown
       extends TrophyKind(
@@ -47,4 +52,3 @@ object TrophyKind {
         klass = none,
         withCustomImage = false
       )
-}

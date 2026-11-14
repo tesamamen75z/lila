@@ -1,145 +1,141 @@
-import { prop, notEmpty } from 'common';
-import * as xhr from 'common/xhr';
-import { ForecastCtrl, ForecastData, ForecastStep } from './interfaces';
-import { AnalyseData } from '../interfaces';
+import { prop, notEmpty, type Prop } from 'lib';
+import { completeNode } from 'lib/tree/node';
+import type { TreeWrapper } from 'lib/tree/tree';
+import type { TreePath } from 'lib/tree/types';
+import { json as xhrJson } from 'lib/xhr';
 
-export function make(cfg: ForecastData, data: AnalyseData, redraw: () => void): ForecastCtrl {
-  const saveUrl = `/${data.game.id}${data.player.id}/forecasts`;
+import type { AnalyseData } from '@/interfaces';
 
-  let forecasts = cfg.steps || [];
-  const loading = prop(false);
+import type { ForecastData, ForecastList, ForecastStep } from './interfaces';
 
-  function keyOf(fc: ForecastStep[]): string {
-    return fc.map(node => node.ply + ':' + node.uci).join(',');
+export default class ForecastCtrl {
+  forecasts: Prop<ForecastList> = prop<ForecastList>([]);
+  loading = prop(false);
+
+  constructor(
+    readonly cfg: ForecastData,
+    readonly data: AnalyseData,
+    readonly redraw: () => void,
+  ) {
+    this.forecasts(cfg.steps || []);
+    this.fixAll();
   }
 
-  function contains(fc1: ForecastStep[], fc2: ForecastStep[]): boolean {
-    return fc1.length >= fc2.length && keyOf(fc1).startsWith(keyOf(fc2));
-  }
+  private readonly saveUrl = () => `/game/${this.data.game.id}${this.data.player.id}/forecasts`;
 
-  function findStartingWithNode(node: ForecastStep): ForecastStep[][] {
-    return forecasts.filter(fc => contains(fc, [node]));
-  }
+  private readonly keyOf = (fc: ForecastStep[]): string =>
+    fc.map(node => node.ply + ':' + node.uci).join(',');
 
-  function collides(fc1: ForecastStep[], fc2: ForecastStep[]): boolean {
+  private readonly update = (f: (fc: ForecastList) => ForecastList) => this.forecasts(f(this.forecasts()));
+
+  contains = (fc1: ForecastStep[], fc2: ForecastStep[]): boolean =>
+    fc1.length >= fc2.length && this.keyOf(fc1).startsWith(this.keyOf(fc2));
+
+  findStartingWithNode = (node: ForecastStep): ForecastStep[][] =>
+    this.update(fc => fc.filter(fc => this.contains(fc, [node])));
+
+  collides = (fc1: ForecastStep[], fc2: ForecastStep[]): boolean => {
     for (let i = 0, max = Math.min(fc1.length, fc2.length); i < max; i++) {
-      if (fc1[i].uci !== fc2[i].uci) {
-        if (cfg.onMyTurn) return i !== 0 && i % 2 === 0;
-        return i % 2 === 1;
-      }
+      if (fc1[i].uci !== fc2[i].uci) return this.cfg.onMyTurn ? i !== 0 && i % 2 === 0 : i % 2 === 1;
     }
     return true;
-  }
-
-  function truncate(fc: ForecastStep[]): ForecastStep[] {
-    if (cfg.onMyTurn) return (fc.length % 2 !== 1 ? fc.slice(0, -1) : fc).slice(0, 30);
-    // must end with player move
-    return (fc.length % 2 !== 0 ? fc.slice(0, -1) : fc).slice(0, 30);
-  }
-
-  function isLongEnough(fc: ForecastStep[]): boolean {
-    return fc.length >= (cfg.onMyTurn ? 1 : 2);
-  }
-
-  function fixAll() {
-    // remove contained forecasts
-    forecasts = forecasts.filter(function (fc, i) {
-      return (
-        forecasts.filter(function (f, j) {
-          return i !== j && contains(f, fc);
-        }).length === 0
-      );
-    });
-    // remove colliding forecasts
-    forecasts = forecasts.filter(function (fc, i) {
-      return (
-        forecasts.filter(function (f, j) {
-          return i < j && collides(f, fc);
-        }).length === 0
-      );
-    });
-  }
-
-  fixAll();
-
-  function reloadToLastPly() {
-    loading(true);
-    redraw();
-    history.replaceState(null, '', '#last');
-    lichess.reload();
-  }
-
-  function isCandidate(fc: ForecastStep[]): boolean {
-    fc = truncate(fc);
-    if (!isLongEnough(fc)) return false;
-    const collisions = forecasts.filter(f => contains(f, fc));
-    if (collisions.length) return false;
-    return true;
-  }
-
-  function save() {
-    if (cfg.onMyTurn) return;
-    loading(true);
-    redraw();
-    xhr
-      .json(saveUrl, {
-        method: 'POST',
-        body: JSON.stringify(forecasts),
-        headers: { 'Content-Type': 'application/json' },
-      })
-      .then(data => {
-        if (data.reload) reloadToLastPly();
-        else {
-          loading(false);
-          forecasts = data.steps || [];
-        }
-        redraw();
-      });
-  }
-
-  function playAndSave(node: ForecastStep) {
-    if (!cfg.onMyTurn) return;
-    loading(true);
-    redraw();
-    xhr
-      .json(`${saveUrl}/${node.uci}`, {
-        method: 'POST',
-        body: JSON.stringify(
-          findStartingWithNode(node)
-            .filter(notEmpty)
-            .map(fc => fc.slice(1))
-        ),
-        headers: { 'Content-Type': 'application/json' },
-      })
-      .then(data => {
-        if (data.reload) reloadToLastPly();
-        else {
-          loading(false);
-          forecasts = data.steps || [];
-        }
-        redraw();
-      });
-  }
-
-  return {
-    addNodes(fc: ForecastStep[]): void {
-      fc = truncate(fc);
-      if (!isCandidate(fc)) return;
-      forecasts.push(fc);
-      fixAll();
-      save();
-    },
-    isCandidate,
-    removeIndex(index) {
-      forecasts = forecasts.filter((_, i) => i !== index);
-      save();
-    },
-    list: () => forecasts,
-    truncate,
-    loading,
-    onMyTurn: !!cfg.onMyTurn,
-    findStartingWithNode,
-    playAndSave,
-    reloadToLastPly,
   };
+
+  truncate = (fc: ForecastStep[]): ForecastStep[] =>
+    this.cfg.onMyTurn
+      ? (fc.length % 2 !== 1 ? fc.slice(0, -1) : fc).slice(0, 30)
+      : // must end with player move
+        (fc.length % 2 !== 0 ? fc.slice(0, -1) : fc).slice(0, 30);
+
+  isLongEnough = (fc: ForecastStep[]): boolean => fc.length >= (this.cfg.onMyTurn ? 1 : 2);
+
+  fixAll = () => {
+    // remove contained forecasts
+    this.update(fcs =>
+      fcs.filter((fc, i) => fcs.filter((f, j) => i !== j && this.contains(f, fc)).length === 0),
+    );
+    // remove colliding forecasts
+    this.update(fcs =>
+      fcs.filter((fc, i) => fcs.filter((f, j) => i < j && this.collides(f, fc)).length === 0),
+    );
+  };
+
+  reloadToLastPly = () => {
+    this.loading(true);
+    this.redraw();
+    history.replaceState(null, '', '#last');
+    site.reload();
+  };
+
+  isCandidate = (fc: ForecastStep[]): boolean => {
+    const truncatedStep = this.truncate(fc);
+    if (!this.isLongEnough(truncatedStep)) return false;
+    return !this.forecasts().some(f => this.contains(f, truncatedStep));
+  };
+
+  save = () => {
+    if (this.cfg.onMyTurn) return;
+    this.loading(true);
+    this.redraw();
+    xhrJson(this.saveUrl(), {
+      method: 'POST',
+      body: JSON.stringify(this.forecasts()),
+      headers: { 'Content-Type': 'application/json' },
+    }).then(data => {
+      if (data.reload) this.reloadToLastPly();
+      else {
+        this.loading(false);
+        this.forecasts(data.steps || []);
+      }
+      this.redraw();
+    });
+  };
+
+  playAndSave = (node: ForecastStep) => {
+    if (!this.cfg.onMyTurn) return;
+    this.loading(true);
+    this.redraw();
+    xhrJson(`${this.saveUrl()}/${node.uci}`, {
+      method: 'POST',
+      body: JSON.stringify(
+        this.findStartingWithNode(node)
+          .filter(notEmpty)
+          .map(fc => fc.slice(1)),
+      ),
+      headers: { 'Content-Type': 'application/json' },
+    }).then(data => {
+      if (data.reload) this.reloadToLastPly();
+      else {
+        this.loading(false);
+        this.forecasts(data.steps || []);
+      }
+      this.redraw();
+    });
+  };
+
+  showForecast = (variant: VariantKey, path: TreePath, tree: TreeWrapper, steps: ForecastStep[]) => {
+    steps.forEach(({ ply, fen, uci, san }) => {
+      const node = completeNode(variant)({ ply, fen, uci, san });
+      // this handles the case where the move isn't in the tree yet
+      // if it is, it just returns
+      tree.addNode(node, path); // the path before this is its parent;
+      path += node.id;
+    });
+    return path;
+  };
+
+  addNodes = (fc: ForecastStep[]): void => {
+    const truncatedStep = this.truncate(fc);
+    if (!this.isCandidate(truncatedStep)) return;
+    this.update(fcs => [...fcs, truncatedStep]);
+    this.fixAll();
+    this.save();
+  };
+
+  removeIndex = (index: number) => {
+    this.update(fcs => fcs.filter((_, i) => i !== index));
+    this.save();
+  };
+
+  onMyTurn = () => !!this.cfg.onMyTurn;
 }

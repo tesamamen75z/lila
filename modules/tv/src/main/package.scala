@@ -1,6 +1,6 @@
-package lila
+package lila.tv
 
-package object tv extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[tv] def logger = lila.log("tv")
-}
+case class RenderFeaturedJs(game: Game, promise: Promise[Html])

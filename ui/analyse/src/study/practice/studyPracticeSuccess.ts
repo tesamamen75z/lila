@@ -1,41 +1,44 @@
-import AnalyseCtrl from '../../ctrl';
-import { Goal } from './interfaces';
-import { Comment } from '../../practice/practiceCtrl';
+import type { TreeNode } from 'lib/tree/types';
+
+import type AnalyseCtrl from '@/ctrl';
+import type { Comment } from '@/practice/practiceCtrl';
+
+import type { Goal } from './interfaces';
 
 // returns null if not deep enough to know
-function isDrawish(node: Tree.Node): boolean | null {
-  if (!hasSolidEval(node)) return null;
-  return !node.ceval!.mate && Math.abs(node.ceval!.cp!) < 150;
-}
+const isDrawish = (node: TreeNode): boolean | null =>
+  hasSolidEval(node) ? !node.ceval!.mate && Math.abs(node.ceval!.cp!) < 150 : null;
+
 // returns null if not deep enough to know
-function isWinning(node: Tree.Node, goalCp: number, color: Color): boolean | null {
-  if (!hasSolidEval(node)) return null;
+const isWinning = (node: TreeNode, goalCp: number, color: Color): boolean | null => {
+  if (!hasSolidEval(node)) {
+    const pos = node.pos().unwrap();
+    return pos.isStalemate() || pos.isInsufficientMaterial() ? false : null;
+  }
+
   const cp = node.ceval!.mate! > 0 ? 99999 : node.ceval!.mate! < 0 ? -99999 : node.ceval!.cp;
   return color === 'white' ? cp! >= goalCp : cp! <= goalCp;
-}
+};
+
 // returns null if not deep enough to know
-function myMateIn(node: Tree.Node, color: Color): number | boolean | null {
+const myMateIn = (node: TreeNode, color: Color): number | boolean | null => {
   if (!hasSolidEval(node)) return null;
-  if (!node.ceval!.mate) return false;
-  const mateIn = node.ceval!.mate! * (color === 'white' ? 1 : -1);
+  if (!node.ceval?.mate) return false;
+  const mateIn = node.ceval.mate * (color === 'white' ? 1 : -1);
   return mateIn > 0 ? mateIn : false;
-}
+};
 
-function hasSolidEval(node: Tree.Node) {
-  return node.ceval && node.ceval.depth >= 16;
-}
+const hasSolidEval = (node: TreeNode) => node.ceval && node.ceval.depth >= 16;
 
-function hasBlundered(comment: Comment | null) {
-  return comment && (comment.verdict === 'mistake' || comment.verdict === 'blunder');
-}
+const hasBlundered = (comment: Comment | null): boolean =>
+  !!comment && ['mistake', 'blunder'].includes(comment.verdict);
 
 // returns null = ongoing, true = win, false = fail
 export default function (root: AnalyseCtrl, goal: Goal, nbMoves: number): boolean | null {
   const node = root.node;
   if (!node.uci) return null;
-  const outcome = root.outcome();
-  if (outcome && outcome.winner && outcome.winner !== root.bottomColor()) return false;
-  if (outcome && outcome.winner && outcome.winner === root.bottomColor()) return true;
+  const outcome = node.outcome();
+  if (outcome?.winner) return outcome.winner === root.bottomColor();
   if (hasBlundered(root.practice!.comment())) return false;
   switch (goal.result) {
     case 'drawIn':
@@ -60,6 +63,9 @@ export default function (root: AnalyseCtrl, goal: Goal, nbMoves: number): boolea
       if (!node.uci[4]) return null;
       return isWinning(node, goal.cp!, root.bottomColor());
     case 'mate':
+      if (node.threefold) return false;
+      if (isDrawish(node)) return false;
+      if (node.pos().unwrap().isStalemate()) return false;
   }
   return null;
 }

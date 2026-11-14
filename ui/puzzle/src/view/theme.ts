@@ -1,114 +1,117 @@
-import { bind, dataIcon } from '../util';
-import { Controller, MaybeVNode } from '../interfaces';
-import { h, VNode } from 'snabbdom';
+import { licon } from 'lib/licon';
+import { type VNode, type MaybeVNode, bind, hl, type VNodeData, icon } from 'lib/view';
 
-const studyUrl = 'https://lichess.org/study/viiWlKjv';
+import type PuzzleCtrl from '@/ctrl';
+import type { ThemeKey, RoundThemes } from '@/interfaces';
 
-export default function theme(ctrl: Controller): MaybeVNode {
-  const t = ctrl.getData().theme;
-  const showEditor = ctrl.vm.mode == 'view' && !ctrl.autoNexting();
-  if (ctrl.getData().replay) return showEditor ? h('div.puzzle__side__theme', editor(ctrl)) : null;
-  return ctrl.streak
-    ? null
-    : h('div.puzzle__side__theme', [
-        h('a', { attrs: { href: '/training/themes' } }, h('h2', ['« ', t.name])),
-        h('p', [
-          t.desc,
-          t.chapter &&
-            h(
+import { renderColorForm } from './side';
+
+const STUDY_URL = 'https://lichess.org/study/viiWlKjv';
+
+export default function theme(ctrl: PuzzleCtrl): MaybeVNode {
+  const { angle, replay } = ctrl.data;
+  const showEditor = ctrl.mode === 'view' && !ctrl.autoNexting();
+
+  if (replay) return showEditor ? hl('div.puzzle__side__theme', editor(ctrl)) : null;
+  if (ctrl.streak) return null;
+
+  const backHref = ctrl.routerWithLang(`/training/${angle.opening ? 'openings' : 'themes'}`);
+
+  if (ctrl.isDaily) {
+    return hl(
+      'div.puzzle__side__theme.puzzle__side__theme--daily',
+      backToTheme(backHref, ['« ', i18n.puzzle.dailyPuzzle]),
+    );
+  }
+
+  return hl('div.puzzle__side__theme', [
+    backToTheme(backHref, ['« ', angle.name], { class: { long: angle.name.length > 20 } }),
+    angle.opening
+      ? hl('a', { attrs: { href: `/opening/${angle.opening.key}` } }, [
+          'Learn more about ',
+          angle.opening.name,
+        ])
+      : hl('p', [
+          angle.desc,
+          angle.chapter &&
+            hl(
               'a.puzzle__side__theme__chapter.text',
-              {
-                attrs: {
-                  href: `${studyUrl}/${t.chapter}`,
-                  target: '_blank',
-                  rel: 'noopener',
-                },
-              },
-              [' ', ctrl.trans.noarg('example')]
+              { attrs: { href: `${STUDY_URL}/${angle.chapter}`, target: '_blank' } },
+              [' ', i18n.puzzle.example],
             ),
         ]),
-        showEditor ? h('div.puzzle__themes', editor(ctrl)) : null,
-      ]);
+    showEditor
+      ? hl('div.puzzle__themes', editor(ctrl))
+      : !replay && !ctrl.streak && (angle.opening || angle.openingAbstract) && renderColorForm(ctrl),
+  ]);
 }
 
 const invisibleThemes = new Set(['master', 'masterVsMaster', 'superGM']);
 
-const editor = (ctrl: Controller): VNode[] => {
-  const data = ctrl.getData(),
-    trans = ctrl.trans.noarg,
-    votedThemes = ctrl.vm.round?.themes || {};
-  const visibleThemes: string[] = data.puzzle.themes
-    .filter(t => !invisibleThemes.has(t))
-    .concat(Object.keys(votedThemes).filter(t => votedThemes[t] && !data.puzzle.themes.includes(t)))
-    .sort();
-  const allThemes = location.pathname == '/training/daily' ? null : ctrl.allThemes;
-  const availableThemes = allThemes ? allThemes.dynamic.filter(t => !votedThemes[t]) : null;
-  if (availableThemes) availableThemes.sort((a, b) => (trans(a) < trans(b) ? -1 : 1));
+function backToTheme(href: string, content: string[], data: VNodeData = {}): VNode {
+  return hl('a.puzzle__side__theme__back', { attrs: { href }, ...data }, content);
+}
+
+const themeTrans = (key: ThemeKey) => (key in i18n.puzzleTheme ? i18n.puzzleTheme[key].toString() : key);
+
+const editor = (ctrl: PuzzleCtrl): VNode[] => {
+  const { puzzle } = ctrl.data;
+  const votedThemes = ctrl.round?.themes ?? ({} as RoundThemes);
+  const allThemes = ctrl.isDaily ? null : ctrl.allThemes;
+  const availableThemes = allThemes ? allThemes.dynamic.filter((t: ThemeKey) => !votedThemes[t]) : null;
+
+  const descriptionTrans = (key: ThemeKey) =>
+    themeTrans(allThemes?.unconventionalDescriptionKeys[key] ?? (`${key}Description` as ThemeKey));
+
+  const visibleThemes: ThemeKey[] = [
+    ...puzzle.themes.filter(t => !invisibleThemes.has(t)),
+    ...Object.keys(votedThemes).filter(
+      (t: ThemeKey): t is ThemeKey => !!votedThemes[t] && !puzzle.themes.includes(t),
+    ),
+  ].sort();
+
+  if (availableThemes) availableThemes.sort((a, b) => (themeTrans(a) < themeTrans(b) ? -1 : 1));
+
   return [
-    h(
+    hl(
       'div.puzzle__themes_list',
       {
         hook: bind('click', e => {
           const target = e.target as HTMLElement;
-          const theme = target.getAttribute('data-theme');
+          const theme = target.getAttribute('data-theme') as ThemeKey;
           if (theme) ctrl.voteTheme(theme, target.classList.contains('vote-up'));
         }),
       },
       visibleThemes.map(key =>
-        h(
-          'div.puzzle__themes__list__entry',
-          {
-            class: {
-              strike: votedThemes[key] === false,
-            },
-          },
-          [
-            h(
-              'a',
-              {
-                attrs: {
-                  href: `/training/${key}`,
-                  title: trans(`${key}Description`),
-                },
-              },
-              trans(key)
+        hl('div.puzzle__themes__list__entry', { class: { strike: votedThemes[key] === false } }, [
+          hl('a', { attrs: { href: `/training/${key}`, title: descriptionTrans(key) } }, themeTrans(key)),
+          allThemes &&
+            hl(
+              'div.puzzle__themes__votes',
+              allThemes.static.has(key)
+                ? [hl('div.puzzle__themes__lock', icon(licon.Padlock)())]
+                : [
+                    hl('button.puzzle__themes__vote.vote-up', {
+                      class: { active: !!votedThemes[key] },
+                      attrs: { 'data-theme': key },
+                    }),
+                    hl('button.puzzle__themes__vote.vote-down', {
+                      class: { active: votedThemes[key] === false },
+                      attrs: { 'data-theme': key },
+                    }),
+                  ],
             ),
-            !allThemes
-              ? null
-              : h(
-                  'div.puzzle__themes__votes',
-                  allThemes.static.has(key)
-                    ? [
-                        h(
-                          'div.puzzle__themes__lock',
-                          h('i', {
-                            attrs: dataIcon(''),
-                          })
-                        ),
-                      ]
-                    : [
-                        h('span.puzzle__themes__vote.vote-up', {
-                          class: { active: votedThemes[key] },
-                          attrs: { 'data-theme': key },
-                        }),
-                        h('span.puzzle__themes__vote.vote-down', {
-                          class: { active: votedThemes[key] === false },
-                          attrs: { 'data-theme': key },
-                        }),
-                      ]
-                ),
-          ]
-        )
-      )
+        ]),
+      ),
     ),
     ...(availableThemes
       ? [
-          h(
+          hl(
             `select.puzzle__themes__selector.cache-bust-${availableThemes.length}`,
             {
               hook: {
                 ...bind('change', e => {
-                  const theme = (e.target as HTMLInputElement).value;
+                  const theme = (e.target as HTMLInputElement).value as ThemeKey;
                   if (theme) ctrl.voteTheme(theme, true);
                 }),
                 postpatch(_, vnode) {
@@ -117,38 +120,16 @@ const editor = (ctrl: Controller): VNode[] => {
               },
             },
             [
-              h(
-                'option',
-                {
-                  attrs: { value: '', selected: true },
-                },
-                trans('addAnotherTheme')
+              hl('option', { attrs: { value: '', selected: true } }, i18n.puzzle.addAnotherTheme),
+              availableThemes.map(theme =>
+                hl('option', { attrs: { value: theme, title: descriptionTrans(theme) } }, themeTrans(theme)),
               ),
-              ...availableThemes.map(theme =>
-                h(
-                  'option',
-                  {
-                    attrs: {
-                      value: theme,
-                      title: trans(`${theme}Description`),
-                    },
-                  },
-                  trans(theme)
-                )
-              ),
-            ]
+            ],
           ),
-          h(
+          hl(
             'a.puzzle__themes__study.text',
-            {
-              attrs: {
-                'data-icon': '',
-                href: studyUrl,
-                target: '_blank',
-                rel: 'noopener',
-              },
-            },
-            'About puzzle themes'
+            { attrs: { 'data-icon': licon.InfoCircle, href: STUDY_URL, target: '_blank' } },
+            i18n.puzzle.puzzleThemes,
           ),
         ]
       : []),

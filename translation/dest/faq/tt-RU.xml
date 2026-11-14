@@ -37,13 +37,13 @@
   <string name="lichessSupportChessAnd">Lichess гадәти шаһматны һәм %1$s ярдәм итә.</string>
   <string name="eightVariants">8 шаһмат варианты</string>
   <string name="whatIsACPL">Ни ул уртача урнашу-матерьялы җиңүлүше (ACPL)?</string>
+  <string name="fideHandbook">FIDE кулланмасы</string>
   <string name="fideHandbookX">FIDE кулланмасы %s</string>
   <string name="discoveringEnPassant">Ни өчен җәяүлене инде узган җәяүлене тотып ала? (бик вакытлы)</string>
   <string name="goodIntroduction">якшы кереш сүз</string>
-  <string name="officialRulesPDF">төпләнгән кагыйдәләр (PDF)</string>
   <string name="lichessTraining">Lichess күнегүе</string>
   <string name="threefoldRepetition">Өч тапкыр кабатлау</string>
-  <string name="threefoldRepetitionExplanation">Әгәр дә позиция өч тапкыр килеп чыкса, уенчылар %1$s белән җирәбә таләп итә ала. Lichess рәсми FIDE кагыйдәләрен тормышка ашыра, %2$s ның 9.2 (d) статьясында күрсәтелгәнчә.</string>
+  <string name="threefoldRepetitionExplanation">Әгәр дә позиция өч тапкыр килеп чыкса, уенчылар %1$s белән җирәбә таләп итә ала. Lichess рәсми FIDE кагыйдәләрен тормышка ашыра, %2$s ның 9.2 статьясында күрсәтелгәнчә.</string>
   <string name="threefoldRepetitionLowerCase">өч тапкыр кабатлау</string>
   <string name="repeatedPositionsThatMatters">Өч тапкыр кабатлау %1$s, хәрәкәт түгел. Кабатлау эзлекле булырга тиеш түгел.</string>
   <string name="positions">позициясе</string>
@@ -59,7 +59,6 @@
   <string name="guidelines">күрсәтмәләр</string>
   <string name="canIChangeMyUsername">Кулланучынәмәне үзгәртә аламмы?</string>
   <string name="uniqueTrophies">Фәридәи казанышлар</string>
-  <string name="wayOfBerserkExplanation">Аны алу өчен, hiimgosu үзен яманга һәм %s уеннарда 100%% җиңү өчен көрәште.</string>
   <string name="aHourlyBulletTournament">cәгатьләп Марми бәйгесе</string>
   <string name="lichessRatings">Lichess рейтингы</string>
   <string name="ratingDeviationMorethanOneHundredTen">Анык кылып әйткәндә, бу Glicko-2 огышлыгы 110 дан катлы икәнлеге аңлатыладыр. Огышлыгы бу низамның рейтингында булган ышаныч дәрәҗәсе. Огышканча кече булса рейтингы шулчаклы тотрыклы буладыр.</string>
@@ -77,4 +76,5 @@
 Браузерыгызның URL сызыгында lichess.org адресы янындагы йозак иконасына басыгыз.
 
 Аннары Lichess хәбәрләрне рөхсәт итәргәме, ябаргамы-юкмы икәнен сайлагыз.</string>
+  <string name="desktop">эш өстәле</string>
 </resources>

@@ -1,88 +1,67 @@
-import { h, VNode } from 'snabbdom';
-import * as xhr from './studyXhr';
-import { prop, Prop } from 'common';
-import throttle from 'common/throttle';
-import { bind, spinner } from '../util';
-import AnalyseCtrl from '../ctrl';
+import { h, type VNode } from 'snabbdom';
+
+import { blurIfPrimaryClick, prop } from 'lib';
+import { throttle } from 'lib/async';
+import type { Glyph, GlyphId, TreeNode } from 'lib/tree/types';
+import { bind, spinnerVdom } from 'lib/view';
+
+import type AnalyseCtrl from '../ctrl';
+import { glyphs as xhrGlyphs } from './studyXhr';
 
 interface AllGlyphs {
-  move: Tree.Glyph[];
-  observation: Tree.Glyph[];
-  position: Tree.Glyph[];
+  move: Glyph[];
+  observation: Glyph[];
+  position: Glyph[];
 }
 
-export interface GlyphCtrl {
-  root: AnalyseCtrl;
-  all: Prop<AllGlyphs | null>;
-  loadGlyphs(): void;
-  toggleGlyph(id: Tree.GlyphId): void;
-  redraw(): void;
-}
+const renderGlyph = (ctrl: GlyphForm, node: TreeNode) => (glyph: Glyph) =>
+  h(
+    'button',
+    {
+      hook: bind('click', e => {
+        ctrl.toggleGlyph(glyph.id);
+        blurIfPrimaryClick(e);
+      }),
+      attrs: { 'data-symbol': glyph.symbol, type: 'button' },
+      class: { active: !!node.glyphs && node.glyphs.some(g => g.id === glyph.id) },
+    },
+    [glyph.name],
+  );
 
-function renderGlyph(ctrl: GlyphCtrl, node: Tree.Node) {
-  return function (glyph: Tree.Glyph) {
-    return h(
-      'button',
-      {
-        hook: bind('click', _ => ctrl.toggleGlyph(glyph.id), ctrl.redraw),
-        attrs: { 'data-symbol': glyph.symbol, type: 'button' },
-        class: {
-          active: !!node.glyphs && !!node.glyphs.find(g => g.id === glyph.id),
-        },
-      },
-      [glyph.name]
-    );
-  };
-}
+export class GlyphForm {
+  all = prop<AllGlyphs | null>(null);
 
-export function ctrl(root: AnalyseCtrl): GlyphCtrl {
-  const all = prop<AllGlyphs | null>(null);
+  constructor(readonly root: AnalyseCtrl) {}
 
-  function loadGlyphs() {
-    if (!all())
-      xhr.glyphs().then(gs => {
-        all(gs);
-        root.redraw();
+  loadGlyphs = () => {
+    if (!this.all())
+      xhrGlyphs().then(gs => {
+        this.all(gs);
+        this.root.redraw();
       });
-  }
-
-  const toggleGlyph = throttle(500, (id: Tree.GlyphId) => {
-    root.study!.makeChange(
-      'toggleGlyph',
-      root.study!.withPosition({
-        id,
-      })
-    );
-  });
-
-  return {
-    root,
-    all,
-    loadGlyphs,
-    toggleGlyph,
-    redraw: root.redraw,
   };
+
+  toggleGlyph = throttle(500, (id: GlyphId) => {
+    this.root.study!.makeChange('toggleGlyph', this.root.study!.withPosition({ id }));
+    this.root.redraw();
+  });
 }
 
-export function viewDisabled(why: string): VNode {
-  return h('div.study__glyphs', [h('div.study__message', why)]);
-}
+export const viewDisabled = (why: string): VNode => h('div.study__glyphs', [h('div.study__message', why)]);
 
-export function view(ctrl: GlyphCtrl): VNode {
-  const all = ctrl.all(),
-    node = ctrl.root.node;
+export function view(ctrl: GlyphForm): VNode {
+  const all = ctrl.all();
+  const node = ctrl.root.node;
 
   return h(
     'div.study__glyphs' + (all ? '' : '.empty'),
-    {
-      hook: { insert: ctrl.loadGlyphs },
-    },
+    { hook: { insert: ctrl.loadGlyphs } },
     all
       ? [
           h('div.move', all.move.map(renderGlyph(ctrl, node))),
           h('div.position', all.position.map(renderGlyph(ctrl, node))),
           h('div.observation', all.observation.map(renderGlyph(ctrl, node))),
         ]
-      : [h('div.study__message', spinner())]
+      : [h('div.study__message', spinnerVdom())],
   );
 }

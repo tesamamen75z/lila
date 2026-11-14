@@ -1,21 +1,28 @@
 package lila.security
 
+import play.api.libs.ws.DefaultBodyReadables.*
 import play.api.libs.ws.StandaloneWSClient
 
-import lila.common.IpAddress
+import lila.core.net.IpAddress
 
-final class Tor(ws: StandaloneWSClient, config: SecurityConfig.Tor)(implicit
-    ec: scala.concurrent.ExecutionContext
-) {
+final private class Tor(
+    ws: StandaloneWSClient,
+    config: SecurityConfig.Tor,
+    mongoCache: lila.memo.MongoCache.Api
+)(using Executor)(using scheduler: Scheduler):
 
-  private var ips = Set.empty[IpAddress]
+  def isExitNode(ip: IpAddress) = ips.contains(ip.value)
 
-  private[security] def refresh: Fu[Set[IpAddress]] =
-    ws.url(config.providerUrl).get() map { res =>
-      ips = res.body.linesIterator.filterNot(_ startsWith "#").flatMap(IpAddress.from).toSet
+  private var ips = Set.empty[String]
+
+  private def refresh: Funit =
+    ws.url("https://check.torproject.org/torbulkexitlist").get().map { res =>
+      ips =
+        res.body[String].linesIterator.filterNot(_.startsWith("#")).flatMap(IpAddress.from).map(_.value).toSet
+      mongoCache.put("security.torNodes", ips.mkString(" ")) // for lila-ws to fetch
       lila.mon.security.torNodes.update(ips.size)
-      ips
     }
 
-  def isExitNode(ip: IpAddress) = ips contains ip
-}
+  if config.enabled then
+    scheduler.scheduleWithFixedDelay(44.seconds, 30.minutes): () =>
+      refresh

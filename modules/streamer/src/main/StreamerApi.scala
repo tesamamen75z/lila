@@ -1,209 +1,139 @@
 package lila.streamer
 
-import org.joda.time.DateTime
-import reactivemongo.api.ReadPreference
-import scala.concurrent.duration._
-
-import lila.db.dsl._
-import lila.db.Photographer
-import lila.memo.CacheApi._
-import lila.user.{ User, UserRepo }
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi.*
+import lila.memo.PicfitApi
 
 final class StreamerApi(
-    coll: Coll,
-    userRepo: UserRepo,
-    cacheApi: lila.memo.CacheApi,
-    photographer: Photographer,
-    notifyApi: lila.notify.NotifyApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    val repo: StreamerRepo,
+    userApi: lila.core.user.UserApi,
+    picfitApi: PicfitApi,
+    notifyApi: lila.core.notify.NotifyApi,
+    subsRepo: lila.core.relation.SubscriptionRepo,
+    ytApi: YoutubeApi,
+    twitchApi: TwitchApi
+)(using Executor):
 
-  import BsonHandlers._
+  def forSubscriber(streamerName: UserStr)(using me: Option[MyId]): Fu[Option[Streamer.WithContext]] =
+    me.foldLeft(find(streamerName)): (streamerFu, me) =>
+      streamerFu.flatMapz: s =>
+        subsRepo.isSubscribed(me.id, s.streamer).map(sub => s.copy(subscribed = sub).some)
 
-  def withColl[A](f: Coll => A): A = f(coll)
+  def withUsers(live: LiveStreams)(using me: Option[MyId]): Fu[List[Streamer.WithUserAndStream]] = for
+    users <- userApi.byIds(live.streams.map(_.streamer.userId))
+    subs <- me.so(subsRepo.filterSubscribed(_, users.map(_.id)))
+  yield live.streams.flatMap: s =>
+    users
+      .find(_.is(s.streamer))
+      .map:
+        Streamer.WithUserAndStream(s.streamer, _, s.some, subs(s.streamer.userId))
 
-  def byId(id: Streamer.Id): Fu[Option[Streamer]]           = coll.byId[Streamer](id.value)
-  def byIds(ids: Iterable[Streamer.Id]): Fu[List[Streamer]] = coll.byIds[Streamer](ids.map(_.value))
-
-  def find(username: String): Fu[Option[Streamer.WithUser]] =
-    userRepo named username flatMap { _ ?? find }
+  def find(username: UserStr): Fu[Option[Streamer.WithUser]] =
+    userApi.byId(username).flatMapz(find)
 
   def find(user: User): Fu[Option[Streamer.WithUser]] =
-    byId(Streamer.Id(user.id)) dmap {
-      _ map { Streamer.WithUser(_, user) }
-    }
+    repo
+      .byId(user.id.into(Streamer.Id))
+      .mapz: streamer =>
+        Streamer.WithUser(streamer, user).some
 
-  def findOrInit(user: User): Fu[Option[Streamer.WithUser]] =
-    find(user) orElse {
-      val s = Streamer.WithUser(Streamer make user, user)
-      coll.insert.one(s.streamer) inject s.some
-    }
+  def allListedIds: Fu[Set[Streamer.Id]] =
+    cache.listedIds.getUnit
 
-  def withUser(s: Stream): Fu[Option[Streamer.WithUserAndStream]] =
-    userRepo named s.streamer.userId dmap {
-      _ map { user =>
-        Streamer.WithUserAndStream(s.streamer, user, s.some)
-      }
-    }
-
-  def withUsers(live: LiveStreams): Fu[List[Streamer.WithUserAndStream]] =
-    live.streams.map(withUser).sequenceFu.dmap(_.flatten)
-
-  def allListedIds: Fu[Set[Streamer.Id]] = cache.listedIds.getUnit
+  def listed[U: UserIdOf](u: U): Fu[Option[Streamer]] =
+    val id = u.id.into(Streamer.Id)
+    cache.isListed(id).flatMapz(repo.byId(id))
 
   def setSeenAt(user: User): Funit =
-    cache.listedIds.getUnit flatMap { ids =>
-      ids.contains(Streamer.Id(user.id)) ??
-        coll.update.one($id(user.id), $set("seenAt" -> DateTime.now)).void
-    }
+    cache.listedIds.getUnit.flatMap(_.contains(user.id.into(Streamer.Id)).so(repo.setSeenAt(user.id)))
 
-  def setLiveNow(ids: List[Streamer.Id]): Funit =
-    coll.update.one($doc("_id" $in ids), $set("liveAt" -> DateTime.now), multi = true) >>
-      cache.candidateIds.getUnit.map { candidateIds =>
-        if (ids.exists(candidateIds.contains)) cache.candidateIds.invalidateUnit()
-      }
+  def setLangLiveNow(streams: List[Stream]): Funit =
+    for
+      _ <- repo.setLangLiveNow(streams)
+      candidateIds <- cache.candidateIds.getUnit
+    yield if streams.map(_.streamer.id).exists(candidateIds.contains) then cache.candidateIds.invalidateUnit()
 
-  def update(prev: Streamer, data: StreamerForm.UserData, asMod: Boolean): Fu[Streamer.ModChange] = {
+  def update(prev: Streamer, data: StreamerForm.UserData, asMod: Boolean): Fu[Option[Streamer.ModChange]] =
     val streamer = data(prev, asMod)
-    coll.update.one($id(streamer.id), streamer) >>-
-      cache.listedIds.invalidateUnit() inject {
-        val modChange = Streamer.ModChange(
-          list = prev.approval.granted != streamer.approval.granted option streamer.approval.granted,
-          tier = prev.approval.tier != streamer.approval.tier option streamer.approval.tier,
-          decline = !streamer.approval.granted && !streamer.approval.requested && prev.approval.requested
-        )
-        import lila.notify.Notification.Notifies
-        import lila.notify.Notification
-        ~modChange.list ?? {
-          notifyApi.addNotification(
-            Notification.make(
-              Notifies(streamer.userId),
-              lila.notify.GenericLink(
-                url = "/streamer/edit",
-                title = "Listed on /streamer".some,
-                text = "Your streamer page is public".some,
-                icon = ""
-              )
-            )
-          ) >>- cache.candidateIds.invalidateUnit()
-        }
-        modChange
-      }
-  }
+    repo
+      .update(streamer)
+      .map: _ =>
+        asMod.option:
+          cache.listedIds.invalidateUnit()
+          streamer.youtube.foreach(tuber => ytApi.channelSubscribe(tuber.channelId, true))
+          modChange(prev, streamer)
 
-  def demote(userId: User.ID): Funit =
-    coll.update
-      .one(
-        $id(userId),
-        $set(
-          "approval.requested" -> false,
-          "approval.granted"   -> false
-        )
-      )
-      .void
+  def forceCheck(uid: UserId): Funit =
+    repo
+      .byId(uid.into(Streamer.Id))
+      .map:
+        _.filter(_.approval.granted).so: s =>
+          s.youtube.foreach(ytApi.forceCheckWithHtmlScraping)
+          s.twitch.foreach(twitchApi.forceCheck)
 
-  def delete(user: User): Funit =
-    coll.delete.one($id(user.id)).void
+  def demote(userId: UserId): Funit =
+    for
+      _ <- repo.demote(userId)
+      _ <- pubsubSubscribe(userId, false)
+    yield ()
 
-  def create(u: User): Funit =
-    coll.insert.one(Streamer make u).void.recover(lila.db.ignoreDuplicateKey)
+  def pubsubSubscribe(userId: UserId, subscribe: Boolean): Funit =
+    repo
+      .byId(userId.into(Streamer.Id))
+      .flatMapz: s =>
+        s.youtube.so(tuber => ytApi.channelSubscribe(tuber.channelId, subscribe))
+        s.twitch.so(twitcher => twitchApi.pubsubSubscribe(twitcher.id, subscribe))
+
+  def oauthUnlink(streamer: Streamer, platform: Platform): Funit =
+    for _ <- repo.oauth.unlink(streamer, platform)
+    yield cache.listedIds.invalidateUnit()
 
   def isPotentialStreamer(user: User): Fu[Boolean] =
-    cache.listedIds.getUnit.dmap(_ contains Streamer.Id(user.id))
+    cache.listedIds.getUnit.dmap(_ contains user.id.into(Streamer.Id))
 
   def isCandidateStreamer(user: User): Fu[Boolean] =
-    cache.candidateIds.getUnit.dmap(_ contains Streamer.Id(user.id))
+    cache.candidateIds.getUnit.dmap(_ contains user.id.into(Streamer.Id))
 
   def isActualStreamer(user: User): Fu[Boolean] =
-    isPotentialStreamer(user) >>& !isCandidateStreamer(user)
+    isPotentialStreamer(user) >>& isCandidateStreamer(user).not
 
-  def uploadPicture(s: Streamer, picture: Photographer.Uploaded, by: User): Funit =
-    photographer(s.id.value, picture, createdBy = by.id).flatMap { pic =>
-      coll.update.one($id(s.id), $set("picturePath" -> pic.path)).void
-    }
+  def uploadPicture(s: Streamer, picture: PicfitApi.FilePart, by: User): Funit =
+    picfitApi
+      .uploadFile(picture, userId = by.id, s"streamer:${s.id}".some, requestAutomod = false)
+      .flatMap: pic =>
+        repo.withColl(coll => coll.update.one(bid(s.id), set("picture" -> pic.id))).void
 
-  def deletePicture(s: Streamer): Funit =
-    coll.update.one($id(s.id), $unset("picturePath")).void
+  private def modChange(prev: Streamer, current: Streamer): Streamer.ModChange =
+    val (prevRequested, prevGranted, currRequested, currGranted) =
+      (prev.approval.requested, prev.approval.granted, current.approval.requested, current.approval.granted)
 
-  // unapprove after a week if you never streamed
-  def autoDemoteFakes: Funit =
-    coll.update
-      .one(
-        $doc(
-          "liveAt" $exists false,
-          "approval.granted" -> true,
-          "approval.lastGrantedAt" $lt DateTime.now.minusWeeks(1)
-        ),
-        $set(
-          "approval.granted" -> false,
-          "demoted"          -> true
-        ),
-        multi = true
-      )
-      .void
-
-  object approval {
-
-    def request(user: User) =
-      find(user) flatMap {
-        _.filter(!_.streamer.approval.granted) ?? { s =>
-          coll.updateField($id(s.streamer.id), "approval.requested", true).void
-        }
-      }
-
-    def countRequests: Fu[Int] =
-      coll.countSel(
-        $doc(
-          "approval.requested" -> true,
-          "approval.ignored"   -> false
+    if (prevRequested || prevGranted) && !(currRequested || currGranted) then
+      notifyApi.notifyOne(
+        current,
+        lila.core.notify.NotificationContent.GenericLink(
+          url = streamerPageActivationRoute.url,
+          title = "Streamer application declined".some,
+          text = current.approval.reason,
+          icon = lila.ui.Icon.Mic.value
         )
       )
-  }
-
-  def sameChannels(streamer: Streamer): Fu[List[Streamer]] =
-    coll
-      .find(
-        $doc(
-          "$or" -> List(
-            streamer.twitch.map(_.userId).map { t =>
-              $doc("twitch.userId" -> t)
-            },
-            streamer.youTube.map(_.channelId).map { t =>
-              $doc("youTube.channelId" -> t)
-            }
-          ).flatten,
-          "_id" $ne streamer.userId
+    else if !prevGranted && currGranted then
+      notifyApi.notifyOne(
+        current,
+        lila.core.notify.NotificationContent.GenericLink(
+          url = routes.Streamer.edit.url,
+          title = "Streamer application approved".some,
+          text = "Your streamer page is now visible to others".some,
+          icon = lila.ui.Icon.Mic.value
         )
       )
-      .sort($sort desc "createdAt")
-      .cursor[Streamer](readPreference = ReadPreference.secondaryPreferred)
-      .list(10)
+    Streamer.ModChange(
+      list = (prevGranted != currGranted).option(currGranted),
+      tier = (prev.approval.tier != current.approval.tier).option(current.approval.tier),
+      decline = !currGranted && !currRequested && prevRequested,
+      reason = current.approval.reason
+    )
 
-  private object cache {
-
-    private def selectListedApproved =
-      $doc(
-        "listed"           -> true,
-        "approval.granted" -> true
-      )
-
-    val listedIds = cacheApi.unit[Set[Streamer.Id]] {
-      _.refreshAfterWrite(1 hour)
-        .buildAsyncFuture { _ =>
-          coll.secondaryPreferred.distinctEasy[Streamer.Id, Set](
-            "_id",
-            selectListedApproved
-          )
-        }
-    }
-
-    val candidateIds = cacheApi.unit[Set[Streamer.Id]] {
-      _.refreshAfterWrite(1 hour)
-        .buildAsyncFuture { _ =>
-          coll.secondaryPreferred.distinctEasy[Streamer.Id, Set](
-            "_id",
-            selectListedApproved ++ $doc("liveAt" $exists false)
-          )
-        }
-    }
-  }
-}
+  private object cache:
+    lazy val (listedIds, candidateIds) = repo.makeCaches
+    def isListed(id: Streamer.Id): Fu[Boolean] = listedIds.getUnit.dmap(_ contains id)

@@ -1,133 +1,128 @@
-/// <reference types="highcharts" />
+/// <reference path="./chessground.d.ts" />
+/// <reference path="./cash.d.ts" />
+/// <reference path="./i18n.d.ts" />
 
-interface Lichess {
-  load: Promise<void>; // window.onload promise
-  info: any;
-  requestIdleCallback(f: () => void, timeout?: number): void;
+// file://./../../site/src/site.ts
+interface Site {
+  debug: boolean | string;
+  info: {
+    commit: string;
+    message: string;
+    date: string;
+  };
+  mousetrap: LichessMousetrap; // file://./../../site/src/mousetrap.ts
   sri: string;
-  storage: LichessStorageHelper;
-  tempStorage: LichessStorageHelper;
-  once(key: string, mod?: 'always'): boolean;
-  powertip: any;
-  widget: any;
-  spinnerHtml: string;
-  assetUrl(url: string, opts?: AssetUrlOpts): string;
-  loadCss(path: string): void;
-  loadCssPath(path: string): void;
-  jsModule(name: string): string;
-  loadScript(url: string, opts?: AssetUrlOpts): Promise<void>;
-  loadModule(name: string): Promise<void>;
-  hopscotch: any;
-  userComplete: () => Promise<UserComplete>;
-  slider(): Promise<void>;
-  makeChat(data: any): any;
-  idleTimer(delay: number, onIdle: () => void, onWakeUp: () => void): void;
-  pubsub: Pubsub;
-  contentLoaded(parent?: HTMLElement): void;
-  unload: {
-    expected: boolean;
+  powertip: LichessPowertip; // file://./../../site/src/powertip.ts
+  asset: {
+    // file://./../../site/src/asset.ts
+    baseUrl(): string;
+    url(url: string, opts?: AssetUrlOpts): string;
+    flairSrc(flair: Flair): string;
+    fideFedSrc(fideFed: FideFed): string;
+    loadCss(loc: CssLocation): Promise<void>;
+    releaseCss(loc: CssLocation): void;
+    removeCss(loc: CssLocation): void;
+    jsModule(name: string): string;
+    loadIife(path: string, opts?: AssetUrlOpts): Promise<void>;
+    loadEsm<T>(key: string, opts?: EsmModuleOpts): Promise<T>;
+    loadPieces: Promise<void>;
+    loadI18n(catalog: string): Promise<void>;
   };
-  watchers(el: HTMLElement): void;
-  redirect(o: RedirectTo): void;
-  reload(): void;
-  escapeHtml(str: string): string;
+  unload: { expected: boolean };
+  redirect(o: RedirectTo, beep?: boolean): void;
+  reload(err?: any): void;
   announce(d: LichessAnnouncement): void;
-  studyTour(study: Study): void;
-  studyTourChapter(study: Study): void;
-
-  trans(i18n: I18nDict): Trans;
-  quantity(n: number): 'zero' | 'one' | 'few' | 'many' | 'other';
-
-  socket: any;
-  sound: SoundI;
-  miniBoard: {
-    init(node: HTMLElement): void;
-    initAll(parent?: HTMLElement): void;
-  };
-  miniGame: {
-    init(node: HTMLElement): string | null;
-    initAll(parent?: HTMLElement): void;
-    update(node: HTMLElement, data: GameUpdate): void;
-    finish(node: HTMLElement, win?: Color): void;
-  };
-  ab?: any;
-
-  // socket.js
-  StrongSocket: {
-    new (url: string, version: number | false, cfg?: any): any;
-    firstConnect: Promise<(tpe: string, data: any) => void>;
-    defaultParams: Record<string, any>;
-  };
-
-  timeago(date: number | Date): string;
-  timeagoLocale(a: number, b: number, c: number): any;
-  dateFormat: () => (date: Date) => string;
-
-  // misc
-  advantageChart?: {
-    update(data: any): void;
-    (data: any, trans: Trans, el: HTMLElement): void;
-  };
-  movetimeChart: any;
-  RoundNVUI?(redraw: () => void): {
-    render(ctrl: any): any;
-  };
-  AnalyseNVUI?(redraw: () => void): {
-    render(ctrl: any): any;
-  };
-  PuzzleNVUI?(redraw: () => void): {
-    render(ctrl: any): any;
-  };
-  playMusic(): any;
+  sound: SoundI; // file://./../../site/src/sound.ts
+  displayLocale: string; // file://./../../common/src/i18n.ts
+  blindMode: boolean;
+  load: Promise<void>; // DOMContentLoaded promise
+  quantity(n: number): 'zero' | 'one' | 'two' | 'few' | 'many' | 'other';
   quietMode?: boolean;
-  keyboardMove?: any;
   analysis?: any; // expose the analysis ctrl
+  // file://./../../.build/src/manifest.ts
+  manifest: {
+    css: Manifest;
+    js: Manifest;
+    hashed: Manifest;
+    i18n?: Manifest;
+  };
 }
 
-type I18nDict = { [key: string]: string };
-type I18nKey = string;
+type Manifest = Record<string, string>;
 
-type RedirectTo = string | { url: string; cookie: Cookie };
-
-type UserComplete = (opts: UserCompleteOpts) => void;
-
-interface UserCompleteOpts {
-  input: HTMLInputElement;
-  tag?: 'a' | 'span';
-  minLength?: number;
-  populate?: (result: LightUser) => string;
-  onSelect?: (result: LightUser) => void;
-  focus?: boolean;
-  friend?: boolean;
-  tour?: string;
-  swiss?: string;
+interface EsmModuleOpts extends AssetUrlOpts {
+  init?: any;
+  npm?: boolean;
 }
+
+type PairOf<T> = [T, T];
+
+type Flair = string;
+type FideFed = string;
+type PatronColor = number;
+type Redraw = () => void;
+type RedirectTo = string | RedirectToObj;
+type RedirectToObj = { id: string; url: string; cookie?: Cookie };
+
+interface LichessMousetrap {
+  // file://./../../site/src/mousetrap.ts
+  unbind(key: string): void;
+  bind(
+    keys: string | string[],
+    callback: (e: KeyboardEvent) => void,
+    action?: 'keypress' | 'keydown' | 'keyup',
+    multiple?: boolean, // = true
+  ): LichessMousetrap;
+}
+
+interface LichessPowertip {
+  // file://./../../site/src/powertip.ts
+  watchMouse(): void;
+  manualGameIn(parent: HTMLElement): void;
+  manualGame(el: HTMLElement): void;
+  manualUser(el: HTMLElement): void;
+  manualUserIn(parent: HTMLElement): void;
+  forcePlacementHook?: (el: HTMLElement) => PowerTip.Placement | null;
+}
+
+type SoundMoveOpts = {
+  name?: string; // either provide this or valid san/uci
+  san?: string;
+  uci?: string;
+  volume?: number;
+  filter?: 'music' | 'game';
+};
+
+type SoundMove = (opts?: SoundMoveOpts) => void;
+type SoundListener = (event: 'start' | 'stop', text?: string) => void;
 
 interface SoundI {
-  loadOggOrMp3(name: string, path: string): void;
-  loadStandard(name: string, soundSet?: string): void;
-  play(name: string, volume?: number): void;
+  // file://./../../site/src/sound.ts
+  listeners: Set<SoundListener>;
+  theme: string;
+  voiceRateRange: { min: number; max: number };
+  move: SoundMove;
+  load(name: string, path?: string): Promise<any>;
+  play(name: string, volume?: number): Promise<void>;
+  playAndDelayMateResultIfNecessary(name: string, volume?: number): Promise<void>;
+  playOnce(name: string): void;
+  countdown(count: number, intervalMs?: number): Promise<void>;
   getVolume(): number;
   setVolume(v: number): void;
-  speech(v?: boolean): boolean;
+  getVoice(): SpeechSynthesisVoice | undefined;
+  getVoiceMap(): Map<string, SpeechSynthesisVoice>;
+  setVoice(v: { name: string; lang: string }): void;
+  isSpeech(): boolean;
   changeSet(s: string): void;
-  say(text: string, cut?: boolean, force?: boolean, translated?: boolean): boolean;
-  sayOrPlay(name: string, text: string): void;
+  say(text: string, cut?: boolean, force?: boolean, translated?: boolean): void;
+  saySan(san?: San, cut?: boolean, force?: boolean): void;
+  sayOrPlay(name: string, text: string, cut?: boolean): void;
   preloadBoardSounds(): void;
-  soundSet: string;
-  baseUrl: string;
+  url(name: string): string;
 }
 
 interface LichessSpeech {
   step(s: { san?: San }, cut: boolean): void;
-}
-
-interface PalantirOpts {
-  uid: string;
-  redraw(): void;
-}
-interface Palantir {
-  render(h: any): any;
 }
 
 interface Cookie {
@@ -136,140 +131,66 @@ interface Cookie {
   maxAge: number;
 }
 
+type CssLocation = { href: string; key?: string } | { key: string };
+
 interface AssetUrlOpts {
-  sameDomain?: boolean;
-  noVersion?: boolean;
-  version?: string;
+  pathOnly?: boolean;
+  pathVersion?: true | string;
 }
+
+type Dictionary<T> = Record<string, T | undefined>;
+
+type SocketHandlers = Dictionary<(d: any) => void>;
 
 type Timeout = ReturnType<typeof setTimeout>;
 
-declare type SocketSend = (type: string, data?: any, opts?: any, noRetry?: boolean) => void;
-
-type TransNoArg = (key: string) => string;
-
-interface Trans {
-  (key: string, ...args: Array<string | number>): string;
-  noarg: TransNoArg;
-  plural(key: string, count: number, ...args: Array<string | number>): string;
-  vdom<T>(key: string, ...args: T[]): Array<string | T>;
-  vdomPlural<T>(key: string, count: number, countArg: T, ...args: T[]): Array<string | T>;
-}
-
-type PubsubCallback = (...data: any[]) => void;
-
-interface Pubsub {
-  on(msg: string, f: PubsubCallback): void;
-  off(msg: string, f: PubsubCallback): void;
-  emit(msg: string, ...args: any[]): void;
-}
-
-interface LichessStorageHelper {
-  make(k: string): LichessStorage;
-  makeBoolean(k: string): LichessBooleanStorage;
-  get(k: string): string | null;
-  set(k: string, v: string): void;
-  fire(k: string, v?: string): void;
-  remove(k: string): void;
-}
-
-interface LichessStorage {
-  get(): string | null;
-  set(v: any): void;
-  remove(): void;
-  listen(f: (e: LichessStorageEvent) => void): void;
-  fire(v?: string): void;
-}
-
-interface LichessBooleanStorage {
-  get(): boolean;
-  set(v: boolean): void;
-  toggle(): void;
-}
-
-interface LichessStorageEvent {
-  sri: string;
-  nonce: number;
-  value?: string;
-}
+type SocketSend = (type: string, data?: any, opts?: any, noRetry?: boolean) => void;
 
 interface LichessAnnouncement {
   msg?: string;
   date?: string;
 }
 
-interface LichessEditor {
-  getFen(): string;
-  setOrientation(o: Color): void;
-}
+type Nvui = (redraw: () => void) => {
+  render(ctrl: any): any;
+};
 
-declare namespace Editor {
-  export interface Config {
-    baseUrl: string;
-    fen: string;
-    options?: Editor.Options;
-    is3d: boolean;
-    animation: {
-      duration: number;
-    };
-    embed: boolean;
-    positions?: OpeningPosition[];
-    endgamePositions?: EndgamePosition[];
-    i18n: I18nDict;
-  }
-
-  export interface Options {
-    orientation?: Color;
-    onChange?: (fen: string) => void;
-    inlineCastling?: boolean;
-  }
-
-  export interface OpeningPosition {
-    eco?: string;
-    name: string;
-    fen: string;
-    epd?: string;
-  }
-
-  export interface EndgamePosition {
-    name: string;
-    fen: string;
-    epd?: string;
-  }
+interface Fipr {
+  get(cb: (c: { value: string }[]) => void): void;
+  x64hash128(input: string, seed: number): string;
 }
 
 interface Window {
-  lichess: Lichess;
-
-  moment: any;
-  Mousetrap: any;
-  Chessground: any;
-  Highcharts: Highcharts.Static;
-  InfiniteScroll(selector: string): void;
-  lichessReplayMusic: () => {
-    jump(node: Tree.Node): void;
-  };
-  hopscotch: any;
-  LichessSpeech?: LichessSpeech;
-  LichessEditor?(element: HTMLElement, config: Editor.Config): LichessEditor;
-  palantir?: {
-    palantir(opts: PalantirOpts): Palantir;
-  };
-  LichessChat(element: Element, opts: any): unknown;
-  [key: string]: any; // TODO
+  site: Site;
+  fipr: Fipr;
+  i18n: I18n;
+  readonly chrome?: unknown;
+  readonly moment: any;
+  readonly stripeHandler: any;
+  readonly Stripe: any;
+  readonly Textcomplete: any;
+  readonly UserComplete: any;
+  readonly Tagify: unknown;
+  readonly paypalOrder: unknown;
+  readonly paypalSubscription: unknown;
+  readonly webkitAudioContext?: typeof AudioContext;
+  readonly turnstile: any;
 }
 
 interface Study {
   userId?: string | null;
   isContrib?: boolean;
   isOwner?: boolean;
+  closeActionMenu?(): void;
   setTab(tab: string): void;
 }
 
 interface LightUserNoId {
   name: string;
   title?: string;
-  patron?: boolean;
+  flair?: Flair;
+  patron?: boolean; // BC
+  patronColor?: PatronColor;
 }
 
 interface LightUser extends LightUserNoId {
@@ -284,7 +205,7 @@ interface Navigator {
   deviceMemory?: number; // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/deviceMemory
 }
 
-declare type VariantKey =
+type VariantKey =
   | 'standard'
   | 'chess960'
   | 'antichess'
@@ -296,32 +217,22 @@ declare type VariantKey =
   | 'racingKings'
   | 'crazyhouse';
 
-declare type Speed = 'bullet' | 'blitz' | 'classical' | 'correspondence' | 'unlimited';
+type Speed = 'ultraBullet' | 'bullet' | 'blitz' | 'rapid' | 'classical' | 'correspondence';
 
-declare type Perf =
-  | 'bullet'
-  | 'blitz'
-  | 'classical'
-  | 'correspondence'
-  | 'chess960'
-  | 'antichess'
-  | 'fromPosition'
-  | 'kingOfTheHill'
-  | 'threeCheck'
-  | 'atomic'
-  | 'horde'
-  | 'racingKings'
-  | 'crazyhouse';
+type Perf = Exclude<VariantKey, 'standard'> | Speed;
 
-declare type Color = 'white' | 'black';
+type UserId = string;
+type Uci = string;
+type San = string;
+type Ply = number;
+type Hours = number;
+type Minutes = number;
+type Seconds = number;
+type Centis = number;
+type Millis = number;
+type Percentage = number;
 
-declare type Files = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h';
-declare type Ranks = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8';
-declare type Key = 'a0' | `${Files}${Ranks}`;
-declare type Uci = string;
-declare type San = string;
-declare type Fen = string;
-declare type Ply = number;
+type ByColor<T> = Record<Color, T>;
 
 interface Variant {
   key: VariantKey;
@@ -333,129 +244,16 @@ interface Variant {
 interface Paginator<A> {
   currentPage: number;
   maxPerPage: number;
-  currentPageResults: Array<A>;
+  currentPageResults: A[];
   nbResults: number;
   previousPage?: number;
   nextPage?: number;
   nbPages: number;
 }
 
-declare namespace Tree {
-  export type Path = string;
-
-  export interface ClientEval {
-    fen: Fen;
-    maxDepth: number;
-    depth: number;
-    knps: number;
-    nodes: number;
-    millis: number;
-    pvs: PvData[];
-    cloud?: boolean;
-    cp?: number;
-    mate?: number;
-    retried?: boolean;
-  }
-
-  export interface ServerEval {
-    cp?: number;
-    mate?: number;
-    best?: Uci;
-    fen: Fen;
-    knodes: number;
-    depth: number;
-    pvs: PvDataServer[];
-  }
-
-  export interface PvDataServer {
-    moves: string;
-    mate?: number;
-    cp?: number;
-  }
-
-  export interface PvData {
-    moves: string[];
-    mate?: number;
-    cp?: number;
-  }
-
-  export interface TablebaseHit {
-    winner: Color | undefined;
-    best?: Uci;
-  }
-
-  export interface Node {
-    id: string;
-    ply: Ply;
-    uci?: Uci;
-    fen: Fen;
-    children: Node[];
-    comments?: Comment[];
-    gamebook?: Gamebook;
-    dests?: string;
-    drops?: string | null;
-    check?: Key;
-    threat?: ClientEval;
-    ceval?: ClientEval;
-    eval?: ServerEval;
-    tbhit?: TablebaseHit | null;
-    glyphs?: Glyph[];
-    clock?: Clock;
-    parentClock?: Clock;
-    forceVariation?: boolean;
-    shapes?: Shape[];
-    comp?: boolean;
-    san?: string;
-    threefold?: boolean;
-    fail?: boolean;
-    puzzle?: 'win' | 'fail' | 'good' | 'retry';
-    crazy?: NodeCrazy;
-  }
-
-  export interface NodeCrazy {
-    pockets: [CrazyPocket, CrazyPocket];
-  }
-
-  export interface CrazyPocket {
-    [role: string]: number;
-  }
-
-  export interface Comment {
-    id: string;
-    by:
-      | string
-      | {
-          id: string;
-          name: string;
-        };
-    text: string;
-  }
-
-  export interface Gamebook {
-    deviation?: string;
-    hint?: string;
-    shapes?: Shape[];
-  }
-
-  type GlyphId = number;
-
-  interface Glyph {
-    id: GlyphId;
-    name: string;
-    symbol: string;
-  }
-
-  export type Clock = number;
-
-  export interface Shape {}
-}
-
-interface GameUpdate {
-  id: string;
-  fen: Fen;
-  lm: Uci;
-  wc?: number;
-  bc?: number;
+interface EvalScore {
+  cp?: number;
+  mate?: number;
 }
 
 interface CashStatic {
@@ -464,14 +262,13 @@ interface CashStatic {
 
 interface Cash {
   powerTip(options?: PowerTip.Options | 'show' | 'hide'): Cash;
-  clock: any;
 }
 
 declare namespace PowerTip {
-  type Placement = 'n' | 'e' | 's' | 'w' | 'nw' | 'ne' | 'sw' | 'se' | 'nw-alt' | 'ne-alt' | 'sw-alt' | 'se-alt';
-
+  type BasePlacement = 'n' | 'e' | 's' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
+  type Placement = BasePlacement | 'n-alt' | 'e-alt' | 's-alt' | 'w-alt';
   interface Options {
-    preRender?: (el: HTMLElement) => void;
+    render?: (el: HTMLElement) => Promise<void>;
     placement?: Placement;
     smartPlacement?: boolean;
     popupId?: string;
@@ -485,55 +282,30 @@ declare namespace PowerTip {
     manual?: boolean;
     openEvents?: string[];
     closeEvents?: string[];
+    defaultSize?: [number, number];
   }
 }
 
-interface HighchartsHTMLElement extends HTMLElement {
-  highcharts: Highcharts.ChartObject;
+declare const site: Site;
+declare const fipr: Fipr;
+declare const i18n: I18n;
+declare module 'tablesort' {
+  interface TablesortInstance {
+    refresh(): void;
+  }
+
+  interface TablesortStatic {
+    (el: HTMLTableElement, options?: { descending?: boolean }): TablesortInstance;
+    extend(
+      name: string,
+      pattern: (item: string) => RegExpMatchArray | null,
+      sort: (a: string, b: string) => number,
+    ): void;
+  }
+
+  const tablesort: TablesortStatic;
+  export default tablesort;
+  export type Tablesort = TablesortInstance;
 }
-
-declare namespace Prefs {
-  const enum Coords {
-    Hidden = 0,
-    Inside = 1,
-    Outside = 2,
-  }
-
-  const enum AutoQueen {
-    Never = 1,
-    OnPremove = 2,
-    Always = 3,
-  }
-
-  const enum ShowClockTenths {
-    Never = 0,
-    Below10Secs = 1,
-    Always = 2,
-  }
-
-  const enum ShowResizeHandle {
-    Never = 0,
-    OnlyAtStart = 1,
-    Always = 2,
-  }
-
-  const enum MoveEvent {
-    Click = 0,
-    Drag = 1,
-    ClickOrDrag = 2,
-  }
-
-  const enum Replay {
-    Never = 0,
-    OnlySlowGames = 1,
-    Always = 2,
-  }
-}
-
-interface Dictionary<T> {
-  [key: string]: T | undefined;
-}
-
-type SocketHandlers = Dictionary<(d: any) => void>;
-
-declare const lichess: Lichess;
+declare const $html: (s: TemplateStringsArray, ...k: any[]) => string; // file://./../../.build/src/esbuild.ts
+declare const $trim: (s: TemplateStringsArray, ...k: any[]) => string; // file://./../../.build/src/esbuild.ts

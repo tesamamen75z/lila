@@ -1,75 +1,47 @@
 package lila.forum
 
-import lila.common.Future
-import lila.notify.NotifyApi
-import lila.notify.{ MentionedInThread, Notification }
-import lila.relation.RelationApi
-import lila.pref.PrefApi
-import lila.user.{ User, UserRepo }
+import lila.core.notify.*
 
-/** Notifier to inform users if they have been mentioned in a post
-  *
-  * @param notifyApi Api for sending inbox messages
-  */
+/** Notifier to inform users if they have been mentioned in a post */
 final class MentionNotifier(
-    userRepo: UserRepo,
+    userApi: lila.core.user.UserApi,
     notifyApi: NotifyApi,
-    relationApi: RelationApi,
-    prefApi: PrefApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    relationApi: lila.core.relation.RelationApi,
+    prefApi: lila.core.pref.PrefApi
+)(using Executor):
 
-  def notifyMentionedUsers(post: Post, topic: Topic): Funit =
-    post.userId.ifFalse(post.troll) ?? { author =>
-      filterValidUsers(extractMentionedUsers(post), author) flatMap { validUsers =>
-        val mentionedBy   = MentionedInThread.MentionedBy(author)
-        val notifications = validUsers.map(createMentionNotification(post, topic, _, mentionedBy))
-        notifyApi.addNotifications(notifications)
+  def notifyMentionedUsers(post: ForumPost, topic: ForumTopic): Funit =
+    post.userId.ifFalse(post.troll).so { author =>
+      filterValidUsers(extractMentionedUsers(post), author).flatMap { mentionedUsers =>
+        mentionedUsers
+          .sequentiallyVoid { user =>
+            notifyApi.notifyOne(
+              user,
+              NotificationContent.MentionedInThread(
+                mentionedBy = author,
+                topicName = topic.name,
+                topidId = topic.id,
+                category = post.categId,
+                postId = post.id
+              )
+            )
+          }
       }
     }
 
   /** Checks the database to make sure that the users mentioned exist, and removes any users that do not exist
     * or block the mentioner from the returned list.
     */
-  private def filterValidUsers(
-      candidates: Set[User.ID],
-      mentionedBy: User.ID
-  ): Fu[List[Notification.Notifies]] = {
-    for {
-      existingUsers <-
-        userRepo
-          .existingUsernameIds(candidates take 10)
-          .map(_.take(5).toSet)
+  private def filterValidUsers(candidates: Set[UserId], mentionedBy: UserId): Fu[List[UserId]] =
+    for
+      existingUsers <- userApi.filterExists(candidates.take(10)).map(_.take(5).toSet)
       mentionableUsers <- prefApi.mentionableIds(existingUsers)
-      users            <- filterNotBlockedByUsers(mentionableUsers.toList, mentionedBy)
-    } yield users.map(Notification.Notifies.apply)
-  }
+      users <- mentionableUsers.toList.filterA(relationApi.fetchBlocks(_, mentionedBy).not)
+    yield users
 
-  private def filterNotBlockedByUsers(
-      usersMentioned: List[User.ID],
-      mentionedBy: User.ID
-  ): Fu[List[User.ID]] =
-    Future.filterNot(usersMentioned) { relationApi.fetchBlocks(_, mentionedBy) }
-
-  private def createMentionNotification(
-      post: Post,
-      topic: Topic,
-      mentionedUser: Notification.Notifies,
-      mentionedBy: MentionedInThread.MentionedBy
-  ): Notification = {
-    val notificationContent = MentionedInThread(
-      mentionedBy,
-      MentionedInThread.Topic(topic.name),
-      MentionedInThread.TopicId(topic.id),
-      MentionedInThread.Category(post.categId),
-      MentionedInThread.PostId(post.id)
-    )
-
-    Notification.make(mentionedUser, notificationContent)
-  }
-
-  private def extractMentionedUsers(post: Post): Set[User.ID] =
-    post.text.contains('@') ?? {
-      val m = lila.common.String.atUsernameRegex.findAllMatchIn(post.text)
-      (post.author foldLeft m.map(_ group 1).map(User.normalize).toSet) { _ - _ }
-    }
-}
+  private def extractMentionedUsers(post: ForumPost): Set[UserId] =
+    post.text
+      .contains('@')
+      .so:
+        val m = UserName.atRegex.findAllMatchIn(post.text)
+        (post.userId.foldLeft(m.map(_.group(1)).map(u => UserStr(u).id).toSet))(_ - _)

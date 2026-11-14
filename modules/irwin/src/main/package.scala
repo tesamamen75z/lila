@@ -1,6 +1,4 @@
-package lila
+package lila.irwin
 
-package object irwin extends PackageObject {
-
-  private[irwin] def logger = lila.log("irwin")
-}
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

@@ -1,33 +1,32 @@
 package lila.game
 package actorApi
 
-import lila.user.User
+import chess.format.{ Fen, Uci }
 
-case class StartGame(game: Game)
+import lila.core.game.{ Game, Pov }
 
-case class FinishGame(
-    game: Game,
-    white: Option[User],
-    black: Option[User]
-) {
-  def isVsSelf = white.isDefined && white == black
-}
+case class MoveGameEvent(game: Game, fen: Fen.Full, move: Uci)
+object MoveGameEvent:
+  def makeChan(gameId: GameId) = s"moveEvent:$gameId"
 
-case class InsertGame(game: Game)
+case class BoardDrawOffer(game: Game)
+object BoardDrawOffer:
+  def makeChan(gameId: GameId) = s"boardDrawOffer:$gameId"
 
-case class AbortedBy(pov: Pov)
+case class BoardTakeback(game: Game)
+object BoardTakeback:
+  def makeChan(gameId: GameId) = s"boardTakeback:$gameId"
 
-case class CorresAlarmEvent(pov: Pov)
+case class BoardTakebackOffer(game: Game)
+object BoardTakebackOffer:
+  def makeChan = BoardTakeback.makeChan
 
-private[game] case object NewCaptcha
+case class BoardGone(pov: Pov, claimInSeconds: Option[Int])
+object BoardGone:
+  def makeChan(gameId: GameId) = s"boardGone:$gameId"
 
-case class MoveGameEvent(
-    game: Game,
-    fen: String,
-    move: String
-)
-object MoveGameEvent {
-  def makeChan(gameId: Game.ID) = s"moveEvent:$gameId"
-}
+case class BoardMoretime(game: Game)
+object BoardMoretime:
+  def makeChan(gameId: GameId) = s"boardMoretime:$gameId"
 
-case class BoardDrawOffer(pov: Pov)
+case class NotifyRematch(rematchOf: GameId, newGame: Game)

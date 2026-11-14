@@ -1,27 +1,27 @@
 package lila.pool
 
-import scala.concurrent.duration._
-import lila.common.ThreadLocalRandom
+import org.apache.pekko.actor.*
+import org.apache.pekko.pattern.pipe
+import scalalib.ThreadLocalRandom
 
-import akka.actor._
-import akka.pattern.pipe
-
-import lila.socket.Socket.Sris
-import lila.user.User
+import lila.core.pool.{ HookThieve, PoolFrom, PoolMember }
+import lila.core.socket.Sris
 
 final private class PoolActor(
     config: PoolConfig,
     hookThieve: HookThieve,
     gameStarter: GameStarter
-) extends Actor {
+) extends Actor:
 
-  import PoolActor._
+  import PoolActor.*
 
   var members = Vector.empty[PoolMember]
 
-  var nextWave: Cancellable = _
+  private var lastPairedUserIds = Set.empty[UserId]
 
-  implicit def ec = context.dispatcher
+  var nextWave: Cancellable = scala.compiletime.uninitialized
+
+  given Executor = context.dispatcher
 
   def scheduleWave() =
     nextWave = context.system.scheduler.scheduleOnce(
@@ -32,25 +32,28 @@ final private class PoolActor(
 
   scheduleWave()
 
-  def receive = {
+  def receive =
 
-    case Join(joiner, rageSit) =>
-      members.find(joiner.is) match {
+    case Join(joiner) if lastPairedUserIds(joiner.userId) =>
+    // don't pair someone twice in a row, it's probably a client error
+
+    case Join(joiner) =>
+      members.find(m => joiner.userId.is(m.userId)) match
         case None =>
-          members = members :+ PoolMember(joiner, config, rageSit)
-          if (members.sizeIs >= config.wave.players.value) self ! FullWave
-        case Some(member) if member.ratingRange != joiner.ratingRange =>
-          members = members.map {
-            case m if m == member => m withRange joiner.ratingRange
-            case m                => m
-          }
+          members = members :+ joiner
+          // #TODO #FIXME race condition. several full waves can be sent here.
+          if members.sizeIs >= config.wave.players.value then self ! FullWave
+        case Some(existing) if existing.ratingRange != joiner.ratingRange =>
+          members = members.map: m =>
+            if m == existing then m.withRange(joiner.ratingRange) else m
         case _ => // no change
-      }
+      members
 
     case Leave(userId) =>
-      members.find(_.userId == userId) foreach { member =>
-        members = members.filter(member !=)
-      }
+      members
+        .find(_.userId == userId)
+        .foreach: member =>
+          members = members.filterNot(_ == member)
 
     case ScheduledWave =>
       monitor.scheduled(monId).increment()
@@ -62,54 +65,52 @@ final private class PoolActor(
 
     case RunWave =>
       nextWave.cancel()
-      hookThieve.candidates(config.clock) pipeTo self
-      ()
+      // #TODO #FIXME race condition.
+      hookThieve.candidates(config.clock).pipeTo(self)
 
     case HookThieve.PoolHooks(hooks) =>
       monitor.withRange(monId).record(members.count(_.hasRange))
 
       val candidates = members ++ hooks.map(_.member)
 
-      val pairings = MatchMaking(candidates)
+      val pairings = MatchMaking(candidates, config.id)
 
       val pairedMembers = pairings.flatMap(_.members)
 
       hookThieve.stolen(
-        hooks.filter { h =>
-          pairedMembers.exists(h.is)
-        },
+        hooks.filter: h =>
+          pairedMembers.exists(m => h.member.userId.is(m.userId)),
         monId
       )
 
       members = members.diff(pairedMembers).map(_.incMisses)
 
-      if (pairings.nonEmpty) gameStarter(config, pairings)
+      gameStarter(config, pairings)
 
       monitor.candidates(monId).record(candidates.size)
       monitor.paired(monId).record(pairedMembers.size)
       monitor.missed(monId).record(members.size)
-      pairings.foreach { p =>
-        monitor.ratingDiff(monId).record(p.ratingDiff)
-      }
+      pairings.foreach: p =>
+        monitor.ratingDiff(monId).record(p.ratingDiff.value)
+
+      lastPairedUserIds = pairedMembers.view.map(_.userId).toSet
 
       scheduleWave()
 
+    // lila-ws sends us the list of sris currently connected through WS
+    // so we can cleanup members that are not connected anymore
     case Sris(sris) =>
-      members = members.filter { m =>
-        sris contains m.sri
-      }
-  }
+      members = members.filter: member =>
+        member.from != PoolFrom.Socket || sris.contains(member.sri)
 
   val monitor = lila.mon.lobby.pool.wave
-  val monId   = config.id.value.replace('+', '_')
-}
+  val monId = config.id.value.replace('+', '_')
 
-private object PoolActor {
+private object PoolActor:
 
-  case class Join(joiner: PoolApi.Joiner, rageSit: lila.playban.RageSit)
-  case class Leave(userId: User.ID) extends AnyVal
+  case class Join(member: PoolMember) extends AnyVal
+  case class Leave(userId: UserId) extends AnyVal
 
   case object ScheduledWave
   case object FullWave
   case object RunWave
-}

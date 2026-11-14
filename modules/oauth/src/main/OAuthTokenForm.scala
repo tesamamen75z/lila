@@ -1,40 +1,31 @@
 package lila.oauth
 
-import io.lemonlabs.uri.AbsoluteUrl
-import org.joda.time.DateTime
-import play.api.data._
-import play.api.data.Forms._
-import reactivemongo.api.bson.BSONObjectID
+import play.api.data.*
+import play.api.data.Forms.*
 
-import lila.common.Bearer
-import lila.common.Form.{ absoluteUrl, cleanText }
-import lila.user.User
+import lila.common.Form.cleanText
 
-object OAuthTokenForm {
-
-  private val scopesField = list(nonEmptyText.verifying(OAuthScope.byKey.contains _))
+object OAuthTokenForm:
 
   private val descriptionField = cleanText(minLength = 3, maxLength = 140)
 
   def create = Form(
     mapping(
       "description" -> descriptionField,
-      "scopes"      -> scopesField
-    )(Data.apply)(Data.unapply)
+      "scopes" -> list:
+        nonEmptyText.verifying(s => OAuthScope.byKey.get(s).exists(!OAuthScope.concealedScopes.contains(_)))
+    )(Data.apply)(unapply)
   )
 
   case class Data(description: String, scopes: List[String])
 
-  def adminChallengeTokens = Form(
+  def adminChallengeTokens(max: Int = 1000) = Form(
     mapping(
       "description" -> descriptionField,
-      "users" -> cleanText
-        .verifying("No more than 500 users", _.split(',').size <= 500)
-    )(AdminChallengeTokensData.apply)(AdminChallengeTokensData.unapply _)
+      "users" -> cleanText.verifying(s"No more than $max users", _.split(',').sizeIs <= max)
+    )(AdminChallengeTokensData.apply)(unapply)
   )
 
-  case class AdminChallengeTokensData(description: String, usersStr: String) {
+  case class AdminChallengeTokensData(description: String, usersStr: String):
 
-    def usernames = usersStr.split(',').map(_.trim).distinct.filter(User.couldBeUsername).toList
-  }
-}
+    def usernames = usersStr.split(',').flatMap(UserStr.read).distinct.filter(_.couldBeUsername).toList

@@ -1,5 +1,5 @@
-var it = 0;
-var batchSize = 100;
+let it = 0;
+const batchSize = 100;
 
 db.user4
   .find({
@@ -16,7 +16,7 @@ db.user4
         $unset: {
           createdAt: true,
         },
-      }
+      },
     );
 
     db.user4.update(
@@ -27,11 +27,11 @@ db.user4
         $set: {
           createdAt: u.createdAt,
         },
-      }
+      },
     );
 
     ++it;
-    if (it % batchSize == 0) {
+    if (it % batchSize === 0) {
       print(it);
       sleep(100);
     }

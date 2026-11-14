@@ -1,99 +1,113 @@
 package lila.mod
 
-import chess.Color
+import chess.IntRating
+import chess.rating.IntRatingDiff
 import com.github.blemale.scaffeine.Cache
-import scala.concurrent.duration._
 
-import lila.game.Game
-import lila.msg.{ MsgApi, MsgPreset }
+import lila.core.msg.{ MsgApi, MsgPreset }
 import lila.report.ReportApi
-import lila.user.User
 
 final private class SandbagWatch(
     messenger: MsgApi,
-    reportApi: ReportApi
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    reportApi: ReportApi,
+    modLogApi: ModlogApi
+)(using Executor):
 
-  import SandbagWatch._
+  import SandbagWatch.*
+  import Outcome.*
 
-  private val messageOnceEvery = lila.memo.OnceEvery(1 hour)
+  private val messageOnceEvery = scalalib.cache.OnceEvery[UserId](1.hour)
 
-  def apply(game: Game): Unit = for {
+  def apply(game: Game): Unit = for
     loser <- game.loser.map(_.color)
-    if game.rated && !game.fromApi
+    if game.rated.yes && !game.sourceIs(_.Api)
     userId <- game.userIds
-  } {
-    (records getIfPresent userId, outcomeOf(game, loser, userId)) match {
-      case (None, Good)         =>
+  do
+    (records.getIfPresent(userId), outcomeOf(game, loser, userId)) match
+      case (None, Good) =>
       case (Some(record), Good) => setRecord(userId, record + Good, game)
-      case (record, outcome)    => setRecord(userId, (record | emptyRecord) + outcome, game)
-    }
-  }
+      case (record, outcome) => setRecord(userId, (record | emptyRecord) + outcome, game)
 
-  private def setRecord(userId: User.ID, record: Record, game: Game): Funit =
-    if (record.immaculate) fuccess {
-      records invalidate userId
-    }
-    else if (game.isTournament && game.winnerUserId.has(userId)) {
+  private def setRecord(userId: UserId, record: Record, game: Game): Funit =
+    if record.immaculate then fuccess(records.invalidate(userId))
+    else if game.isTournament && userId.is(game.winnerUserId) then
       // if your opponent always resigns to you in a tournament
       // we'll assume you're not boosting
       funit
-    } else {
+    else
       records.put(userId, record)
-      val sandbagCount = record.countSandbagWithLatest
-      val boostCount   = record.samePlayerBoostCount
-      if (sandbagCount == 3) sendMessage(userId, MsgPreset.sandbagAuto)
-      else if (sandbagCount == 4) game.loserUserId ?? { loser =>
-        reportApi.autoSandbagReport(record.sandbagOpponents, loser)
-      }
-      else if (boostCount == 3) sendMessage(userId, MsgPreset.boostAuto)
-      else if (boostCount == 4) withWinnerAndLoser(game)(reportApi.autoBoostReport)
-      else funit
-    }
+      for
+        nbWarnings <- modLogApi.countRecentRatingManipulationsWarnings(userId)
+        sandbagCount = record.countSandbagWithLatest
+        boostCount = record.samePlayerBoostCount
+        sandbagSeriousness = sandbagCount + nbWarnings
+        boostSeriousness = boostCount + nbWarnings
+        _ <-
+          if sandbagCount == 3
+          then sendMessage(userId, msgPreset.sandbagAuto)
+          else if sandbagCount == 4 then
+            game.loserUserId.so:
+              reportApi.autoSandbagReport(record.sandbagOpponents, _, sandbagSeriousness)
+          else if boostCount == 3
+          then sendMessage(userId, msgPreset.boostAuto)
+          else if boostCount == 4
+          then withWinnerAndLoser(game)((u1, u2) => reportApi.autoBoostReport(u1, u2, boostSeriousness))
+          else funit
+      yield ()
 
-  private def sendMessage(userId: User.ID, preset: MsgPreset): Funit =
-    messageOnceEvery(userId) ?? {
-      lila.common.Bus.publish(lila.hub.actorApi.mod.AutoWarning(userId, preset.name), "autoWarning")
+  private def isCorrespondenceTimeout(game: Game): Boolean =
+    game.isCorrespondence && game.status == chess.Status.Timeout
+
+  private def sendMessage(userId: UserId, preset: MsgPreset): Funit =
+    messageOnceEvery(userId).so:
+      lila.common.Bus.pub(lila.core.mod.AutoWarning(userId, preset.name))
       messenger.postPreset(userId, preset).void
-    }
 
-  private def withWinnerAndLoser(game: Game)(f: (User.ID, User.ID) => Funit): Funit =
-    game.winnerUserId ?? { winner =>
-      game.loserUserId ?? {
-        f(winner, _)
-      }
-    }
+  private def withWinnerAndLoser(game: Game)(f: (UserId, UserId) => Funit): Funit =
+    (game.winnerUserId, game.loserUserId).tupled.so(f.tupled)
 
-  private val records: Cache[User.ID, Record] = lila.memo.CacheApi.scaffeineNoScheduler
-    .expireAfterWrite(3 hours)
-    .build[User.ID, Record]()
+  private val records: Cache[UserId, Record] = lila.memo.CacheApi.scaffeineNoScheduler
+    .expireAfterWrite(3.hours)
+    .build[UserId, Record]()
 
-  private def outcomeOf(game: Game, loser: Color, userId: User.ID): Outcome =
+  private def outcomeOf(game: Game, loser: Color, userId: UserId): Outcome =
     game
-      .playerByUserId(userId)
-      .ifTrue(isSandbag(game))
-      .fold[Outcome](Good) { player =>
-        if (player.color == loser) game.winnerUserId.fold[Outcome](Good)(Sandbag.apply)
-        else game.loserUserId.fold[Outcome](Good)(Boost.apply)
-      }
+      .player(userId)
+      .ifTrue(isSandbagOrBoost(game))
+      .flatMap: player =>
+        if player.color == loser
+        then game.winnerUserId.map(Sandbag.apply)
+        else game.loserUserId.map(Boost.apply)
+      .getOrElse(Good)
 
-  private def isSandbag(game: Game): Boolean =
-    game.playedTurns <= {
-      if (game.variant == chess.variant.Atomic) 3
+  private def isSandbagOrBoost(game: Game): Boolean = !isCorrespondenceTimeout(game) && {
+
+    def loserRatingGt(r: Int) = game.loser.flatMap(_.rating).exists(_ > IntRating(r))
+
+    val baseMinTurns =
+      if loserRatingGt(1800) then 20
+      else if loserRatingGt(1600) then 12
       else 8
-    } && game.winner ?? (~_.ratingDiff > 0)
-}
 
-private object SandbagWatch {
+    import chess.variant.*
+    val minTurns = game.variant match
+      case Atomic => baseMinTurns / 4
+      case KingOfTheHill | ThreeCheck => baseMinTurns / 2
+      case _ => baseMinTurns
 
-  sealed trait Outcome
-  case object Good                      extends Outcome
-  case class Sandbag(opponent: User.ID) extends Outcome
-  case class Boost(opponent: User.ID)   extends Outcome
+    game.playedPlies <= minTurns && game.winner.exists(_.ratingDiff.exists(_.positive))
+  }
+
+private object SandbagWatch:
+
+  enum Outcome:
+    case Good
+    case Sandbag(opponent: UserId)
+    case Boost(opponent: UserId)
 
   val maxOutcomes = 7
 
-  case class Record(outcomes: List[Outcome]) {
+  case class Record(outcomes: List[Outcome]):
 
     def +(outcome: Outcome) = copy(outcomes = outcome :: outcomes.take(maxOutcomes - 1))
 
@@ -101,31 +115,48 @@ private object SandbagWatch {
 
     def latest = outcomes.headOption
 
-    def immaculate = outcomes.sizeIs == maxOutcomes && outcomes.forall(Good ==)
+    def immaculate = outcomes.sizeIs == maxOutcomes && outcomes.forall(Outcome.Good ==)
 
-    def latestIsSandbag = latest exists {
-      case Sandbag(_) => true
-      case _          => false
-    }
+    def latestIsSandbag = latest.exists:
+      case Outcome.Sandbag(_) => true
+      case _ => false
 
-    def countSandbagWithLatest: Int = latestIsSandbag ?? outcomes.count {
-      case Sandbag(_) => true
-      case _          => false
-    }
+    def countSandbagWithLatest: Int = latestIsSandbag.so(outcomes.count:
+      case Outcome.Sandbag(_) => true
+      case _ => false)
 
-    def sandbagOpponents = outcomes.collect { case Sandbag(opponent) =>
-      opponent
-    }.distinct
+    def sandbagOpponents = outcomes.collect { case Outcome.Sandbag(opponent) => opponent }.distinct
 
-    def samePlayerBoostCount = latest ?? {
-      case Boost(opponent) =>
-        outcomes.count {
-          case Boost(o) if o == opponent => true
-          case _                         => false
-        }
+    def samePlayerBoostCount = latest.so:
+      case Outcome.Boost(opponent) =>
+        outcomes.count:
+          case Outcome.Boost(o) if o == opponent => true
+          case _ => false
       case _ => 0
-    }
-  }
 
   val emptyRecord = Record(Nil)
-}
+
+  object msgPreset:
+
+    lazy val sandbagAuto = MsgPreset(
+      name = "Warning: possible sandbagging",
+      text = """Our system noticed that you lost a couple of rated games very quickly. We understand this can happen for many reasons, from a poor connection, to an opponent's clever opening trap, or simply making a mistake and resigning early.
+
+  We're writing because this pattern can also be a sign of "sandbagging," losing games on purpose to lower one's rating. To ensure a fair and enjoyable experience for everyone, our policy requires that players try their best to win every rated game.
+
+  If these quick losses were unintentional, please don't worry. This is just a friendly reminder about our Fair Play policy.
+
+  Thank you for helping keep Lichess fun and fair.""",
+      mustRead = true
+    )
+    lazy val boostAuto = MsgPreset(
+      name = "Warning: possible boosting",
+      """Our system noticed that you won a couple of rated games very quickly. We understand this can happen for many reasons, perhaps your opponent has a poor connection, fell for a clever opening trap, or simply made a mistake and resigned early.
+
+  We're writing because this pattern can also be a sign of "boosting," where one player benefits from an opponent who is losing on purpose. To ensure a fair and enjoyable experience for everyone, our policy requires that both players try their best to win every rated game.
+
+  If your quick wins were the result of fair play, please don't worry. This is just a friendly reminder about our Fair Play policy.
+
+  Thank you for helping keep Lichess fun and fair.""",
+      mustRead = true
+    )

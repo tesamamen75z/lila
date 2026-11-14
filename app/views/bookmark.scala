@@ -1,30 +1,23 @@
-package views.html
+package views.bookmark
 
-import lila.api.Context
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
+import lila.app.UiEnv.{ *, given }
 
-import controllers.routes
-
-object bookmark {
-
-  def toggle(g: lila.game.Game, bookmarked: Boolean)(implicit ctx: Context) =
-    if (ctx.isAuth)
-      a(
-        cls := List(
-          "bookmark"   -> true,
-          "bookmarked" -> bookmarked
-        ),
-        href := routes.Game.bookmark(g.id),
-        title := trans.bookmarkThisGame.txt()
-      )(
-        iconTag("")(cls := "on is3"),
-        iconTag("")(cls := "off is3"),
-        span(g.showBookmarks)
-      )
-    else if (g.hasBookmarks)
-      span(cls := "bookmark")(
-        span(dataIcon := "", cls := "is3")(g.showBookmarks)
-      )
-    else emptyFrag
-}
+def toggle(g: Game, bookmarked: Boolean)(using ctx: Context) =
+  if ctx.isAuth then
+    a(
+      cls := List(
+        "bookmark" -> true,
+        "bookmarked" -> bookmarked
+      ),
+      href := routes.Game.bookmark(g.id),
+      title := trans.site.bookmarkThisGame.txt()
+    )(
+      iconTag(Icon.Star)(cls := "on is3"),
+      iconTag(Icon.StarOutline)(cls := "off is3"),
+      span((g.bookmarks > 0).option(g.bookmarks))
+    )
+  else if g.bookmarks > 0 then
+    span(cls := "bookmark")(
+      span(dataIcon := Icon.StarOutline, cls := "is3")(g.bookmarks)
+    )
+  else emptyFrag

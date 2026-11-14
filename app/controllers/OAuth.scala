@@ -1,155 +1,138 @@
 package controllers
 
-import cats.data.Validated
-import play.api.data.Form
-import play.api.data.Forms._
-import play.api.libs.json.Json
-import play.api.mvc._
+import cats.mtl.Handle.*
+import play.api.libs.json.{ JsNull, JsObject, JsValue, Json }
+import play.api.mvc.*
+import scalalib.ThreadLocalRandom
+import scalalib.net.Bearer
 import scalatags.Text.all.stringFrag
-import views._
 
-import lila.api.Context
+import lila.app.*
 import lila.common.HTTPRequest
-import lila.app._
-import lila.oauth.{ AccessToken, AccessTokenRequest, AuthorizationRequest }
+import lila.common.Json.given
+import lila.oauth.{ AccessTokenRequest, AuthorizationRequest, OAuthScopes, OAuthSignedClient }
 
-final class OAuth(env: Env) extends LilaController(env) {
+import Api.ApiResult
 
-  private def reqToAuthorizationRequest(req: RequestHeader) =
-    AuthorizationRequest.Raw(
-      clientId = get("client_id", req),
-      responseType = get("response_type", req),
-      redirectUri = get("redirect_uri", req),
-      state = get("state", req),
-      codeChallengeMethod = get("code_challenge_method", req),
-      codeChallenge = get("code_challenge", req),
-      scope = get("scope", req)
+final class OAuth(env: Env, apiC: => Api) extends LilaController(env):
+
+  private def withPrompt(f: (AuthorizationRequest.Prompt, Option[OAuthSignedClient]) => Fu[Result])(using
+      ctx: Context
+  ): Fu[Result] =
+    env.oAuth.signedClients.forReq.fold(
+      err => BadRequest.page(views.site.message("Bad authorization request")(stringFrag(err))),
+      f.tupled
     )
 
-  private def withPrompt(f: AuthorizationRequest.Prompt => Fu[Result])(implicit ctx: Context) =
-    reqToAuthorizationRequest(ctx.req).prompt match {
-      case Validated.Valid(prompt) => f(prompt)
-      case Validated.Invalid(error) =>
-        BadRequest(html.site.message("Bad authorization request")(stringFrag(error.description))).fuccess
-    }
+  def authorize = Open:
+    withPrompt: (prompt, signedClient) =>
+      val action: OAuthSignedClient.Action = if getBool("signup") then "signup" else "login"
+      env.oAuth.signedClients.monitor(signedClient, prompt, action)
+      ctx.me match
+        case Some(me) =>
+          given Me = me
+          Ok.page(views.oAuth.authorize(prompt, signedClient))
+        case None =>
+          Redirect(
+            if action == "signup" then routes.Auth.signup.url else routes.Auth.login.url,
+            Map("referrer" -> List(req.uri))
+          ).toFuccess
 
-  def authorize =
-    Open { implicit ctx =>
-      withPrompt { prompt =>
-        fuccess(ctx.me.fold(Redirect(routes.Auth.login.url, Map("referrer" -> List(ctx.req.uri)))) { me =>
-          Ok(
-            html.oAuth.authorize(prompt, me, s"${routes.OAuth.authorizeApply}?${ctx.req.rawQueryString}")
+  def legacyAuthorize = Anon:
+    MovedPermanently(s"${routes.OAuth.authorize}?${req.rawQueryString}")
+
+  def authorizeApply = Auth { _ ?=> me ?=>
+    withPrompt: (prompt, _) =>
+      allow:
+        for
+          authorized <- prompt.authorize(me, env.oAuth.legacyClientApi.apply)
+          code <- env.oAuth.authorizationApi.create(authorized)
+        yield
+          lila.mon.user.oauth.authorize("success").increment()
+          SeeOther(authorized.redirectUrl(code))
+      .rescue: error =>
+        lila.oauth.logger.info:
+          s"OAuth.authorizeApply ${me.username} error: $error client: ${HTTPRequest.printClient}"
+        lila.mon.user.oauth.authorize(error.error).increment()
+        SeeOther(prompt.redirectUri.error(error, prompt.state))
+  }
+
+  def tokenApply = AnonBodyOf(parse.form(lila.oauth.AccessTokenRequest.form)): raw =>
+    allow:
+      for
+        prepared <- raw.prepare.raiseIfLeft
+        granted <- env.oAuth.authorizationApi.consume(prepared)
+        token <- env.oAuth.tokenApi.create(granted)
+      yield Ok(
+        Json
+          .obj(
+            "token_type" -> "Bearer",
+            "access_token" -> token.plain
           )
-        })
-      }
-    }
+          .add("expires_in" -> token.expires.map(_.toSeconds - nowSeconds))
+      )
+    .rescue: err =>
+      BadRequest(err.toJson)
 
-  def legacyAuthorize =
-    Action { req =>
-      MovedPermanently(s"${routes.OAuth.authorize}?${req.rawQueryString}")
-    }
+  def legacyTokenApply = AnonBodyOf(parse.form(lila.oauth.AccessTokenRequest.form)): raw =>
+    allow:
+      for
+        prepared <- raw.prepareLegacy(AccessTokenRequest.BasicAuth.from(req)).raiseIfLeft
+        granted <- env.oAuth.authorizationApi.consume(prepared)
+        token <- env.oAuth.tokenApi.create(granted)
+      yield Ok(
+        Json
+          .obj(
+            "token_type" -> "Bearer",
+            "access_token" -> token.plain,
+            "refresh_token" -> s"invalid_for_bc_${ThreadLocalRandom.nextString(17)}"
+          )
+          .add("expires_in" -> token.expires.map(_.toSeconds - nowSeconds))
+      )
+    .rescue: err =>
+      BadRequest(err.toJson)
 
-  def authorizeApply =
-    Auth { implicit ctx => me =>
-      withPrompt { prompt =>
-        prompt.authorize(me, env.oAuth.legacyClientApi.apply) flatMap {
-          case Validated.Valid(authorized) =>
-            env.oAuth.authorizationApi.create(authorized) map { code =>
-              SeeOther(authorized.redirectUrl(code))
-            }
-          case Validated.Invalid(error) => SeeOther(prompt.redirectUri.error(error, prompt.state)).fuccess
+  def tokenRevoke = Scoped() { ctx ?=> _ ?=>
+    HTTPRequest.bearer.so: (bearer, _) =>
+      env.oAuth.tokenApi.revoke(bearer).inject(NoContent)
+  }
+
+  def revokeClient = AuthBody { ctx ?=> _ ?=>
+    bindForm(lila.oauth.AccessTokenRequest.revokeClientForm)(
+      _ => BadRequest,
+      origin => env.oAuth.tokenApi.revokeByClientOrigin(origin).inject(NoContent)
+    )
+  }
+
+  def challengeTokens = ScopedBody(_.Web.Mod) { ctx ?=> me ?=>
+    if isGranted(_.ApiChallengeAdmin) then
+      bindForm(lila.oauth.OAuthTokenForm.adminChallengeTokens())(
+        jsonFormError,
+        data =>
+          env.oAuth.tokenApi
+            .adminChallengeTokens(data, me)
+            .map: tokens =>
+              JsonOk(tokens.view.mapValues(_.plain).toMap)
+      )
+    else Unauthorized(jsonError("Missing permission"))
+  }
+
+  def testTokens = AnonBodyOf(parse.tolerantText): body =>
+    val bearers = Bearer.from(body.trim.split(',').view.take(1000).toList)
+    limit
+      .oauthTokenTest(req.ipAddress, fuccess(ApiResult.Limited), cost = bearers.size):
+        env.oAuth.tokenApi.test(bearers).map { tokens =>
+          import lila.common.Json.given
+          ApiResult.Data(JsObject(tokens.map { (bearer, token) =>
+            bearer.value -> token.fold[JsValue](JsNull): t =>
+              Json.obj(
+                "userId" -> t.userId,
+                "scopes" -> t.scopes.into(OAuthScopes).keyList,
+                "expires" -> t.expires
+              )
+          }))
         }
-      }
-    }
+      .map(apiC.toHttp)
 
-  private val accessTokenRequestForm = Form(
-    mapping(
-      "grant_type"    -> optional(text),
-      "code"          -> optional(text),
-      "code_verifier" -> optional(text),
-      "client_id"     -> optional(text),
-      "redirect_uri"  -> optional(text),
-      "client_secret" -> optional(text)
-    )(AccessTokenRequest.Raw.apply)(AccessTokenRequest.Raw.unapply)
-  )
-
-  def tokenApply =
-    Action.async(parse.form(accessTokenRequestForm)) { implicit req =>
-      req.body.prepare match {
-        case Validated.Valid(prepared) =>
-          env.oAuth.authorizationApi.consume(prepared) flatMap {
-            case Validated.Valid(granted) =>
-              env.oAuth.tokenApi.create(granted) map { token =>
-                Ok(
-                  Json
-                    .obj(
-                      "token_type"   -> "Bearer",
-                      "access_token" -> token.plain.secret
-                    )
-                    .add("expires_in" -> token.expires.map(_.getSeconds - nowSeconds))
-                )
-              }
-            case Validated.Invalid(err) => BadRequest(err.toJson).fuccess
-          }
-        case Validated.Invalid(err) => BadRequest(err.toJson).fuccess
-      }
-    }
-
-  def legacyTokenApply =
-    Action.async(parse.form(accessTokenRequestForm)) { implicit req =>
-      req.body.prepareLegacy(AccessTokenRequest.BasicAuth from req) match {
-        case Validated.Valid(prepared) =>
-          env.oAuth.authorizationApi.consume(prepared) flatMap {
-            case Validated.Valid(granted) =>
-              env.oAuth.tokenApi.create(granted) map { token =>
-                Ok(
-                  Json
-                    .obj(
-                      "token_type"    -> "Bearer",
-                      "access_token"  -> token.plain.secret,
-                      "refresh_token" -> s"invalid_for_bc_${lila.common.ThreadLocalRandom.nextString(17)}"
-                    )
-                    .add("expires_in" -> token.expires.map(_.getSeconds - nowSeconds))
-                )
-              }
-            case Validated.Invalid(err) => BadRequest(err.toJson).fuccess
-          }
-        case Validated.Invalid(err) => BadRequest(err.toJson).fuccess
-      }
-    }
-
-  def tokenRevoke =
-    Scoped() { implicit req => _ =>
-      HTTPRequest.bearer(req) ?? { token =>
-        env.oAuth.tokenApi.revoke(token) inject NoContent
-      }
-    }
-
-  private val revokeClientForm = Form(single("origin" -> text))
-
-  def revokeClient =
-    AuthBody { implicit ctx => me =>
-      implicit def body = ctx.body
-      revokeClientForm
-        .bindFromRequest()
-        .fold(
-          _ => BadRequest.fuccess,
-          origin => env.oAuth.tokenApi.revokeByClientOrigin(origin, me) inject NoContent
-        )
-    }
-
-  def challengeTokens =
-    ScopedBody(_.Web.Mod) { implicit req => me =>
-      if (isGranted(_.ApiChallengeAdmin, me))
-        lila.oauth.OAuthTokenForm.adminChallengeTokens
-          .bindFromRequest()
-          .fold(
-            err => BadRequest(apiFormError(err)).fuccess,
-            data =>
-              env.oAuth.tokenApi.adminChallengeTokens(data, me).map { tokens =>
-                JsonOk(tokens.view.mapValues(t => t.plain.secret).toMap)
-              }
-          )
-      else Unauthorized(jsonError("Missing permission")).fuccess
-    }
-}
+  def mobileOAuthCallback = Open:
+    Ok.page(lila.web.ui.mobileRedirect)

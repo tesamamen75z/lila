@@ -1,29 +1,20 @@
 package lila.fishnet
 
-import akka.actor.ActorSystem
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Promise
-
-import lila.game.Game
 import lila.common.Bus
 
 /* async wait for analysis to complete */
-final class FishnetAwaiter(implicit ec: ExecutionContext, system: ActorSystem) {
+final class FishnetAwaiter(using Executor, Scheduler) extends lila.core.fishnet.AnalysisAwaiter:
 
-  private val busChannel = "analysisReady"
-
-  def apply(gameIds: Seq[Game.ID], atMost: FiniteDuration): Funit =
-    gameIds.nonEmpty ?? {
-      val promise      = Promise[Unit]()
+  // returns the number of games missing when the wait is over
+  def apply(gameIds: Seq[GameId], atMost: FiniteDuration): Fu[Int] =
+    gameIds.nonEmpty.so:
+      val promise = Promise[Int]()
       var remainingIds = gameIds.toSet
-      val listener = Bus.subscribeFun(busChannel) {
+      val listener = Bus.sub[lila.analyse.actorApi.AnalysisReady]:
         case lila.analyse.actorApi.AnalysisReady(game, _) if remainingIds(game.id) =>
           remainingIds = remainingIds - game.id
-          if (remainingIds.isEmpty) promise.success {}
-      }
-      promise.future.withTimeoutDefault(atMost, {}) addEffectAnyway {
-        Bus.unsubscribe(listener, busChannel)
-      }
-    }
-}
+          if remainingIds.isEmpty then promise.success(0)
+      promise.future
+        .withTimeoutDefault(atMost, remainingIds.size)
+        .addEffectAnyway:
+          Bus.unsub[lila.analyse.actorApi.AnalysisReady](listener)

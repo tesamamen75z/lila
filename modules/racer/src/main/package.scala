@@ -1,6 +1,6 @@
-package lila
+package lila.racer
 
-package object racer extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[racer] val logger = lila.log("racer")
-}
+private lazy val logger = lila.log("racer")

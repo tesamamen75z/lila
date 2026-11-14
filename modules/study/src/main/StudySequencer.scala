@@ -1,40 +1,29 @@
 package lila.study
 
-import ornicar.scalalib.Zero
-import scala.concurrent.duration._
-
-import lila.hub.DuctSequencers
+import alleycats.Zero
+import scalalib.actor.AsyncActorSequencers
 
 final private class StudySequencer(
     studyRepo: StudyRepo,
     chapterRepo: ChapterRepo
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: akka.actor.ActorSystem,
-    mode: play.api.Mode
-) {
+)(using Executor, Scheduler):
 
-  private val workQueue =
-    new DuctSequencers(maxSize = 64, expiration = 1 minute, timeout = 10 seconds, name = "study")
+  private val workQueue = AsyncActorSequencers[StudyId](
+    maxSize = Max(64),
+    expiration = 1.minute,
+    timeout = 10.seconds,
+    name = "study",
+    lila.mon.asyncActorMonitor.highCardinality
+  )
 
-  def sequenceStudy[A: Zero](studyId: Study.Id)(f: Study => Fu[A]): Fu[A] =
-    workQueue(studyId.value) {
-      studyRepo.byId(studyId) flatMap {
-        _ ?? { f(_) }
-      }
-    }
+  def sequenceStudy[A <: Matchable: Zero](studyId: StudyId)(f: Study => Fu[A]): Fu[A] =
+    workQueue(studyId):
+      studyRepo.byId(studyId).flatMapz(f)
 
-  def sequenceStudyWithChapter[A: Zero](studyId: Study.Id, chapterId: Chapter.Id)(
+  def sequenceStudyWithChapter[A <: Matchable: Zero](studyId: StudyId, chapterId: StudyChapterId)(
       f: Study.WithChapter => Fu[A]
   ): Fu[A] =
-    sequenceStudy(studyId) { study =>
-      chapterRepo
-        .byId(chapterId)
-        .flatMap {
-          _.filter(_.studyId == studyId) ?? { chapter =>
-            f(Study.WithChapter(study, chapter))
-          }
-        }
-        .mon(_.study.sequencer.chapterTime)
-    }
-}
+    workQueue(studyId):
+      studyRepo
+        .byIdWithChapter(chapterRepo.coll)(studyId, chapterId)
+        .flatMapz(f)

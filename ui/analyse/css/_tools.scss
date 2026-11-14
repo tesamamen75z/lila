@@ -1,86 +1,138 @@
-.analyse {
-  &__tools {
-    @extend %box-neat-force, %flex-column;
+.analyse__tools {
+  @extend %box-neat-force, %flex-column;
 
-    background: $c-bg-box;
+  position: relative;
+  background: $c-bg-box;
 
-    .ceval {
-      flex: 0 0 38px;
-    }
+  .ceval {
+    flex: 0 0 44px;
+  }
 
-    .sub-box {
-      @extend %border-bottom-active;
+  .sub-box {
+    @extend %border-bottom-active;
+    @include prevent-select;
 
-      user-select: none;
+    .title {
+      font-size: 0.9rem;
+      line-height: 1.9em;
+      background: color-mix(in oklab, $c-secondary 40%, $c-bg);
+      padding: 0 1rem;
 
-      .title {
-        font-size: 0.9rem;
-        line-height: 1.9em;
-        background: mix($c-secondary, $c-bg-box, 40%);
-        padding: 0 7px;
+      a {
+        font-weight: bold;
       }
     }
   }
 
-  &__moves {
-    flex: 2 1 0;
+  .comp-off__hint {
+    @extend %metal-bg;
 
-    // 0 size forces vertical scrollbar
-    overflow-y: auto;
-    overflow-x: hidden;
+    opacity: 0.8;
+    padding: 0.3em 1em;
+    text-align: center;
 
-    // else a scrollbar appears sometimes
-    border-top: $border;
-    position: relative;
+    button {
+      margin-inline-start: 1em;
+      color: $c-link;
 
-    /* required so line::before scrolls along the moves! */
-    .result,
-    .status {
-      background: $c-bg-zebra;
-      text-align: center;
-    }
-
-    .result {
-      border-top: $border;
-      font-weight: bold;
-      font-size: 1.2em;
-      padding: 5px 0 3px 0;
-    }
-
-    .status {
-      font-size: 1em;
-      font-style: italic;
-      padding-bottom: 7px;
+      &:hover {
+        color: $c-link-hover;
+      }
     }
   }
+}
 
-  &__controls {
-    height: $col3-uniboard-controls;
+.analyse__moves {
+  @include prevent-select;
+
+  flex: 2 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+
+  // 0 size forces vertical scrollbar
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+
+  /* required so line::before scrolls along the moves! */
+  .result,
+  .status {
+    background: $c-bg-zebra;
+    text-align: center;
+  }
+
+  .result {
+    border-top: $border;
+    font-weight: bold;
+    font-size: 1.2em;
+    padding: 5px 0 3px 0;
+  }
+
+  .status {
+    font-size: 1em;
+    font-style: italic;
+    padding-bottom: 7px;
+  }
+
+  button.next {
+    border: 0;
+    background: $c-bg-box;
+    color: $c-link;
+    padding: 0.5em;
+    width: 100%;
+
+    @include transition;
+
+    &:hover {
+      color: $c-link-hover;
+    }
+
+    &::before {
+      margin-inline-end: 0.3em;
+    }
+
+    &.highlighted {
+      background: color-mix(in oklab, $c-primary 80%, $c-bg);
+      color: $c-over;
+
+      &:hover {
+        background: $c-primary;
+      }
+    }
+  }
+}
+
+.analyse__controls {
+  height: $col3-uniboard-controls;
+  align-items: stretch;
+
+  .cmn-toggle {
+    display: flex;
+    flex: 1 1 auto;
     align-items: stretch;
+  }
 
-    div {
-      display: flex;
-      flex: 1 1 auto;
-      align-items: stretch;
-    }
+  .jumps {
+    flex: 3 1 auto;
+  }
 
-    .jumps {
-      flex: 3 1 auto;
-    }
+  .fbt {
+    flex: 0 0 2.5rem;
+    transition: visibility 0s;
+  }
 
-    .fbt {
-      @extend %page-text;
+  .fbt:not(.active, :hover) {
+    @extend %page-text;
+  }
 
-      flex: 0 0 2.5rem;
-    }
+  .active {
+    margin-top: -3px;
+    padding-top: 3px;
+    color: $c-over;
+  }
 
-    .active {
-      margin-top: -3px;
-      padding-top: 3px;
-    }
-
-    ::before {
-      vertical-align: middle;
-    }
+  .fbt.latent {
+    background-color: rgb(from $c-secondary r g b / calc(alpha * 0.5));
   }
 }

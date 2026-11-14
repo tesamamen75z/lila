@@ -24,14 +24,17 @@
     line-height: 32px;
     border-collapse: collapse;
     text-align: center;
+
     td,
     th {
       width: 32px;
       border: 1px solid black;
+
       .black {
         background-color: black;
         color: white;
       }
+
       .white {
         background-color: white;
         color: black;
@@ -41,9 +44,6 @@
 
   .pieces h3 {
     font-weight: bold;
-  }
-
-  .pieces h3 {
     margin: 0 5px 0 0;
     display: inline;
   }
@@ -59,6 +59,80 @@
   }
 
   .content a {
-    margin-right: 1em;
+    margin-inline-end: 1em;
+  }
+
+  @media screen {
+    .actions button,
+    .actions div,
+    .board-wrapper div button {
+      background-repeat: no-repeat;
+      background-size: auto;
+      color: transparent;
+      aspect-ratio: 1/1;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .board-wrapper div button {
+      background-size: contain;
+
+      &.light {
+        background-color: #cecece;
+      }
+
+      &.dark {
+        background-color: #535353;
+      }
+
+      &.selected {
+        border-color: #303030;
+        border-width: thick;
+        border-style: groove;
+      }
+    }
+
+    .actions,
+    .board-wrapper {
+      max-width: $xx-small;
+    }
+
+    .actions {
+      display: flex;
+    }
+
+    @media (max-width: at-most($xx-small)) {
+      .actions button,
+      .actions div,
+      .board-wrapper div button {
+        width: 12vw;
+      }
+
+      .board {
+        text-align: left;
+      }
+
+      h2,
+      .boardstatus {
+        position: absolute;
+        left: -10000px;
+        top: auto;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+      }
+    }
+
+    @media (min-width: at-least($xx-small)) {
+      .actions button,
+      .actions div,
+      .board-wrapper div button {
+        width: 12.5%;
+      }
+
+      .board {
+        text-align: center;
+      }
+    }
   }
 }

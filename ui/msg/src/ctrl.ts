@@ -1,6 +1,19 @@
-import { MsgData, Contact, Convo, Msg, LastMsg, Search, SearchResult, Typing, Pane, Redraw } from './interfaces';
-import notify from 'common/notification';
-import throttle from 'common/throttle';
+import { throttle } from 'lib/async';
+import { pubsub } from 'lib/pubsub';
+import { storage, type LichessStorage } from 'lib/storage';
+
+import type {
+  MsgData,
+  Contact,
+  Convo,
+  Msg,
+  LastMsg,
+  Search,
+  SearchResult,
+  Typing,
+  Pane,
+  Redraw,
+} from './interfaces';
 import * as network from './network';
 import { scroller } from './view/scroller';
 
@@ -11,13 +24,18 @@ export default class MsgCtrl {
   };
   pane: Pane;
   loading = false;
+  loadingContacts = false;
   connected = () => true;
   msgsPerPage = 100;
   canGetMoreSince?: Date;
+  canGetMoreContacts = true;
   typing?: Typing;
   textStore?: LichessStorage;
 
-  constructor(data: MsgData, readonly trans: Trans, readonly redraw: Redraw) {
+  constructor(
+    data: MsgData,
+    readonly redraw: Redraw,
+  ) {
     this.data = data;
     this.pane = data.convo ? 'convo' : 'side';
     this.connected = network.websocketHandler(this);
@@ -26,12 +44,16 @@ export default class MsgCtrl {
   }
 
   openConvo = (userId: string) => {
-    if (this.data.convo?.user.id != userId) {
+    if (this.data.convo?.user.id !== userId) {
       this.data.convo = undefined;
       this.loading = true;
     }
     network.loadConvo(userId).then(data => {
-      this.data = data;
+      const existingIds = new Set(this.data.contacts.map(c => c.user.id));
+      this.data = {
+        ...data,
+        contacts: this.data.contacts.concat(data.contacts.filter(c => !existingIds.has(c.user.id))),
+      };
       this.search.result = undefined;
       this.loading = false;
       if (data.convo) {
@@ -52,7 +74,12 @@ export default class MsgCtrl {
   getMore = () => {
     if (this.data.convo && this.canGetMoreSince)
       network.getMore(this.data.convo.user.id, this.canGetMoreSince).then(data => {
-        if (!this.data.convo || !data.convo || data.convo.user.id != this.data.convo.user.id || !data.convo.msgs[0])
+        if (
+          !this.data.convo ||
+          !data.convo ||
+          data.convo.user.id !== this.data.convo.user.id ||
+          !data.convo.msgs[0]
+        )
           return;
         if (data.convo.msgs[0].date >= this.data.convo.msgs[this.data.convo.msgs.length - 1].date) return;
         this.data.convo.msgs = this.data.convo.msgs.concat(data.convo.msgs);
@@ -63,8 +90,8 @@ export default class MsgCtrl {
     this.redraw();
   };
 
-  private onLoadConvo = (convo: Convo) => {
-    this.textStore = lichess.storage.make(`msg:area:${convo.user.id}`);
+  private readonly onLoadConvo = (convo: Convo) => {
+    this.textStore = storage.make(`msg:area:${convo.user.id}`);
     this.onLoadMsgs(convo.msgs);
     if (this.typing) {
       clearTimeout(this.typing.timeout);
@@ -72,7 +99,7 @@ export default class MsgCtrl {
     }
     setTimeout(this.setRead, 500);
   };
-  private onLoadMsgs = (msgs: Msg[]) => {
+  private readonly onLoadMsgs = (msgs: Msg[]) => {
     const oldFirstMsg = msgs[this.msgsPerPage - 1];
     this.canGetMoreSince = oldFirstMsg?.date;
   };
@@ -96,7 +123,7 @@ export default class MsgCtrl {
               this.data.contacts = data.contacts;
               this.redraw();
             }),
-          1000
+          1000,
         );
       scroller.enable(true);
       this.redraw();
@@ -108,35 +135,31 @@ export default class MsgCtrl {
     this.addMsg(msg, contact);
     if (contact) {
       let redrawn = false;
-      if (msg.user == this.data.convo?.user.id) {
+      if (msg.user === this.data.convo?.user.id) {
         this.data.convo.msgs.unshift(msg);
         if (document.hasFocus()) redrawn = this.setRead();
-        else this.notify(contact, msg);
         this.receiveTyping(msg.user, true);
       }
       if (!redrawn) this.redraw();
     } else
       network.loadContacts().then(data => {
         this.data.contacts = data.contacts;
-        this.notify(this.findContact(msg.user)!, msg);
         this.redraw();
       });
   };
 
-  private addMsg = (msg: LastMsg, contact?: Contact) => {
+  private readonly addMsg = (msg: LastMsg, contact?: Contact) => {
     if (contact) {
       contact.lastMsg = msg;
-      this.data.contacts = [contact].concat(this.data.contacts.filter(c => c.user.id != contact.user.id));
+      this.data.contacts = [contact].concat(this.data.contacts.filter(c => c.user.id !== contact.user.id));
     }
   };
 
-  private findContact = (userId: string): Contact | undefined => this.data.contacts.find(c => c.user.id == userId);
+  private readonly findContact = (userId: string): Contact | undefined =>
+    this.data.contacts.find(c => c.user.id === userId);
 
-  private currentContact = (): Contact | undefined => this.data.convo && this.findContact(this.data.convo.user.id);
-
-  private notify = (contact: Contact, msg: Msg) => {
-    notify(() => `${contact.user.name}: ${msg.text}`);
-  };
+  private readonly currentContact = (): Contact | undefined =>
+    this.data.convo && this.findContact(this.data.convo.user.id);
 
   searchInput = (q: string) => {
     this.search.input = q;
@@ -151,10 +174,27 @@ export default class MsgCtrl {
     }
   };
 
+  loadMoreContacts = () => {
+    if (this.loadingContacts || !this.canGetMoreContacts) return;
+    const lastContact = this.data.contacts[this.data.contacts.length - 1];
+    if (!lastContact) return;
+    this.loadingContacts = true;
+    this.redraw();
+    network.loadMoreContacts(lastContact.lastMsg.date).then(contacts => {
+      if (contacts.length === 0) {
+        this.canGetMoreContacts = false;
+      } else {
+        this.data.contacts = this.data.contacts.concat(contacts);
+      }
+      this.loadingContacts = false;
+      this.redraw();
+    });
+  };
+
   setRead = () => {
     const msg = this.currentContact()?.lastMsg;
-    if (msg && msg.user != this.data.me.id) {
-      lichess.pubsub.emit('notify-app.set-read', msg.user);
+    if (msg && msg.user !== this.data.me.id) {
+      pubsub.emit('notify-app.set-read', msg.user);
       if (msg.read) return false;
       msg.read = true;
       network.setRead(msg.user);
@@ -168,18 +208,11 @@ export default class MsgCtrl {
     const userId = this.data.convo?.user.id;
     if (userId)
       network.del(userId).then(data => {
-        this.data = data;
+        this.data.convo = data.convo;
+        this.data.contacts = this.data.contacts.filter(c => c.user.id !== userId);
         this.redraw();
         history.replaceState({}, '', '/inbox');
       });
-  };
-
-  report = () => {
-    const user = this.data.convo?.user;
-    if (user) {
-      const text = this.data.convo?.msgs.find(m => m.user != this.data.me.id)?.text.slice(0, 140);
-      if (text) network.report(user.name, text).then(_ => alert('Your report has been sent.'));
-    }
   };
 
   block = () => {
@@ -193,23 +226,23 @@ export default class MsgCtrl {
   };
 
   changeBlockBy = (userId: string) => {
-    if (userId == this.data.convo?.user.id) this.openConvo(userId);
+    if (userId === this.data.convo?.user.id) this.openConvo(userId);
   };
 
   sendTyping = throttle(3000, (user: string) => {
     if (this.textStore?.get()) network.typing(user);
   });
 
-  receiveTyping = (userId: string, cancel?: any) => {
+  receiveTyping = (userId: string, cancel?: boolean) => {
     if (this.typing) {
       clearTimeout(this.typing.timeout);
       this.typing = undefined;
     }
-    if (cancel !== true && this.data.convo?.user.id == userId) {
+    if (cancel !== true && this.data.convo?.user.id === userId) {
       this.typing = {
         user: userId,
         timeout: setTimeout(() => {
-          if (this.data.convo?.user.id == userId) this.typing = undefined;
+          if (this.data.convo?.user.id === userId) this.typing = undefined;
           this.redraw();
         }, 3000),
       };

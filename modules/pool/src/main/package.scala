@@ -1,6 +1,6 @@
-package lila
+package lila.pool
 
-package object pool extends PackageObject {
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*
 
-  private[pool] val logger = lila.log("pool")
-}
+private lazy val logger = lila.log("pool")

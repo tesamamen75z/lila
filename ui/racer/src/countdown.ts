@@ -1,10 +1,14 @@
-import { Clock } from 'puz/clock';
+import type { Clock } from 'lib/puz/clock';
 
 export class Countdown {
   played = new Set<number>();
 
-  public constructor(readonly clock: Clock, readonly resetGround: () => void, readonly redraw: () => void) {
-    for (let i = 10; i >= 0; i--) lichess.sound.loadStandard(`countDown${i}`);
+  public constructor(
+    readonly clock: Clock,
+    readonly onStart: () => void,
+    readonly redraw: () => void,
+  ) {
+    for (let i = 10; i >= 0; i--) site.sound.load(`countDown${i}`);
   }
 
   start = (startsAt: Date, aloud: boolean): void => {
@@ -16,17 +20,17 @@ export class Countdown {
       } else {
         if (aloud) this.playOnce(0);
         this.clock.start();
-        this.resetGround();
+        this.onStart();
       }
       this.redraw();
     };
     countdown();
   };
 
-  private playOnce = (i: number) => {
+  private readonly playOnce = (i: number) => {
     if (!this.played.has(i)) {
       this.played.add(i);
-      lichess.sound.play(`countDown${i}`);
+      site.sound.play(`countDown${i}`);
     }
   };
 }

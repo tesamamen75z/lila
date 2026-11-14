@@ -1,10 +1,13 @@
 .simul-list {
+  overflow: hidden;
+
   &__help {
     @extend %page-text-shadow !optional;
 
     color: $c-font-page;
     max-width: 350px;
-    margin: 9em $block-gap 0 0;
+    margin-top: 9em;
+    margin-inline-end: $block-gap;
 
     img {
       @extend %box-radius;
@@ -20,7 +23,7 @@
 
     display: none;
 
-    @include breakpoint($mq-large) {
+    @media (min-width: at-least($large)) {
       display: block;
     }
   }
@@ -36,13 +39,13 @@
       display: none;
     }
 
-    @include breakpoint($mq-x-small) {
+    @media (min-width: at-least($x-small)) {
       .host {
         display: table-cell;
       }
     }
 
-    @include breakpoint($mq-small) {
+    @media (min-width: at-least($small)) {
       .players {
         display: table-cell;
       }
@@ -58,7 +61,8 @@
     }
 
     .name {
-      white-space: nowrap;
+      @extend %break-word;
+
       font-size: 1.7em;
       display: block;
     }

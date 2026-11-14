@@ -1,6 +1,13 @@
 .swiss-home {
+  @extend %flex-column;
+
+  gap: $block-gap;
+
   &__infos {
-    > div {
+    padding-top: $box-padding;
+
+    .main-point,
+    .faq {
       @extend %flex-center-nowrap;
 
       margin-bottom: 4em;
@@ -10,13 +17,17 @@
         margin: 0;
       }
 
-      i {
+      icon {
         flex: 0 0 2em;
-        margin-right: 2.5rem;
+        margin-inline-end: 2.5rem;
         text-align: center;
         font-size: 2.5em;
         color: $c-brag;
         font-weight: bold;
+
+        @media (max-width: at-most($xx-small)) {
+          display: none;
+        }
       }
     }
 
@@ -41,8 +52,6 @@
 
     tbody th {
       @extend %roboto;
-
-      // background: $c-bg-box;
     }
   }
 
@@ -50,10 +59,6 @@
     time {
       opacity: 1;
       font-size: 1em;
-    }
-
-    td {
-      padding: 0.5rem 1rem;
     }
 
     .header {
@@ -100,9 +105,20 @@
     .icon {
       text-align: center;
 
-      i {
+      icon {
         font-size: 2.5em;
         color: $c-brag;
+      }
+    }
+
+    @media (max-width: at-most($xx-small)) {
+      td.icon,
+      td:last-child {
+        display: none;
+      }
+
+      td.infos {
+        padding-inline-start: 0;
       }
     }
   }

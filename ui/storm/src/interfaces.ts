@@ -1,17 +1,16 @@
-import { Prop } from 'common';
-import { Config, PuzPrefs, Puzzle } from 'puz/interfaces';
+import type { Prop } from 'lib';
+import type { Config, PuzPrefs, Puzzle } from 'lib/puz/interfaces';
+
+export type StormPrefs = PuzPrefs;
 
 export interface StormOpts {
-  data: StormData;
+  puzzles: Puzzle[];
+  key?: string;
   pref: StormPrefs;
-  i18n: I18nDict;
 }
-
-export interface StormPrefs extends PuzPrefs {}
 
 export interface StormData {
   puzzles: Puzzle[];
-  notAnExploit: string;
   key?: string;
   signed?: string;
 }
@@ -21,14 +20,6 @@ export interface StormVm {
   dupTab?: boolean;
   signed: Prop<string | undefined>;
   lateStart: boolean;
-  filterFailed: boolean;
-  filterSlow: boolean;
-}
-
-export interface DailyBest {
-  score: number;
-  prev?: number;
-  at: number;
 }
 
 export interface StormRecap {

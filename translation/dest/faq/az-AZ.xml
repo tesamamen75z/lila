@@ -60,10 +60,9 @@ Diqqət yetirin ki, rəqibin şahının qarşısını ala biləcək bir fiqur va
 
 %3$s bölməsində bu gedişlə bağlı məşq edə bilərsiniz.</string>
   <string name="goodIntroduction">yaxşı izah</string>
-  <string name="officialRulesPDF">rəsmi qaydaların (PDF)</string>
   <string name="lichessTraining">Lichess məşqi</string>
   <string name="threefoldRepetition">Üçqat təkrar</string>
-  <string name="threefoldRepetitionExplanation">Əgər bir pozisiya üç dəfə təkrarlanarsa, oyunçu %1$s vasitəsilə heç-heçə tələb edə bilər. Lichess %2$s 9.2 (d) bəndində açıqlandığı kimi FIDE qaydalarına tam əməl edir.</string>
+  <string name="threefoldRepetitionExplanation">Əgər bir pozisiya üç dəfə təkrarlanarsa, oyunçu %1$s vasitəsilə heç-heçə tələb edə bilər. Lichess %2$s 9.2 bəndində açıqlandığı kimi FIDE qaydalarına tam əməl edir.</string>
   <string name="threefoldRepetitionLowerCase">üçqat təkrar</string>
   <string name="notRepeatedMoves">Gedişləri təkrarlamadıq. Nə üçün oyun gediş təkrarına görə heç-heçə bitdi?</string>
   <string name="repeatedPositionsThatMatters">Üçqat təkrarlanma %1$s ilə əlaqəlidir, gedişlərlə yox. Təkrarlanma ardıcıl baş vermək məcburiyyətində deyil.</string>
@@ -95,7 +94,6 @@ LM titulunu bizdən istəməyin.</string>
   <string name="usernamesCannotBeChanged">Xeyr, istifadəçi adları texniki və praktik səbəblərdən dəyişdirilə bilməz. İstifadəçi adları həddindən artıq yerdə istifadə edilir: verilənlər bazaları, yüklənmiş oyunlar, qeydlər və insanların düşüncələrində. İstifadəçi adlarındakı böyük və kiçik hərfləri yalnız bir dəfə dəyişdirə bilərsiniz.</string>
   <string name="uniqueTrophies">Unikal kuboklar</string>
   <string name="ownerUniqueTrophies">Bu kubok Lichess tarixində bənzərsizdir və %1$s xaric başqa heç kim ona sahib ola bilməz.</string>
-  <string name="wayOfBerserkExplanation">Bunu qazanmaq üçün hiimgosu özünü berserk ilə sınadı və %s oyunlarında 100%% qalib gəldi.</string>
   <string name="aHourlyBulletTournament">bir saatlıq Bullet turniri</string>
   <string name="goldenZeeExplanation">ZugAddict canlı yayım açmışdı və son 2 saat ərzində A.I. 8-ci səviyyə kompüter mühərrikinə 1+0 oyununda qalib gəlməyə çalışırdı. Thibault, canlı yayımda buna nail olarsa, ona unikal bir kubok verəcəyini söylədi. Bir saat sonra, ZugAddict Stockfishi darmadağın etdi və Thibault vədini yerinə yetirdi.</string>
   <string name="lichessRatings">Lichess reytinqi</string>

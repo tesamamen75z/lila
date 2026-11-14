@@ -1,12 +1,13 @@
 export interface MsgOpts {
   data: MsgData;
-  i18n: I18nDict;
 }
 export interface MsgData {
   me: Me;
   contacts: Contact[];
+  names: RealNames;
   convo?: Convo;
 }
+export type RealNames = Record<UserId, string>;
 export interface Contact {
   user: User;
   lastMsg: LastMsg;
@@ -15,7 +16,7 @@ export interface User extends LightUser {
   online: boolean;
 }
 export interface Me extends User {
-  kid: boolean;
+  bot: boolean;
 }
 export interface Msg {
   user: string;
@@ -30,6 +31,12 @@ export interface Convo {
   msgs: Msg[];
   relations: Relations;
   postable: boolean;
+  modDetails?: ModDetails;
+}
+
+export interface ModDetails {
+  kid: boolean;
+  openInbox: boolean;
 }
 
 export interface Relations {
@@ -54,7 +61,7 @@ export interface SearchResult {
 
 export interface Typing {
   user: string;
-  timeout: number;
+  timeout: Timeout;
 }
 
 export type Pane = 'side' | 'convo';

@@ -1,3 +1,4 @@
-package lila
+package lila.api
 
-package object api extends PackageObject
+export lila.core.lilaism.Lilaism.{ *, given }
+export lila.common.extensions.*

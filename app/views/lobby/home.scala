@@ -1,231 +1,155 @@
-package views.html.lobby
+package views.lobby
 
-import controllers.routes
 import play.api.libs.json.Json
 
-import lila.api.Context
+import lila.app.UiEnv.{ *, given }
 import lila.app.mashup.Preload.Homepage
-import lila.app.templating.Environment._
-import lila.app.ui.ScalatagsTemplate._
-import lila.common.String.html.safeJsonValue
-import lila.game.Pov
+import lila.core.perf.UserWithPerfs
 
-object home {
+object home:
 
-  def apply(homepage: Homepage)(implicit ctx: Context) = {
-    import homepage._
-    views.html.base.layout(
-      title = "",
-      fullTitle = Some {
-        s"lichess.${if (netConfig.isProd) "org" else "dev"} • ${trans.freeOnlineChess.txt()}"
-      },
-      moreJs = frag(
-        jsModule("lobby"),
-        embedJsUnsafeLoadThen(
-          s"""LichessLobby(${safeJsonValue(
-            Json.obj(
-              "data" -> data,
-              "playban" -> playban.map { pb =>
-                Json.obj(
-                  "minutes"          -> pb.mins,
-                  "remainingSeconds" -> (pb.remainingSeconds + 3)
-                )
-              },
-              "i18n" -> i18nJsObject(i18nKeys)
-            )
-          )})"""
-        )
-      ),
-      moreCss = cssTag("lobby"),
-      chessground = false,
-      openGraph = lila.app.ui
-        .OpenGraph(
-          image = assetUrl("logo/lichess-tile-wide.png").some,
-          twitterImage = assetUrl("logo/lichess-tile.png").some,
-          title = "The best free, adless Chess server",
-          url = netBaseUrl,
-          description = trans.siteDescription.txt()
-        )
-        .some
-    ) {
-      main(
-        cls := List(
-          "lobby"            -> true,
-          "lobby-nope"       -> (playban.isDefined || currentGame.isDefined),
-          "lobby--no-simuls" -> simuls.isEmpty
-        )
-      )(
-        div(cls := "lobby__table")(
-          div(cls := "bg-switch", title := "Dark mode")(
-            div(cls := "bg-switch__track"),
-            div(cls := "bg-switch__thumb")
-          ),
-          div(cls := "lobby__start")(
-            ctx.blind option h2("Play"),
-            a(
-              href := routes.Setup.hookForm,
-              cls := List(
-                "button button-metal config_hook" -> true,
-                "disabled"                        -> (playban.isDefined || currentGame.isDefined || ctx.isBot)
-              ),
-              trans.createAGame()
-            ),
-            a(
-              href := routes.Setup.friendForm(none),
-              cls := List(
-                "button button-metal config_friend" -> true,
-                "disabled"                          -> currentGame.isDefined
-              ),
-              trans.playWithAFriend()
-            ),
-            a(
-              href := routes.Setup.aiForm,
-              cls := List(
-                "button button-metal config_ai" -> true,
-                "disabled"                      -> currentGame.isDefined
-              ),
-              trans.playWithTheMachine()
-            )
-          ),
-          div(cls := "lobby__counters")(
-            ctx.blind option h2("Counters"),
-            a(
-              id := "nb_connected_players",
-              href := ctx.noBlind.option(routes.User.list.url)
-            )(
-              trans.nbPlayers(
-                strong(dataCount := homepage.counters.members)(homepage.counters.members.localize)
-              )
-            ),
-            a(
-              id := "nb_games_in_play",
-              href := ctx.noBlind.option(routes.Tv.games.url)
-            )(
-              trans.nbGamesInPlay(
-                strong(dataCount := homepage.counters.rounds)(homepage.counters.rounds.localize)
-              )
-            )
-          )
-        ),
-        currentGame.map(bits.currentGameInfo) orElse
-          playban.map(bits.playbanInfo) getOrElse {
-            if (ctx.blind) blindLobby(blindGames)
-            else bits.lobbyApp
-          },
-        div(cls := "lobby__side")(
-          ctx.blind option h2("Highlights"),
-          ctx.noKid option st.section(cls := "lobby__streams")(
-            views.html.streamer.bits liveStreams streams,
-            streams.live.streams.nonEmpty option a(href := routes.Streamer.index(), cls := "more")(
-              trans.streamersMenu(),
-              " »"
-            )
-          ),
-          div(cls := "lobby__spotlights")(
-            events.map(bits.spotlight),
-            !ctx.isBot option frag(
-              lila.tournament.Spotlight.select(tours, ctx.me, 3 - events.size) map {
-                views.html.tournament.homepageSpotlight(_)
-              },
-              simuls.filter(isFeaturable) map views.html.simul.bits.homepageSpotlight
-            )
-          ),
-          if (ctx.isAuth)
-            div(cls := "timeline")(
-              ctx.blind option h2("Timeline"),
-              views.html.timeline entries userTimeline,
-              userTimeline.nonEmpty option a(cls := "more", href := routes.Timeline.home)(
-                trans.more(),
-                " »"
-              )
-            )
-          else
-            div(cls := "about-side")(
-              ctx.blind option h2("About"),
-              trans.xIsAFreeYLibreOpenSourceChessServer(
-                "Lichess",
-                a(cls := "blue", href := routes.Plan.features)(trans.really.txt())
-              ),
-              " ",
-              a(href := "/about")(trans.aboutX("Lichess"), "...")
-            )
-        ),
-        featured map { g =>
-          div(cls := "lobby__tv")(
-            views.html.game.mini(Pov naturalOrientation g, tv = true)
-          )
-        },
-        puzzle map { p =>
-          views.html.puzzle.embed.dailyLink(p)(ctx.lang)(cls := "lobby__puzzle")
-        },
-        ctx.noBot option bits.underboards(tours, simuls, leaderboard, tournamentWinners),
-        ctx.noKid option div(cls := "lobby__forum lobby__box")(
-          a(cls := "lobby__box__top", href := routes.ForumCateg.index)(
-            h2(cls := "title text", dataIcon := "")(trans.latestForumPosts()),
-            span(cls := "more")(trans.more(), " »")
-          ),
-          div(cls := "lobby__box__content")(
-            views.html.forum.post recent forumRecent
-          )
-        ),
-        bits.lastPosts(lastPost),
-        div(cls := "lobby__support")(
-          a(href := routes.Plan.index)(
-            iconTag(patronIconChar),
-            span(cls := "lobby__support__text")(
-              strong(trans.patron.donate()),
-              span(trans.patron.becomePatron())
-            )
-          ),
-          a(href := "https://shop.spreadshirt.com/lichess-org")(
-            iconTag(""),
-            span(cls := "lobby__support__text")(
-              strong("Swag Store"),
-              span(trans.playChessInStyle())
-            )
-          )
-        ),
-        div(cls := "lobby__about")(
-          ctx.blind option h2("About"),
-          a(href := "/about")(trans.aboutX("Lichess")),
-          a(href := "/faq")(trans.faq.faqAbbreviation()),
-          a(href := "/contact")(trans.contact.contact()),
-          a(href := "/mobile")(trans.mobileApp()),
-          a(href := routes.Page.tos)(trans.termsOfService()),
-          a(href := "/privacy")(trans.privacy()),
-          a(href := "/source")(trans.sourceCode()),
-          a(href := "/ads")("Ads"),
-          views.html.base.bits.connectLinks
+  def apply(homepage: Homepage)(using ctx: Context) =
+    import homepage.*
+    val donateLink =
+      a(cls := "lobby__support-link", href := routes.Plan.index())(
+        iconTag(patronIconChar),
+        span(cls := "lobby__support-link__text")(
+          strong(trans.patron.donate()),
+          span(trans.patron.becomePatron())
         )
       )
-    }
-  }
-
-  private val i18nKeys = List(
-    trans.realTime,
-    trans.correspondence,
-    trans.nbGamesInPlay,
-    trans.player,
-    trans.time,
-    trans.joinTheGame,
-    trans.cancel,
-    trans.casual,
-    trans.rated,
-    trans.variant,
-    trans.mode,
-    trans.list,
-    trans.graph,
-    trans.filterGames,
-    trans.youNeedAnAccountToDoThat,
-    trans.oneDay,
-    trans.nbDays,
-    trans.aiNameLevelAiLevel,
-    trans.yourTurn,
-    trans.rating,
-    trans.createAGame,
-    trans.quickPairing,
-    trans.lobby,
-    trans.custom,
-    trans.anonymous
-  ).map(_.key)
-}
+    val swagLink =
+      a(cls := "lobby__support-link", href := "/swag")(
+        iconTag(Icon.Tshirt),
+        span(cls := "lobby__support-link__text")(
+          strong("Swag Store"),
+          span(trans.site.playChessInStyle())
+        )
+      )
+    Page("")
+      .copy(fullTitle = s"$siteName • ${trans.site.freeOnlineChess.txt()}".some)
+      .i18n(_.variant)
+      .js(
+        PageModule(
+          "lobby",
+          Json
+            .obj(
+              "data" -> data,
+              "showRatings" -> ctx.pref.showRatings
+            )
+            .add("hasUnreadLichessMessage", hasUnreadLichessMessage)
+            .add("bots", Granter.opt(_.Beta))
+            .add("playban", playban.map(lila.playban.TempBan.lobbyJson))
+        )
+      )
+      .css("lobby")
+      .graph(
+        OpenGraph(
+          image = assetFullUrl("logo/lichess-tile-wide.png").some,
+          title = "The best free, adless Chess server",
+          url = netBaseUrl.into(Url),
+          description = trans.site.siteDescription.txt()
+        )
+      )
+      .hrefLangs(lila.ui.LangPath("/")):
+        given Option[UserWithPerfs] = homepage.me
+        main(
+          cls := List(
+            "lobby" -> true,
+            "lobby-nope" -> (playban.isDefined || currentGame.isDefined || homepage.hasUnreadLichessMessage)
+          )
+        )(
+          div(cls := "lobby__side")(
+            ctx.blind.option(h2(trans.nvui.featuredEvents())),
+            ctx.kid.no.option(views.streamer.bits.liveStreams(streams)),
+            div(cls := "lobby__spotlights"):
+              val eventTags = events.map(bits.spotlight)
+              val relayTags = views.relay.ui.spotlight(relays)
+              frag(
+                eventTags,
+                relayTags,
+                ctx.noBot.option {
+                  val nbManual = eventTags.size + relayTags.size
+                  val simulBBB = simuls.find(isFeaturable(_) && nbManual < 4)
+                  val nbForced = nbManual + simulBBB.size.toInt
+                  val tourBBBs = if nbForced > 3 then 0 else if nbForced == 3 then 1 else 3 - nbForced
+                  frag(
+                    lila.tournament.Spotlight.select(tours, tourBBBs).map {
+                      views.tournament.list.homepageSpotlight(_)
+                    },
+                    swiss.ifTrue(nbForced < 3).map(views.swiss.ui.homepageSpotlight),
+                    simulBBB.map(views.simul.ui.homepageSpotlight)
+                  )
+                }
+              )
+            ,
+            classes.nonEmpty.option:
+              div(cls := "lobby__classes"):
+                classes.map: clas =>
+                  a(href := routes.Clas.show(clas.id), dataIcon := Icon.Group)(clas.name)
+            ,
+            if ctx.isAuth then
+              div(cls := "lobby__timeline")(
+                ctx.blind.option(h2(trans.site.timeline())),
+                views.timeline.entries(userTimeline)
+              )
+            else
+              div(cls := "about-side")(
+                ctx.blind.option(h2(trans.site.about())),
+                trans.site.xIsAFreeYLibreOpenSourceChessServer(
+                  "Lichess",
+                  a(cls := "blue", href := routes.Plan.features)(trans.site.really.txt())
+                ),
+                " ",
+                a(href := "/about")(trans.site.aboutX("Lichess"), "...")
+              )
+          ),
+          currentGame
+            .map(bits.currentGameInfo)
+            .orElse:
+              hasUnreadLichessMessage.option(bits.showUnreadLichessMessage)
+            .orElse:
+              playban.map(bits.playbanInfo)
+            .getOrElse:
+              if ctx.blind then blindLobby(blindGames) else bits.lobbyApp
+          ,
+          div(cls := "lobby__table")(
+            div(cls := "lobby__start")(
+              button(cls := "button button-metal lobby__start__button lobby__start__button--hook")(
+                trans.site.createLobbyGame()
+              ),
+              button(cls := "button button-metal lobby__start__button lobby__start__button--friend")(
+                trans.site.challengeAFriend()
+              ),
+              button(cls := "button button-metal lobby__start__button lobby__start__button--ai")(
+                trans.site.playAgainstComputer()
+              )
+            )
+          ),
+          div(cls := "lobby__support")(donateLink, swagLink),
+          div(cls := "lobby__tv")(
+            donateLink,
+            featured.map(g => views.game.mini(Pov.naturalOrientation(g), tv = true))
+          ),
+          div(cls := "lobby__puzzle")(
+            swagLink,
+            puzzle.map(p => views.puzzle.bits.dailyLink(p)())
+          ),
+          views.ublog.ui.homeCarousel(ublogPosts),
+          div(cls := "lobby__feed"):
+            views.feed.lobbyUpdates(lastUpdates)
+          ,
+          ctx.noBot.option(bits.underboards(tours, simuls)),
+          div(cls := "lobby__about")(
+            ctx.blind.option(h2(trans.site.about())),
+            a(href := "/about")(trans.site.aboutX("Lichess")),
+            a(href := "/faq")(trans.faq.faqAbbreviation()),
+            a(href := "/contact")(trans.contact.contact()),
+            a(href := "/app")(trans.site.mobileApp()),
+            a(href := routes.Cms.tos)(trans.site.termsOfService()),
+            a(href := "/privacy")(trans.site.privacy()),
+            a(href := "/source")(trans.site.sourceCode()),
+            a(href := "/ads")(trans.site.blockAds()),
+            views.bits.connectLinks
+          )
+        )

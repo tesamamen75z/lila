@@ -1,129 +1,118 @@
 package lila.irwin
 
-import org.joda.time.DateTime
-import reactivemongo.api.bson._
-import reactivemongo.api.ReadPreference
+import reactivemongo.api.bson.*
 
-import lila.analyse.Analysis
-import lila.analyse.AnalysisRepo
+import lila.analyse.{ Analysis, AnalysisRepo }
 import lila.common.Bus
-import lila.db.dsl._
-import lila.game.{ Game, GameRepo, Pov, Query }
-import lila.report.{ Mod, ModId, Report, Reporter, Suspect, SuspectId }
-import lila.tournament.{ Tournament, TournamentTop }
-import lila.user.{ Holder, User, UserRepo }
+import lila.core.report.SuspectId
+import lila.core.userId.ModId
+import lila.db.dsl.{ *, given }
+import lila.game.{ GameRepo, Query }
+import lila.report.{ Mod, Report, Reporter, Suspect }
 
 final class IrwinApi(
     reportColl: Coll,
     gameRepo: GameRepo,
-    userRepo: UserRepo,
+    userApi: lila.core.user.UserApi,
     analysisRepo: AnalysisRepo,
-    modApi: lila.mod.ModApi,
+    modApi: lila.core.mod.ModApi,
     reportApi: lila.report.ReportApi,
-    notifyApi: lila.notify.NotifyApi,
-    thresholds: lila.memo.SettingStore[IrwinThresholds]
-)(implicit ec: scala.concurrent.ExecutionContext) {
+    notifyApi: lila.core.notify.NotifyApi,
+    settingStore: lila.memo.SettingStore.Builder
+)(using Executor):
 
-  import BSONHandlers._
+  lazy val thresholds = IrwinThresholds.makeSetting("irwin", settingStore)
 
-  def dashboard: Fu[IrwinDashboard] =
+  import BSONHandlers.given
+
+  lila.common.Bus.sub[lila.core.user.UserDelete]: del =>
+    reportColl.delete.one(bid(del.id))
+
+  def dashboard: Fu[IrwinReport.Dashboard] =
     reportColl
-      .find($empty)
-      .sort($sort desc "date")
+      .find(emptyBdoc)
+      .sort(sort.desc("date"))
       .cursor[IrwinReport]()
-      .list(20) dmap IrwinDashboard.apply
+      .list(20)
+      .dmap(IrwinReport.Dashboard.apply)
 
-  object reports {
+  object reports:
 
-    def insert(report: IrwinReport) =
-      reportColl.update.one($id(report._id), report, upsert = true) >>
-        markOrReport(report) >>
-        notification(report) >>-
-        lila.mon.mod.irwin.ownerReport(report.owner).increment().unit
+    def insert(data: IrwinReport) = for
+      prev <- get(data.userId)
+      report = prev.fold(data)(_.add(data))
+      _ <- reportColl.update.one(bid(report._id), report, upsert = true)
+      _ <- markOrReport(report)
+    yield
+      notification(report)
+      lila.mon.mod.irwin.ownerReport(report.owner).increment()
 
     def get(user: User): Fu[Option[IrwinReport]] =
-      reportColl.find($id(user.id)).one[IrwinReport]
+      get(user.id)
+
+    def get(userId: UserId): Fu[Option[IrwinReport]] =
+      reportColl.byId[IrwinReport](userId)
 
     def withPovs(user: User): Fu[Option[IrwinReport.WithPovs]] =
-      get(user) flatMap {
-        _ ?? { report =>
-          gameRepo.gamesFromSecondary(report.games.map(_.gameId)) dmap { games =>
-            val povs = games.flatMap { g =>
-              Pov(g, user) map { g.id -> _ }
-            }.toMap
-            IrwinReport.WithPovs(report, povs).some
-          }
+      get(user).flatMapz { report =>
+        gameRepo.gamesFromSecondary(report.games.map(_.gameId)).map { games =>
+          val povs = games.flatMap { g =>
+            Pov(g, user).map(g.id -> _)
+          }.toMap
+          IrwinReport.WithPovs(report, povs).some
         }
       }
 
-    private def getSuspect(suspectId: User.ID) =
-      userRepo byId suspectId orFail s"suspect $suspectId not found" dmap Suspect.apply
+    private def getSuspect(suspectId: UserId) =
+      userApi.byId(suspectId).orFail(s"suspect $suspectId not found").dmap(Suspect.apply)
 
     private def markOrReport(report: IrwinReport): Funit =
-      userRepo.getTitle(report.suspectId.value) flatMap { title =>
-        if (report.activation >= thresholds.get().mark && title.isEmpty)
-          modApi.autoMark(report.suspectId, ModId.irwin, report.note) >>-
-            lila.mon.mod.irwin.mark.increment().unit
-        else if (report.activation >= thresholds.get().report) for {
-          suspect <- getSuspect(report.suspectId.value)
-          irwin   <- userRepo byId "irwin" orFail s"Irwin user not found" dmap Mod.apply
-          _ <- reportApi.create(
-            Report.Candidate(
-              reporter = Reporter(irwin.user),
-              suspect = suspect,
-              reason = lila.report.Reason.Cheat,
-              text = s"${report.activation}% over ${report.games.size} games"
-            ),
-            (_: Report.Score) => Report.Score(60)
-          )
-        } yield lila.mon.mod.irwin.report.increment().unit
+      userApi.getTitle(report.suspectId.value).flatMap { title =>
+        if report.activation >= thresholds.get().mark && title.isEmpty then
+          for _ <- modApi.autoEngine(report.suspectId, report.note)(using UserId.irwin.into(MyId))
+          yield lila.mon.mod.irwin.mark.increment()
+        else if report.activation >= thresholds.get().report then
+          for
+            suspect <- getSuspect(report.suspectId.value)
+            irwin <- userApi.byId(UserId.irwin).orFail("Irwin user not found").dmap(Mod.apply)
+            _ <- reportApi.create(
+              Report.Candidate(
+                reporter = Reporter(irwin.user),
+                suspect = suspect,
+                reason = lila.report.Reason.Cheat,
+                text = s"${report.activation}% over ${report.games.size} games"
+              )
+            )
+          yield lila.mon.mod.irwin.report.increment()
         else funit
       }
-  }
 
-  object requests {
+  object requests:
 
     import IrwinRequest.Origin
 
-    def fromMod(suspect: Suspect, mod: Holder) = {
-      notification.add(suspect.id, ModId(mod.id))
+    def fromMod(suspect: Suspect)(using Me) =
+      notification.add(suspect.id)
       insert(suspect, _.Moderator)
-    }
 
     private[irwin] def insert(suspect: Suspect, origin: Origin.type => Origin): Funit =
-      for {
-        analyzed <- getAnalyzedGames(suspect, 15)
-        more     <- getMoreGames(suspect, 20 - analyzed.size)
-        all = analyzed.map { case (game, analysis) =>
-          game -> analysis.some
-        } ::: more.map(_ -> none)
-      } yield Bus.publish(
-        IrwinRequest(
-          suspect = suspect,
-          origin = origin(Origin),
-          games = all
-        ),
-        "irwin"
-      )
+      suspect.user.noBot.so:
+        for
+          analyzed <- getAnalyzedGames(suspect, 15)
+          more <- getMoreGames(suspect, 20 - analyzed.size)
+          all = analyzed.map { (game, analysis) =>
+            game -> analysis.some
+          } ::: more.map(_ -> none)
+        yield Bus.pub:
+          IrwinRequest(suspect = suspect, origin = origin(Origin), games = all)
 
-    private[irwin] def fromTournamentLeaders(leaders: Map[Tournament, TournamentTop]): Funit =
-      lila.common.Future.applySequentially(leaders.toList) { case (tour, top) =>
-        userRepo byIds top.value.zipWithIndex
-          .filter(_._2 <= tour.nbPlayers * 2 / 100)
-          .map(_._1.userId)
-          .take(20) flatMap { users =>
-          lila.common.Future.applySequentially(users) { user =>
-            insert(Suspect(user), _.Tournament)
-          }
-        }
-      }
+    private[irwin] def fromTournamentLeaders(suspects: List[Suspect]): Funit =
+      suspects.sequentiallyVoid(insert(_, _.Tournament))
 
-    private[irwin] def fromLeaderboard(leaders: List[User]): Funit =
-      lila.common.Future.applySequentially(leaders) { user =>
-        insert(Suspect(user), _.Leaderboard)
-      }
+    private[irwin] def topOnline(leaders: List[Suspect]): Funit =
+      leaders.sequentiallyVoid(insert(_, _.Leaderboard))
 
-    import lila.game.BSONHandlers._
+    import lila.game.BSONHandlers.given
 
     private def baseQuery(suspect: Suspect) =
       Query.finished ++
@@ -131,44 +120,36 @@ final class IrwinApi(
         Query.rated ++
         Query.user(suspect.id.value) ++
         Query.turnsGt(20) ++
-        Query.createdSince(DateTime.now minusMonths 6)
+        Query.createdSince(nowInstant.minusMonths(6))
 
     private def getAnalyzedGames(suspect: Suspect, nb: Int): Fu[List[(Game, Analysis)]] =
       gameRepo.coll
         .find(baseQuery(suspect) ++ Query.analysed(true))
         .sort(Query.sortCreated)
-        .cursor[Game](ReadPreference.secondaryPreferred)
+        .cursor[Game](ReadPref.sec)
         .list(nb)
         .flatMap(analysisRepo.associateToGames)
 
     private def getMoreGames(suspect: Suspect, nb: Int): Fu[List[Game]] =
-      (nb > 0) ??
+      (nb > 0).so(
         gameRepo.coll
           .find(baseQuery(suspect) ++ Query.analysed(false))
           .sort(Query.sortCreated)
-          .cursor[Game](ReadPreference.secondaryPreferred)
+          .cursor[Game](ReadPref.sec)
           .list(nb)
-  }
+      )
 
-  object notification {
+  object notification:
 
     private var subs = Map.empty[SuspectId, Set[ModId]]
 
-    def add(suspectId: SuspectId, modId: ModId): Unit =
-      subs = subs.updated(suspectId, ~subs.get(suspectId) + modId)
+    def add(suspectId: SuspectId)(using me: MyId): Unit =
+      subs = subs.updated(suspectId, ~subs.get(suspectId) + me.modId)
 
     private[IrwinApi] def apply(report: IrwinReport): Funit =
-      subs.get(report.suspectId) ?? { modIds =>
+      subs.get(report.suspectId).so { modIds =>
         subs = subs - report.suspectId
-        import lila.notify.{ IrwinDone, Notification }
-        modIds
-          .map { modId =>
-            notifyApi.addNotification(
-              Notification.make(Notification.Notifies(modId.value), IrwinDone(report.suspectId.value))
-            )
-          }
-          .sequenceFu
-          .void
+        modIds.toList.sequentiallyVoid: modId =>
+          val notif = lila.core.notify.NotificationContent.IrwinDone(report.suspectId.value)
+          notifyApi.notifyOne(modId, notif)
       }
-  }
-}

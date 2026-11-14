@@ -103,6 +103,7 @@
   <string name="pawnsFormTheFrontLine">Хүүнүүд өмнөд фронтыг үүсгэнэ. Дурын нүүдэл хийж үргэлжлүүлээрэй.</string>
   <string name="boardSetupComplete">Баяр хүргэе! Та шатрын хөлгийг хэрхэн байрлуулахыг сурлаа.</string>
   <string name="castling">Сэлгээ</string>
+  <string name="enPassant">Ан-пассан дүрэм</string>
   <string name="theSpecialKingMove">Ноёны тусгай нүүдэл</string>
   <string name="castlingIntro">Ноёны аюулгүй байдлыг хангаж, тэргээ довтолгоонд оруул!</string>
   <string name="castleKingSide">Ноёноо хоёр нүд нүүж ноёны тал руу сэлгэ!</string>
@@ -115,7 +116,6 @@
   <string name="findAWayToCastleKingSide">Ноён талдаа сэлгээ хийх гарцыг ол!</string>
   <string name="findAWayToCastleQueenSide">Бэрс талдаа сэлгээ хийх гарцыг ол!</string>
   <string name="castlingComplete">Баяр хүргэе! Та ихэнх өрөгт сэлгээ хийж байх хэрэгтэй.</string>
-  <string name="enPassant">Ан-пассан дүрэм</string>
   <string name="theSpecialPawnMove">Хүүгийн онцгой нүүдэл</string>
   <string name="enPassantIntro">Хэрэв эсрэг талын хүү 2 нүд урагш нүүсэн бол, түүнийг нэг нүд урагш нүүсэн мэт идэж болно.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Хар дөнгөж сая хүүгээ урагш хоёр нүүлээ! Тэр хүүг нь ан-пассан дүрмийн дагуу ид.</string>
@@ -181,7 +181,6 @@
   <string name="nailedIt">Яг онолоо.</string>
   <string name="rightOn">Зөв байна!</string>
   <string name="stageXComplete">%s-р түвшинг давлаа</string>
-  <string name="yourScore">Таны оноо</string>
   <string name="next">Дараагийн даалгавар</string>
   <string name="backToMenu">Үндсэн хуудас руу буцах</string>
   <string name="puzzleFailed">Бодлогыг бодож чадсангүй!</string>

@@ -1,5 +1,4 @@
-import { Outcome } from './interfaces';
+import type { Outcome, PairingExt } from './interfaces';
 
-export function isOutcome(s: any): s is Outcome {
-  return s == 'absent' || s == 'late' || s == 'bye';
-}
+export const isOutcome = (s: PairingExt | string): s is Outcome =>
+  s === 'absent' || s === 'late' || s === 'bye';

@@ -1,146 +1,146 @@
 package lila.challenge
 
-import org.joda.time.DateTime
-import scala.annotation.nowarn
+import lila.db.dsl.{ *, given }
 
-import lila.common.config.Max
-import lila.db.dsl._
+final private class ChallengeRepo(colls: ChallengeColls)(using
+    ec: Executor
+):
 
-final private class ChallengeRepo(colls: ChallengeColls, maxPerUser: Max)(implicit
-    ec: scala.concurrent.ExecutionContext
-) {
-
-  import BSONHandlers._
-  import Challenge._
+  import BSONHandlers.given
+  import Challenge.*
 
   private val coll = colls.challenge
 
-  def byId(id: Challenge.ID) = coll.find($id(id)).one[Challenge]
+  import lila.core.game.maxPlayingRealtime
 
-  def byIdFor(id: Challenge.ID, dest: lila.user.User) =
-    coll.find($id(id) ++ $doc("destUser.id" -> dest.id)).one[Challenge]
-  def byIdBy(id: Challenge.ID, orig: lila.user.User) =
-    coll.find($id(id) ++ $doc("challenger.id" -> orig.id)).one[Challenge]
+  def byId(id: ChallengeId) = coll.find(bid(id)).one[Challenge]
 
-  def exists(id: Challenge.ID) = coll.countSel($id(id)).dmap(0 <)
+  def byIdFor(id: ChallengeId, dest: User) =
+    coll.find(bid(id) ++ bdoc("destUser.id" -> dest.id)).one[Challenge]
+
+  def exists(id: ChallengeId) = coll.secondary.countSel(bid(id)).dmap(0 <)
 
   def insert(c: Challenge): Funit =
-    coll.insert.one(c) >> c.challengerUser.?? { challenger =>
-      createdByChallengerId(challenger.id).flatMap {
-        case challenges if challenges.sizeIs <= maxPerUser.value => funit
-        case challenges                                          => challenges.drop(maxPerUser.value).map(_.id).map(remove).sequenceFu.void
-      }
-    }
+    coll.insert.one(c) >> c.challengerUser.so: challenger =>
+      createdByChallengerId()(challenger.id).flatMap:
+        case challenges if challenges.sizeIs <= maxPlayingRealtime.value => funit
+        case challenges => challenges.drop(maxPlayingRealtime.value).map(_.id).sequentiallyVoid(remove)
 
-  def update(c: Challenge): Funit = coll.update.one($id(c.id), c).void
+  def update(c: Challenge): Funit = coll.update.one(bid(c.id), c).void
 
-  def createdByChallengerId(userId: String): Fu[List[Challenge]] =
-    coll
-      .find(selectCreated ++ $doc("challenger.id" -> userId))
-      .sort($doc("createdAt" -> 1))
-      .cursor[Challenge]()
-      .list()
+  private def createdList(selector: Bdoc, max: Int): Fu[List[Challenge]] =
+    coll.find(selectCreated ++ selector).sort(sort.asc("createdAt")).cursor[Challenge]().list(max)
 
-  def createdByDestId(userId: String): Fu[List[Challenge]] =
-    coll
-      .find(selectCreated ++ $doc("destUser.id" -> userId))
-      .sort($doc("createdAt" -> 1))
-      .cursor[Challenge]()
-      .list()
+  def createdByChallengerId(max: Int = 50)(userId: UserId): Fu[List[Challenge]] =
+    createdList(bdoc("challenger.id" -> userId), max)
 
-  def setChallenger(c: Challenge, color: Option[chess.Color]) =
+  def createdByDestId(max: Int = 50)(userId: UserId): Fu[List[Challenge]] =
+    createdList(bdoc("destUser.id" -> userId), max)
+
+  def createdByPopularDestId(max: Int = 50)(userId: UserId): Fu[List[Challenge]] = for
+    realTime <- createdList(bdoc("destUser.id" -> userId, "timeControl.l".exists(true)), max)
+    corres <- (realTime.sizeIs < max).so(
+      createdList(
+        bdoc(bdoc("destUser.id" -> userId), "timeControl.l".exists(false)),
+        max - realTime.size
+      )
+    )
+  yield realTime ::: corres
+
+  def setChallenger(c: Challenge, color: Option[Color]) =
     coll.update
       .one(
-        $id(c.id),
-        $set($doc("challenger" -> c.challenger) ++ color.?? { c =>
-          $doc("colorChoice" -> Challenge.ColorChoice(c), "finalColor" -> c)
+        bid(c.id),
+        set(bdoc("challenger" -> c.challenger) ++ color.so { c =>
+          bdoc("colorChoice" -> Challenge.ColorChoice(c), "finalColor" -> c)
         })
       )
       .void
 
-  private[challenge] def allWithUserId(userId: String): Fu[List[Challenge]] =
-    createdByChallengerId(userId) zip createdByDestId(userId) dmap { case (x, y) =>
-      x ::: y
-    }
+  private[challenge] def allWithUserId(userId: UserId): Fu[List[Challenge]] =
+    (createdByChallengerId()(userId), createdByDestId()(userId)).mapN(_ ::: _)
 
-  @nowarn("cat=unused") def like(c: Challenge) =
-    ~(for {
-      challengerId <- c.challengerUserId
-      destUserId   <- c.destUserId
+  private def sameOrigAndDest(c: Challenge): Fu[Option[Challenge]] =
+    ~(for
+      challengerSelect <- c.challenger match
+        case Challenger.Registered(uid, _) => some("challenger.id" -> uid.value)
+        case Challenger.Anonymous(sid) => some("challenger.s" -> sid)
+        case _ => none
+      destUserId <- c.destUserId
       if c.active
-    } yield coll.one[Challenge](
-      selectCreated ++ $doc(
-        "challenger.id" -> challengerId,
-        "destUser.id"   -> destUserId
+    yield coll.one[Challenge](
+      selectCreated ++ bdoc(
+        challengerSelect,
+        "destUser.id" -> destUserId
       )
     ))
 
-  private[challenge] def countCreatedByDestId(userId: String): Fu[Int] =
-    coll.countSel(selectCreated ++ $doc("destUser.id" -> userId))
+  private[challenge] def insertIfMissing(c: Challenge) = sameOrigAndDest(c).flatMap:
+    case Some(prev) if prev.rematchOf.exists(c.rematchOf.has) => funit
+    case Some(prev) if prev.id == c.id => funit
+    case Some(prev) => cancel(prev) >> insert(c)
+    case None => insert(c)
 
-  private[challenge] def realTimeUnseenSince(date: DateTime, max: Int): Fu[List[Challenge]] = {
+  private[challenge] def countCreatedByDestId(userId: UserId): Fu[Int] =
+    coll.countSel(selectCreated ++ bdoc("destUser.id" -> userId))
+
+  private[challenge] def realTimeUnseenSince(date: Instant, max: Int): Fu[List[Challenge]] =
     coll
       .find(
-        $doc(
-          "seenAt" $lt date,
+        bdoc(
+          "seenAt".lt(date),
           "status" -> Status.Created.id,
-          "timeControl" $exists true
+          "timeControl.l".exists(true)
         )
       )
-      .hint(coll hint $doc("seenAt" -> 1)) // partial index
       .cursor[Challenge]()
       .list(max)
-  }
 
   private[challenge] def expired(max: Int): Fu[List[Challenge]] =
-    coll.list[Challenge]($doc("expiresAt" $lt DateTime.now), max)
+    coll.list[Challenge]("expiresAt".lt(nowInstant), max)
 
-  def setSeenAgain(id: Challenge.ID) =
+  def setSeenAgain(id: ChallengeId) =
     coll.update
       .one(
-        $id(id),
-        $doc(
-          "$set" -> $doc(
-            "status"    -> Status.Created.id,
-            "seenAt"    -> DateTime.now,
+        bid(id),
+        bdoc(
+          "$set" -> bdoc(
+            "status" -> Status.Created.id,
+            "seenAt" -> nowInstant,
             "expiresAt" -> inTwoWeeks
           )
         )
       )
       .void
 
-  def setSeen(id: Challenge.ID) =
-    coll.updateField($id(id), "seenAt", DateTime.now).void
+  def setSeen(id: ChallengeId) =
+    coll.updateField(bid(id), "seenAt", nowInstant).void
 
-  def offline(challenge: Challenge) = setStatus(challenge, Status.Offline, Some(_ plusHours 3))
-  def cancel(challenge: Challenge)  = setStatus(challenge, Status.Canceled, Some(_ plusHours 3))
+  def offline(challenge: Challenge) = setStatus(challenge, Status.Offline, Some(_.plusHours(3)))
+  def cancel(challenge: Challenge) = setStatus(challenge, Status.Canceled, Some(_.plusHours(3)))
   def decline(challenge: Challenge, reason: Challenge.DeclineReason) =
-    setStatus(challenge, Status.Declined, Some(_ plusHours 3)) >> {
-      (reason != Challenge.DeclineReason.default) ??
-        coll.updateField($id(challenge.id), "declineReason", reason).void
-    }
-  def accept(challenge: Challenge) = setStatus(challenge, Status.Accepted, Some(_ plusHours 3))
+    setStatus(challenge, Status.Declined, Some(_.plusHours(3))) >>
+      (reason != Challenge.DeclineReason.default)
+        .so(coll.updateField(bid(challenge.id), "declineReason", reason).void)
+  private[challenge] def accept(challenge: Challenge) =
+    setStatus(challenge, Status.Accepted, Some(_.plusHours(3)))
 
-  def statusById(id: Challenge.ID) = coll.primitiveOne[Status]($id(id), "status")
+  def statusById(id: ChallengeId) = coll.primitiveOne[Status](bid(id), "status")
 
-  private def setStatus(
-      challenge: Challenge,
-      status: Status,
-      expiresAt: Option[DateTime => DateTime]
-  ) =
+  private def setStatus(challenge: Challenge, status: Status, expiresAt: Option[Instant => Instant]) =
     coll.update
       .one(
-        selectCreated ++ $id(challenge.id),
-        $doc(
-          "$set" -> $doc(
-            "status"    -> status.id,
-            "expiresAt" -> expiresAt.fold(inTwoWeeks) { _(DateTime.now) }
+        selectCreatedOrOffline ++ bid(challenge.id),
+        bdoc(
+          "$set" -> bdoc(
+            "status" -> status.id,
+            "expiresAt" -> expiresAt.fold(inTwoWeeks)(_(nowInstant))
           )
         )
       )
       .void
 
-  private[challenge] def remove(id: Challenge.ID) = coll.delete.one($id(id)).void
+  private[challenge] def remove(id: ChallengeId) = coll.delete.one(bid(id)).void
 
-  private val selectCreated = $doc("status" -> Status.Created.id)
-}
+  private val selectCreated = bdoc("status" -> Status.Created)
+  private val selectCreatedOrOffline = bdoc("status".in(List(Status.Created, Status.Offline)))

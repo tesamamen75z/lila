@@ -130,6 +130,7 @@ Hy staan reg langs sy dame.</string>
 Maak enige skuif om voort te gaan.</string>
   <string name="boardSetupComplete">Goeie werk! Jy weet nou hoe om die skaakbord op te stel.</string>
   <string name="castling">Rokering</string>
+  <string name="enPassant">En passant</string>
   <string name="theSpecialKingMove">Die koning se spesiale skuif</string>
   <string name="castlingIntro">Neem jou koning na veiligheid, en ontplooi jou toring vir die aanval!</string>
   <string name="castleKingSide">Skuif jou koning twee blokkies
@@ -153,7 +154,6 @@ koningskant te rokeer!</string>
   <string name="findAWayToCastleQueenSide">Vind \'n manier om na die
 langkant te rokeer!</string>
   <string name="castlingComplete">Ongelooflik! Jy moet amper altyd rokeer in \'n wedstryd.</string>
-  <string name="enPassant">En passant</string>
   <string name="theSpecialPawnMove">Die spesiale pion skuif</string>
   <string name="enPassantIntro">Wanneer die opponent pion twee blokkies skuif, kan jy die pion vat asof dit net een blokkie geskuif het.</string>
   <string name="blackJustMovedThePawnByTwoSquares">Swart het net nou net die pion 
@@ -186,6 +186,12 @@ Die koning is van onskatbare waarde! Verloor die koning en jy verloor die spel.<
   <string name="queenOverBishop">Vat die stuk
 met die hoogste waarde!
 Dame &gt; Loper</string>
+  <string name="pieceValueExchange">Vat die stuk met die hoogste waarde!
+Moenie \'n stuk met hoor waarde
+vir \'n stuk met minder waarde verruil nie.</string>
+  <string name="pieceValueLegal">Vat die stuk 
+met die hoogste waarde!
+Maak seker jou skuif is wettig!</string>
   <string name="takeThePieceWithTheHighestValue">Vat die stuk
 met die hoogste waarde!</string>
   <string name="pieceValueComplete">Jy is aan die brand! Jy ken die waarde van materiaal!
@@ -206,7 +212,7 @@ in twee skuiwe!</string>
   <string name="getAFreeLichessAccount">Kry ’n gratis Lichess-rekening</string>
   <string name="practice">Oefen</string>
   <string name="learnCommonChessPositions">Leer algemene skaakposisies</string>
-  <string name="puzzles">Kopkrappers</string>
+  <string name="puzzles">Raaisels</string>
   <string name="exerciseYourTacticalSkills">Oefen jou taktiese vermoëns</string>
   <string name="videos">Video’s</string>
   <string name="watchInstructiveChessVideos">Kyk opleidingsvideo’s vir skaak</string>
@@ -227,8 +233,8 @@ in twee skuiwe!</string>
   <string name="nailedIt">Mooi skoot.</string>
   <string name="rightOn">Kolskoot!</string>
   <string name="stageXComplete">Fase %s voltooi</string>
-  <string name="yourScore">Jou telling</string>
   <string name="next">Volgende</string>
+  <string name="nextX">Volgende: %s</string>
   <string name="backToMenu">Terug na kieslys</string>
   <string name="puzzleFailed">Kopkrapper misluk!</string>
   <string name="retry">Probeer weer</string>

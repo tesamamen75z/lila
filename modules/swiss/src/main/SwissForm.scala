@@ -1,100 +1,121 @@
 package lila.swiss
 
-import chess.Clock.{ Config => ClockConfig }
-import chess.format.FEN
+import chess.Clock.{ Config as ClockConfig, IncrementSeconds, LimitSeconds }
+import chess.format.Fen
 import chess.variant.Variant
-import org.joda.time.DateTime
-import play.api.data._
-import play.api.data.Forms._
-import play.api.data.validation
-import play.api.data.validation.Constraint
-import play.api.Mode
-import scala.concurrent.duration._
+import chess.{ Rated, Speed }
+import play.api.data.*
+import play.api.data.Forms.*
 
-import lila.common.Form._
-import lila.user.User
+import lila.common.Form.{ *, given }
+import lila.core.perm.Granter
 
-final class SwissForm(implicit mode: Mode) {
+final class SwissForm(using mode: play.api.Mode):
 
-  import SwissForm._
+  import SwissForm.*
 
-  def form(user: User, minRounds: Int = 3) =
+  def form(minRounds: Int = 3)(using me: Me) =
+    val manager = Granter(_.ManageTournament)
     Form(
       mapping(
-        "name" -> optional(eventName(2, 30, user.isVerifiedOrAdmin)),
+        "name" -> optional(eventName(2, 30, me.isVerifiedOrAdmin)),
         "clock" -> mapping(
-          "limit"     -> number.verifying(clockLimits.contains _),
-          "increment" -> number(min = 0, max = 120)
-        )(ClockConfig.apply)(ClockConfig.unapply)
+          "limit" -> number.into[LimitSeconds].verifying(clockLimits.contains),
+          "increment" -> number(min = 0, max = 120).into[IncrementSeconds]
+        )(ClockConfig.apply)(unapply)
           .verifying("Invalid clock", _.estimateTotalSeconds > 0),
-        "startsAt"          -> optional(inTheFuture(ISODateTimeOrTimestamp.isoDateTimeOrTimestamp)),
-        "variant"           -> optional(nonEmptyText.verifying(v => Variant(v).isDefined)),
-        "rated"             -> optional(boolean),
-        "nbRounds"          -> number(min = minRounds, max = 100),
-        "description"       -> optional(cleanNonEmptyText),
-        "position"          -> optional(lila.common.Form.fen.playableStrict),
-        "chatFor"           -> optional(numberIn(chatForChoices.map(_._1))),
-        "roundInterval"     -> optional(numberIn(roundIntervals)),
-        "password"          -> optional(cleanNonEmptyText),
-        "conditions"        -> SwissCondition.DataForm.all,
-        "forbiddenPairings" -> optional(cleanNonEmptyText)
-      )(SwissData.apply)(SwissData.unapply)
+        "startsAt" -> optional(inTheFuture(ISOInstantOrTimestamp.mapping)),
+        "variant" -> optional(typeIn(Variant.list.all.map(_.key).toSet)),
+        "rated" -> optional(boolean.into[Rated]),
+        "nbRounds" -> number(min = minRounds, max = 100),
+        "description" -> optional(cleanNonEmptyText),
+        "payouts" -> (if manager then optional(cleanNonEmptyText.into[Payouts]) else ignored(none)),
+        "position" -> optional(lila.common.Form.fen.playableStrict),
+        "chatFor" -> optional(numberIn(chatForChoices._1F)),
+        "roundInterval" -> optional(numberIn(roundIntervals)),
+        "password" -> optional(cleanNonEmptyText),
+        "conditions" -> SwissCondition.form.all,
+        "forbiddenPairings" -> optional(
+          cleanNonEmptyText.verifying(
+            s"Maximum forbidden pairings: ${Swiss.maxForbiddenPairings}",
+            str => str.linesIterator.size <= Swiss.maxForbiddenPairings
+          )
+        ),
+        "manualPairings" -> optional(
+          cleanNonEmptyText
+            .verifying(
+              s"Maximum manual pairings: ${Swiss.maxManualPairings}",
+              str => str.linesIterator.size <= Swiss.maxManualPairings
+            )
+            .verifying(
+              "Invalid pairings, maybe a player is paired twice?",
+              SwissManualPairing.validate
+            )
+        )
+      )(SwissData.apply)(unapply)
         .verifying("15s and 0+1 variant games cannot be rated", _.validRatedVariant)
     )
 
-  def create(user: User) =
-    form(user) fill SwissData(
-      name = none,
-      clock = ClockConfig(180, 0),
-      startsAt = Some(DateTime.now plusSeconds {
-        if (mode == Mode.Prod) 60 * 10 else 20
-      }),
-      variant = Variant.default.key.some,
-      rated = true.some,
-      nbRounds = 7,
-      description = none,
-      position = none,
-      chatFor = Swiss.ChatFor.default.some,
-      roundInterval = Swiss.RoundInterval.auto.some,
-      password = None,
-      conditions = SwissCondition.DataForm.AllSetup.default,
-      forbiddenPairings = none
-    )
-
-  def edit(user: User, s: Swiss) =
-    form(user, s.round.value) fill SwissData(
-      name = s.name.some,
-      clock = s.clock,
-      startsAt = s.startsAt.some,
-      variant = s.variant.key.some,
-      rated = s.settings.rated.some,
-      nbRounds = s.settings.nbRounds,
-      description = s.settings.description,
-      position = s.settings.position,
-      chatFor = s.settings.chatFor.some,
-      roundInterval = s.settings.roundInterval.toSeconds.toInt.some,
-      password = s.settings.password,
-      conditions = SwissCondition.DataForm.AllSetup(s.settings.conditions),
-      forbiddenPairings = s.settings.forbiddenPairings.some.filter(_.nonEmpty)
-    )
-
-  def nextRound =
-    Form(
-      single(
-        "date" -> inTheFuture(ISODateTimeOrTimestamp.isoDateTimeOrTimestamp)
+  def create(using Me) =
+    form().fill(
+      SwissData(
+        name = none,
+        clock = ClockConfig(LimitSeconds(180), IncrementSeconds(0)),
+        startsAt = Some(nowInstant.plusSeconds {
+          if mode.isProd then 60 * 10 else 20
+        }),
+        variant = Variant.default.key.some,
+        rated = Rated.Yes.some,
+        nbRounds = 7,
+        description = none,
+        payouts = none,
+        position = none,
+        chatFor = Swiss.ChatFor.default.some,
+        roundInterval = Swiss.RoundInterval.auto.some,
+        password = None,
+        conditions = SwissCondition.All.empty,
+        forbiddenPairings = none,
+        manualPairings = none
       )
     )
-}
 
-object SwissForm {
+  def edit(using Me)(s: Swiss) =
+    form(s.round.value).fill(
+      SwissData(
+        name = s.name.some,
+        clock = s.clock,
+        startsAt = s.startsAt.some,
+        variant = s.variant.key.some,
+        rated = s.settings.rated.some,
+        nbRounds = s.settings.nbRounds,
+        description = s.settings.description,
+        payouts = s.settings.payouts,
+        position = s.settings.position,
+        chatFor = s.settings.chatFor.some,
+        roundInterval = s.settings.roundInterval.toSeconds.toInt.some,
+        password = s.settings.password,
+        conditions = s.settings.conditions,
+        forbiddenPairings = s.settings.forbiddenPairings.nonEmptyOption,
+        manualPairings = s.settings.manualPairings.nonEmptyOption
+      )
+    )
 
-  val clockLimits: Seq[Int] = Seq(0, 15, 30, 45, 60, 90) ++ {
-    (120 to 420 by 60) ++ (600 to 1800 by 300) ++ (2400 to 10800 by 600)
-  }
+  def nextRound = Form:
+    single:
+      "date" -> inTheFuture(ISOInstantOrTimestamp.mapping)
+
+object SwissForm:
+
+  val clockLimits = LimitSeconds.from(Seq(0, 15, 30, 45, 60, 90) ++ {
+    (120 to 480 by 60) ++ (600 to 2700 by 300) ++ (3000 to 10800 by 600)
+  })
 
   val clockLimitChoices = options(
-    clockLimits,
-    l => s"${chess.Clock.Config(l, 0).limitString}${if (l <= 1) " minute" else " minutes"}"
+    LimitSeconds.raw(clockLimits),
+    l =>
+      s"${chess.Clock.Config(LimitSeconds(l), IncrementSeconds(0)).limitString}${
+          if l <= 1 then " minute" else " minutes"
+        }"
   )
 
   val roundIntervals: Seq[Int] =
@@ -124,59 +145,59 @@ object SwissForm {
   val roundIntervalChoices = options(
     roundIntervals,
     s =>
-      if (s == Swiss.RoundInterval.auto) s"Automatic"
-      else if (s == Swiss.RoundInterval.manual) s"Manually schedule each round"
-      else if (s < 60) s"$s seconds"
-      else if (s < 3600) s"${s / 60} minute(s)"
-      else if (s < 24 * 3600) s"${s / 3600} hour(s)"
+      if s == Swiss.RoundInterval.auto then s"Automatic"
+      else if s == Swiss.RoundInterval.manual then s"Manually schedule each round"
+      else if s < 60 then s"$s seconds"
+      else if s < 3600 then s"${s / 60} minute(s)"
+      else if s < 24 * 3600 then s"${s / 3600} hour(s)"
       else s"${s / 24 / 3600} days(s)"
   )
 
   val chatForChoices = List(
-    Swiss.ChatFor.NONE    -> "No chat",
+    Swiss.ChatFor.NONE -> "No chat",
     Swiss.ChatFor.LEADERS -> "Team leaders only",
     Swiss.ChatFor.MEMBERS -> "Team members only",
-    Swiss.ChatFor.ALL     -> "All Lichess players"
+    Swiss.ChatFor.ALL -> "All Lichess players"
   )
 
   case class SwissData(
       name: Option[String],
       clock: ClockConfig,
-      startsAt: Option[DateTime],
-      variant: Option[String],
-      rated: Option[Boolean],
+      startsAt: Option[Instant],
+      variant: Option[Variant.LilaKey],
+      rated: Option[Rated],
       nbRounds: Int,
       description: Option[String],
-      position: Option[FEN],
+      payouts: Option[Payouts],
+      position: Option[Fen.Full],
       chatFor: Option[Int],
       roundInterval: Option[Int],
       password: Option[String],
-      conditions: SwissCondition.DataForm.AllSetup,
-      forbiddenPairings: Option[String]
-  ) {
-    def realVariant  = variant flatMap Variant.apply getOrElse Variant.default
-    def realStartsAt = startsAt | DateTime.now.plusMinutes(10)
-    def realChatFor  = chatFor | Swiss.ChatFor.default
-    def realRoundInterval = {
-      (roundInterval | Swiss.RoundInterval.auto) match {
-        case Swiss.RoundInterval.auto =>
-          import chess.Speed._
-          chess.Speed(clock) match {
-            case UltraBullet                               => 5
-            case Bullet                                    => 10
-            case Blitz if clock.estimateTotalSeconds < 300 => 20
-            case Blitz                                     => 30
-            case Rapid                                     => 60
-            case _                                         => 300
-          }
-        case i => i
-      }
-    }.seconds
-    def realPosition = position ifTrue realVariant.standard
+      conditions: SwissCondition.All,
+      forbiddenPairings: Option[String],
+      manualPairings: Option[String]
+  ):
+    def realVariant = Variant.orDefault(variant)
+    def realStartsAt = startsAt | nowInstant.plusMinutes(10)
+    def realChatFor = chatFor | Swiss.ChatFor.default
+    def realRoundInterval =
+      (roundInterval | Swiss.RoundInterval.auto) match
+        case Swiss.RoundInterval.auto => autoInterval(clock)
+        case i => i.seconds
+    def realPosition = position.ifTrue(realVariant.standard)
 
-    def isRated = rated | true
-    def validRatedVariant =
-      !isRated ||
-        lila.game.Game.allowRated(realVariant, clock.some)
-  }
-}
+    def isRated = rated.forall(_.yes)
+    def validRatedVariant = !isRated || lila.core.game.allowRated(realVariant, clock.some)
+
+  def autoInterval(clock: ClockConfig) = {
+    import Speed.*
+    Speed(clock) match
+      case UltraBullet => 5
+      case Bullet => 10
+      case Blitz if clock.estimateTotalSeconds < 300 => 20
+      case Blitz => 30
+      case Rapid => 60
+      case _ => 300
+  }.seconds
+
+  val joinForm = Form(single("password" -> optional(nonEmptyText)))

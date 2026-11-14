@@ -3,11 +3,10 @@ $c-study-button: $c-accent;
 .study__buttons {
   @extend %flex-between;
 
-  border-bottom: 2px solid $c-border;
-
-  span {
+  button {
     font-size: 1.15em;
     min-width: 0;
+    overflow: visible;
   }
 
   .left-buttons {
@@ -20,12 +19,21 @@ $c-study-button: $c-accent;
     flex: 1 9 10%;
   }
 
+  .comp-off & .serverEval {
+    opacity: 0.5;
+
+    &:hover {
+      opacity: 0.75;
+    }
+  }
+
   .behind {
+    @include box-radius;
+
     background: $c-bad;
-    color: $c-bad-over;
+    color: $c-over;
     padding: 0 5px;
-    border-radius: 9px;
-    margin-right: 4px;
+    margin-inline-end: 4px;
   }
 
   .mode {
@@ -35,15 +43,15 @@ $c-study-button: $c-accent;
     padding: 0 0.4em;
     opacity: 0.8;
 
-    i::before {
+    icon::before {
       font-size: 1.4em;
-      content: '';
+      content: $licon-X;
       color: $c-bad;
-      margin-right: 0.2rem;
+      margin-inline-end: 0.2rem;
     }
 
-    &.on i::before {
-      content: '';
+    &.on icon::before {
+      content: $licon-Checkmark;
       color: $c-good;
     }
 

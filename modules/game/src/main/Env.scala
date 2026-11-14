@@ -1,19 +1,19 @@
 package lila.game
 
-import akka.actor._
-import com.softwaremill.macwire._
-import io.methvin.play.autoconfig._
+import com.softwaremill.macwire.*
+import com.softwaremill.tagging.*
+import org.apache.pekko.actor.*
+import org.apache.pekko.stream.Materializer
 import play.api.Configuration
 import play.api.libs.ws.StandaloneWSClient
-import scala.concurrent.duration._
 
-import lila.common.config._
+import lila.common.autoconfig.{ *, given }
+import lila.core.config.*
 
 final private class GameConfig(
     @ConfigName("collection.game") val gameColl: CollName,
     @ConfigName("collection.crosstable") val crosstableColl: CollName,
     @ConfigName("collection.matchup") val matchupColl: CollName,
-    @ConfigName("captcher.name") val captcherName: String,
     @ConfigName("captcher.duration") val captcherDuration: FiniteDuration,
     val gifUrl: String
 )
@@ -23,55 +23,68 @@ final class Env(
     appConfig: Configuration,
     ws: StandaloneWSClient,
     db: lila.db.Db,
-    baseUrl: BaseUrl,
-    userRepo: lila.user.UserRepo,
+    yoloDb: lila.db.AsyncDb @@ lila.db.YoloDb,
+    routeUrl: RouteUrl,
+    userApi: lila.core.user.UserApi,
     mongoCache: lila.memo.MongoCache.Api,
-    lightUserApi: lila.user.LightUserApi,
-    cacheApi: lila.memo.CacheApi
-)(implicit
-    ec: scala.concurrent.ExecutionContext,
-    system: ActorSystem,
-    scheduler: Scheduler
-) {
+    lightUserApi: lila.core.user.LightUserApi,
+    cacheApi: lila.memo.CacheApi,
+    getTourName: => lila.core.tournament.GetTourName,
+    fideIdOf: lila.core.user.PublicFideIdOf
+)(using scheduler: Scheduler)(using Executor, Materializer):
+  private val config = appConfig.get[GameConfig]("game")(using AutoConfig.loader)
 
-  private val config = appConfig.get[GameConfig]("game")(AutoConfig.loader)
+  val gameRepo = GameRepo(db(config.gameColl))
 
-  lazy val gameRepo = new GameRepo(db(config.gameColl))
+  given idGenerator: IdGenerator = wire[IdGenerator]
 
-  lazy val idGenerator = wire[IdGenerator]
+  val divider = wire[Divider]
 
-  lazy val gifExport = new GifExport(ws, lightUserApi, baseUrl, config.gifUrl)
+  val gameOpening = wire[GameOpening]
 
-  lazy val divider = wire[Divider]
+  val gameOpeningOf: lila.core.game.GameOpening = gameOpening.of
 
-  lazy val cached: Cached = wire[Cached]
+  val cached: Cached = wire[Cached]
+
+  val uciMemo = wire[UciMemo]
+
+  lazy val gifExport = GifExport(ws, lightUserApi, routeUrl, config.gifUrl)
 
   lazy val paginator = wire[PaginatorBuilder]
-
-  lazy val uciMemo = wire[UciMemo]
 
   lazy val pgnDump = wire[PgnDump]
 
   lazy val crosstableApi = new CrosstableApi(
     coll = db(config.crosstableColl),
-    matchupColl = db(config.matchupColl)
+    matchupColl = yoloDb(config.matchupColl).failingSilently()
   )
 
   lazy val gamesByUsersStream = wire[GamesByUsersStream]
+  lazy val gamesByIdsStream = wire[GamesByIdsStream]
 
   lazy val favoriteOpponents = wire[FavoriteOpponents]
 
-  lazy val rematches = Rematches(
-    lila.memo.CacheApi.scaffeineNoScheduler
-      .expireAfterWrite(1 hour)
-      .build[Game.ID, Game.ID]()
-  )
+  lazy val rematches = wire[Rematches]
 
   lazy val jsonView = wire[JsonView]
 
-  // eargerly load captcher actor
-  private val captcher = system.actorOf(Props(new Captcher(gameRepo)), name = config.captcherName)
-  scheduler.scheduleWithFixedDelay(config.captcherDuration, config.captcherDuration) { () =>
-    captcher ! actorApi.NewCaptcha
-  }
-}
+  lazy val captcha = wire[CaptchaApi]
+
+  lazy val importer = wire[lila.game.importer.Importer]
+
+  lazy val userGameApi = UserGameApi(lightUserApi, getTourName)
+
+  lazy val api: lila.core.game.GameApi = new:
+    export gameRepo.{ incBookmarks, getSourceAndUserIds, countNowPlaying }
+    export GameExt.{ computeMoveTimes, analysable }
+    export AnonCookie.json as anonCookieJson
+
+  given newPlayer: lila.core.game.NewPlayer = new:
+    export Player.make as apply
+    override def anon(color: Color, aiLevel: Option[Int] = None) =
+      Player.makeAnon(color, aiLevel)
+
+  val namer: lila.core.game.Namer = Namer
+
+  scheduler.scheduleWithFixedDelay(config.captcherDuration, config.captcherDuration): () =>
+    captcha.newCaptcha()

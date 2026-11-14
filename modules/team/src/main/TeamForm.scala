@@ -1,172 +1,211 @@
 package lila.team
 
-import play.api.data._
-import play.api.data.Forms._
-import scala.concurrent.duration._
+import play.api.data.*
+import play.api.data.Forms.*
 
-import lila.common.Form.{ cleanNonEmptyText, cleanText, numberIn }
-import lila.db.dsl._
+import lila.common.Form.{
+  cleanNonEmptyText,
+  cleanText,
+  cleanTextWithSymbols,
+  into,
+  mustNotContainLichess,
+  numberIn,
+  tagifyValues,
+  given
+}
+import lila.core.captcha.CaptchaApi
+import lila.core.team.Access
+import lila.core.user.FlairApi
+import lila.db.dsl.{ *, given }
+import lila.mon.extensions.*
 
-final private[team] class TeamForm(
-    teamRepo: TeamRepo,
-    lightUserApi: lila.user.LightUserApi,
-    val captcher: lila.hub.actors.Captcher
-)(implicit ec: scala.concurrent.ExecutionContext)
-    extends lila.hub.CaptchedForm {
+final private class TeamForm(teamRepo: TeamRepo, captcha: CaptchaApi, flairApi: FlairApi)(using
+    Executor
+):
+  import TeamForm.Fields
 
-  private object Fields {
-    val name     = "name"     -> cleanText(minLength = 3, maxLength = 60)
-    val location = "location" -> optional(cleanText(minLength = 3, maxLength = 80))
-    val password = "password" -> optional(cleanText(maxLength = 60))
-    def passwordCheck(team: Team) = "password" -> optional(text).verifying(
-      "team:incorrectTeamPassword",
-      pw => team.passwordMatches(pw.??(_.trim))
-    )
-    def requestMessage(team: Team) =
-      "message" -> optional(cleanText(minLength = 30, maxLength = 2000))
-        .verifying("Request message required", msg => msg.isDefined || team.open)
-    val description = "description" -> cleanText(minLength = 30, maxLength = 4000)
-    val descPrivate = "descPrivate" -> optional(cleanNonEmptyText(maxLength = 4000))
-    val request     = "request"     -> boolean
-    val gameId      = "gameId"      -> text
-    val move        = "move"        -> text
-    val chat        = "chat"        -> numberIn(Team.ChatFor.all)
-    val hideMembers = "hideMembers" -> boolean
-    val hideForum   = "hideForum"   -> boolean
-  }
-
-  val create = Form(
+  def create(using Me) = Form:
     mapping(
       Fields.name,
-      Fields.location,
       Fields.password,
+      Fields.intro,
       Fields.description,
       Fields.descPrivate,
       Fields.request,
+      Fields.chat,
+      Fields.forum,
+      "flair" -> flairApi.formField(),
       Fields.gameId,
-      Fields.move,
-      Fields.hideMembers,
-      Fields.hideForum
-    )(TeamSetup.apply)(TeamSetup.unapply)
-      .verifying("team:teamAlreadyExists", d => !teamExists(d).await(2 seconds, "teamExists"))
-      .verifying(captchaFailMessage, validateCaptcha _)
-  )
+      Fields.move
+    )(TeamSetup.apply)(unapply)
+      .verifying("team:teamAlreadyExists", d => !teamExists(d).await(1.seconds, "teamExists"))
+      .verifying(lila.core.captcha.failMessage, captcha.validateSync)
 
-  def edit(team: Team) =
-    Form(
-      mapping(
-        Fields.location,
-        Fields.password,
-        Fields.description,
-        Fields.descPrivate,
-        Fields.request,
-        Fields.chat,
-        Fields.hideMembers,
-        Fields.hideForum
-      )(TeamEdit.apply)(TeamEdit.unapply)
-    ) fill TeamEdit(
-      location = team.location,
+  def edit(team: Team)(using Me) = Form(
+    mapping(
+      Fields.password,
+      Fields.intro,
+      Fields.description,
+      Fields.descPrivate,
+      Fields.request,
+      Fields.chat,
+      Fields.forum,
+      Fields.hideMembers,
+      "flair" -> flairApi.formField()
+    )(TeamEdit.apply)(unapply)
+  ).fill:
+    TeamEdit(
       password = team.password,
+      intro = team.intro,
       description = team.description,
       descPrivate = team.descPrivate,
       request = !team.open,
       chat = team.chat,
+      forum = team.forum,
       hideMembers = team.hideMembers.has(true),
-      hideForum = team.hideForum.has(true)
+      flair = team.flair
     )
 
   def request(team: Team) = Form(
     mapping(
       Fields.requestMessage(team),
       Fields.passwordCheck(team)
-    )(RequestSetup.apply)(RequestSetup.unapply)
-  ) fill RequestSetup(
-    message = "Hello, I would like to join the team!".some,
-    password = None
+    )(RequestSetup.apply)(unapply)
+  ).fill(
+    RequestSetup(
+      message = TeamRequest.defaultMessage.some,
+      password = None
+    )
   )
 
-  def apiRequest(team: Team) = Form(
+  def apiRequest(team: Team) = Form:
     mapping(
       Fields.requestMessage(team),
       Fields.passwordCheck(team)
-    )(RequestSetup.apply)(RequestSetup.unapply)
-  )
+    )(RequestSetup.apply)(unapply)
 
-  val processRequest = Form(
+  val processRequest = Form:
     tuple(
       "process" -> nonEmptyText,
-      "url"     -> nonEmptyText
+      "url" -> nonEmptyText
     )
+
+  val selectMember = Form:
+    single:
+      "userId" -> lila.common.Form.username.historicalField
+
+  def createWithCaptcha(using Me) = create -> captcha.any
+
+  val update = Form:
+    single("message" -> cleanTextWithSymbols(minLength = 3, maxLength = 9_000)).into[Markdown]
+
+  val explain = Form:
+    single("explain" -> cleanText(minLength = 3, maxLength = 4_000))
+
+  def members = Form:
+    import lila.common.Json.given
+    single("members" -> tagifyValues.field[UserStr, List[UserId]]("value")(_.flatMap(_.validateId)))
+
+  val blocklist = Form:
+    val sep = "\n"
+    single:
+      "names" -> cleanText(maxLength = 9_000)
+        .transform[String](_.split(sep).take(300).toList.flatMap(UserStr.read).mkString(sep), identity)
+
+  val searchDeclinedForm: Form[Option[UserStr]] = Form(
+    single("search" -> optional(lila.common.Form.username.historicalField))
   )
 
-  val selectMember = Form(
-    single(
-      "userId" -> lila.user.UserForm.historicalUsernameField
-    )
-  )
-
-  def createWithCaptcha = withCaptcha(create)
-
-  val pmAll = Form(
-    single("message" -> cleanText(minLength = 3, maxLength = 9000))
-  )
-
-  def leaders(t: Team) =
-    Form(single("leaders" -> nonEmptyText)) fill t.leaders
-      .flatMap(lightUserApi.sync)
-      .map(_.name)
-      .mkString(", ")
+  val subscribe = Form(single("subscribe" -> optional(boolean)))
 
   private def teamExists(setup: TeamSetup) =
-    teamRepo.coll.exists($id(Team nameToId setup.trim.name))
-}
+    teamRepo.coll.exists(bid(Team.nameToId(setup.name)))
 
-private[team] case class TeamSetup(
+private case class TeamSetup(
     name: String,
-    location: Option[String],
     password: Option[String],
-    description: String,
-    descPrivate: Option[String],
+    intro: Option[String],
+    description: Markdown,
+    descPrivate: Option[Markdown],
     request: Boolean,
-    gameId: String,
-    move: String,
-    hideMembers: Boolean,
-    hideForum: Boolean
-) {
+    chat: Access,
+    forum: Access,
+    flair: Option[Flair],
+    gameId: GameId,
+    move: String
+) extends lila.core.captcha.WithCaptcha:
+  def isOpen = !request
 
+private case class TeamEdit(
+    password: Option[String],
+    intro: Option[String],
+    description: Markdown,
+    descPrivate: Option[Markdown],
+    request: Boolean,
+    chat: Access,
+    forum: Access,
+    hideMembers: Boolean,
+    flair: Option[Flair]
+):
   def isOpen = !request
 
   def trim =
     copy(
-      name = name.trim,
-      location = location map (_.trim) filter (_.nonEmpty),
-      description = description.trim,
-      descPrivate = descPrivate map (_.trim) filter (_.nonEmpty)
+      description = description,
+      descPrivate = descPrivate.filter(_.value.nonEmpty)
     )
-}
 
-private[team] case class TeamEdit(
-    location: Option[String],
-    password: Option[String],
-    description: String,
-    descPrivate: Option[String],
-    request: Boolean,
-    chat: Team.ChatFor,
-    hideMembers: Boolean,
-    hideForum: Boolean
-) {
-
-  def isOpen = !request
-
-  def trim =
-    copy(
-      location = location map (_.trim) filter (_.nonEmpty),
-      description = description.trim,
-      descPrivate = descPrivate map (_.trim) filter (_.nonEmpty)
-    )
-}
-
-private[team] case class RequestSetup(
+private case class RequestSetup(
     message: Option[String],
     password: Option[String]
 )
+
+object TeamForm:
+  object Fields:
+    def name(using me: Me) =
+      "name" -> cleanText(minLength = 3, maxLength = 60).verifying(mustNotContainLichess(me.isVerified))
+    val password = "password" -> optional(cleanText(maxLength = 60))
+    def passwordCheck(team: Team) = "password" -> optional(text).verifying(
+      "team:incorrectEntryCode",
+      pw => team.passwordMatches(pw.so(_.trim))
+    )
+    def requestMessage(team: Team) =
+      "message" -> optional(cleanText(minLength = 30, maxLength = 2000))
+        .verifying("Request message required", msg => msg.isDefined || team.open)
+    val intro =
+      "intro" -> optional(cleanText(minLength = 3, maxLength = 200))
+    val description =
+      "description" -> cleanText(minLength = 30, maxLength = 4000).into[Markdown]
+    val descPrivate =
+      "descPrivate" -> optional(cleanNonEmptyText(maxLength = 4000).into[Markdown])
+    val request = "request" -> boolean
+    val gameId = "gameId" -> of[GameId]
+    val move = "move" -> text
+    private def inAccess(cs: List[Access]) = numberIn(cs.map(_.id)).transform[Access](Access.byId, _.id)
+    val chat = "chat" -> inAccess(Access.allInTeam)
+    val forum = "forum" -> inAccess(Access.all)
+    val hideMembers = "hideMembers" -> boolean
+
+object TeamSingleChange:
+
+  type Change[A] = lila.common.Form.SingleChange.Change[Team, A]
+  private def changing[A] = lila.common.Form.SingleChange.changing[Team, TeamForm.Fields.type, A]
+
+  val changes: Map[String, Change[?]] = List[Change[?]](
+    changing(_.password): v =>
+      _.copy(password = v),
+    changing(_.intro): v =>
+      _.copy(intro = v),
+    changing(_.description): v =>
+      _.copy(description = v),
+    changing(_.descPrivate): v =>
+      _.copy(descPrivate = v),
+    changing(_.request): v =>
+      _.copy(open = !v),
+    changing(_.chat): v =>
+      _.copy(chat = v),
+    changing(_.forum): v =>
+      _.copy(forum = v)
+  ).map: change =>
+    change.field -> change
+  .toMap
